@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Maths du jeu vidéo — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="maths">
+<article class="doc">
+
+  <h1>Maths du jeu vidéo</h1>
+  <p class="lead">Faire tourner une tourelle vers le joueur, savoir si un ennemi vous voit, faire flotter une pièce, lisser une caméra : derrière chacun de ces effets se cachent quelques outils mathématiques simples. Pas besoin d'être fort en maths pour les utiliser. Ce chapitre explique, avec des schémas et des exemples concrets, les vecteurs, le produit scalaire, le produit vectoriel, les rotations, les transforms et l'interpolation, tels qu'Unreal les propose.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Connaître le <strong>repère d'Unreal</strong> : axes, unités, sens des rotations</li>
+      <li>Manipuler des <strong>vecteurs</strong> (<code>FVector</code>) : direction, distance, normalisation</li>
+      <li>Utiliser le <strong>produit scalaire</strong> pour tester « devant / derrière » et un cône de vision</li>
+      <li>Utiliser le <strong>produit vectoriel</strong> pour trouver une normale ou un côté gauche / droite</li>
+      <li>Comprendre <code>FRotator</code>, <code>FQuat</code> et <code>FTransform</code>, espace local et espace monde</li>
+      <li>Animer en douceur avec <strong>Lerp</strong>, <strong>InterpTo</strong> et les fonctions trigonométriques</li>
+    </ul>
+  </div>
+
+  <h2>Le repère d'Unreal</h2>
+  <p>Toute position dans un monde 3D se décrit par trois nombres, X, Y et Z, mesurés le long de trois axes. Chaque moteur choisit sa convention ; celle d'Unreal est la suivante :</p>
+
+  <div class="two-col">
+    <figure class="figure">
+      <svg viewBox="0 0 320 260" width="320" role="img" aria-label="Repère d'Unreal : X vers l'avant en rouge, Y vers la droite en vert, Z vers le haut en bleu">
+        <defs>
+          <marker id="ax-r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ff5d52"/></marker>
+          <marker id="ax-g" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#3ddc97"/></marker>
+          <marker id="ax-b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5aa6ff"/></marker>
+        </defs>
+        <path d="M60 200 L170 150 L290 190 L180 245 Z" fill="currentColor" fill-opacity="0.05" stroke="currentColor" stroke-opacity="0.2"/>
+        <line x1="160" y1="190" x2="270" y2="225" stroke="#ff5d52" stroke-width="4" marker-end="url(#ax-r)"/>
+        <line x1="160" y1="190" x2="265" y2="150" stroke="#3ddc97" stroke-width="4" marker-end="url(#ax-g)"/>
+        <line x1="160" y1="190" x2="160" y2="50" stroke="#5aa6ff" stroke-width="4" marker-end="url(#ax-b)"/>
+        <circle cx="160" cy="190" r="5" fill="currentColor"/>
+        <g font-size="14" font-weight="700">
+          <text x="250" y="248" fill="#ff5d52">X · avant</text>
+          <text x="232" y="140" fill="#3ddc97">Y · droite</text>
+          <text x="170" y="56" fill="#5aa6ff">Z · haut</text>
+        </g>
+        <text x="40" y="190" font-size="12" fill="currentColor" opacity="0.7">origine (0, 0, 0)</text>
+      </svg>
+      <figcaption>X vers l'avant, Y vers la droite, Z vers le haut.</figcaption>
+    </figure>
+    <div>
+      <dl class="defs">
+        <dt>X (rouge)</dt><dd>L'avant. Un Actor « regarde » le long de son axe X local : c'est son <em>Forward Vector</em>.</dd>
+        <dt>Y (vert)</dt><dd>La droite : le <em>Right Vector</em>.</dd>
+        <dt>Z (bleu)</dt><dd>Le haut : l'<em>Up Vector</em>. La gravité tire vers -Z.</dd>
+        <dt>Unité</dt><dd>1 unité Unreal = <strong>1 centimètre</strong>. Un personnage mesure environ 180, une porte 200 à 220.</dd>
+        <dt>Main gauche</dt><dd>Ce repère est dit « main gauche » (comme celui de DirectX), contrairement à Blender ou Godot. Les exportateurs FBX gèrent la conversion.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="callout tip">
+    <p class="callout-title">Le moyen mnémotechnique des couleurs</p>
+    <p>R, G, B dans l'ordre X, Y, Z : rouge, vert, bleu. Le gizmo de l'éditeur, les outils de débogage et la plupart des logiciels 3D utilisent ce même code couleur.</p>
+  </div>
+
+  <h2>Les vecteurs</h2>
+  <p>Un <strong>vecteur</strong> est un triplet de nombres <code>(X, Y, Z)</code>. En C++, c'est <code>FVector</code> (en double précision depuis UE5) ; en Blueprint, c'est le type <em>Vector</em>, aux pins jaunes. Le même type sert à représenter deux idées différentes, et il faut toujours savoir laquelle on manipule :</p>
+  <div class="compare">
+    <div class="neutral">
+      <h4>Une position</h4>
+      <p>Un point dans l'espace : « l'orbe est en <code>(500, 200, 100)</code> ». C'est ce que renvoie <code>GetActorLocation</code>.</p>
+    </div>
+    <div class="alt">
+      <h4>Un déplacement (une direction et une longueur)</h4>
+      <p>Une flèche : « avancer de 300 vers +X ». C'est ce que renvoient <code>GetActorForwardVector</code> ou une vitesse (<code>GetVelocity</code>).</p>
+    </div>
+  </div>
+
+  <h3>Les opérations de base</h3>
+  <table>
+    <thead><tr><th>Opération</th><th>C++</th><th>Sens géométrique</th></tr></thead>
+    <tbody>
+      <tr><td>Addition</td><td><code>A + B</code></td><td>Mettre deux flèches bout à bout. Position + déplacement = nouvelle position.</td></tr>
+      <tr><td>Soustraction</td><td><code>B - A</code></td><td>La flèche <strong>qui va de A vers B</strong>. La formule la plus utile du jeu vidéo.</td></tr>
+      <tr><td>Multiplication par un nombre</td><td><code>V * 2.0</code></td><td>Allonge (ou raccourcit) la flèche sans changer sa direction. Un nombre négatif l'inverse.</td></tr>
+      <tr><td>Longueur</td><td><code>V.Size()</code> (<code>Length</code>)</td><td>La taille de la flèche : <code>√(x² + y² + z²)</code>.</td></tr>
+      <tr><td>Distance</td><td><code>FVector::Dist(A, B)</code></td><td>La longueur de <code>B - A</code>.</td></tr>
+      <tr><td>Normalisation</td><td><code>V.GetSafeNormal()</code></td><td>La même direction, mais de longueur 1 : un <strong>vecteur unitaire</strong>, une direction pure.</td></tr>
+    </tbody>
+  </table>
+
+  <figure class="figure">
+    <svg viewBox="0 0 640 250" width="640" role="img" aria-label="Le vecteur B moins A va de A vers B ; normalisé, il garde sa direction avec une longueur 1">
+      <defs>
+        <marker id="m-o" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ffb15c"/></marker>
+        <marker id="m-p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#b195ff"/></marker>
+      </defs>
+      <g stroke="currentColor" stroke-opacity="0.08">
+        <path d="M40 30V220M120 30V220M200 30V220M280 30V220M360 30V220M440 30V220M520 30V220M600 30V220"/>
+        <path d="M40 30H600M40 93H600M40 157H600M40 220H600"/>
+      </g>
+      <circle cx="120" cy="190" r="9" fill="#5aa9ff"/>
+      <text x="96" y="222" font-size="13" fill="currentColor">A : le garde</text>
+      <circle cx="520" cy="60" r="9" fill="#ff6b6b"/>
+      <text x="470" y="40" font-size="13" fill="currentColor">B : le joueur</text>
+      <line x1="128" y1="184" x2="508" y2="68" stroke="#ffb15c" stroke-width="3" marker-end="url(#m-o)"/>
+      <text x="300" y="110" font-size="14" font-weight="700" fill="#ffb15c">B − A</text>
+      <text x="300" y="128" font-size="12" fill="currentColor" opacity="0.75">longueur = distance (ici 400)</text>
+      <line x1="128" y1="190" x2="196" y2="170" stroke="#b195ff" stroke-width="4" marker-end="url(#m-p)"/>
+      <text x="150" y="160" font-size="13" font-weight="700" fill="#b195ff" text-anchor="end">normalisé</text>
+      <text x="150" y="174" font-size="12" fill="currentColor" opacity="0.75" text-anchor="end">longueur 1</text>
+    </svg>
+    <figcaption>Pour aller de A vers B, on calcule <b>B − A</b>. Sa longueur est la distance, sa version normalisée est la direction.</figcaption>
+  </figure>
+
+  <p>Ces trois lignes reviennent dans presque tous les jeux : direction et distance vers une cible, puis déplacement à vitesse constante dans cette direction.</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="Chaser.cpp (extrait)" data-highlight="6-8,13">
+void AChaser::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+    if (!Target) { return; }
+
+    const FVector ToTarget = Target->GetActorLocation() - GetActorLocation(); // de moi vers la cible
+    const double Distance = ToTarget.Size();                                  // en centimètres
+    const FVector Direction = ToTarget.GetSafeNormal();                       // longueur 1
+
+    if (Distance > StopDistance)
+    {
+        // Vitesse (cm/s) × temps écoulé (s) = déplacement de cette frame, identique à 30 ou 144 FPS
+        AddActorWorldOffset(Direction * Speed * DeltaSeconds, true);
+    }
+}
+</script>
+    </div>
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="Direction (B − A normalisé) × vitesse × Delta Seconds : un déplacement à vitesse constante quel que soit le framerate.">
+{
+  "nodes": [
+    { "id": "tick", "type": "event", "title": "Event Tick", "x": 0, "y": 0,
+      "out": [ { "type": "exec" }, { "name": "Delta Seconds", "type": "float" } ] },
+    { "id": "tloc", "type": "pure", "title": "GetActorLocation", "subtitle": "Target", "x": 0, "y": 120,
+      "in": [ { "name": "Target", "type": "object", "value": "Target" } ],
+      "out": [ { "name": "Return Value", "type": "vector" } ] },
+    { "id": "mloc", "type": "pure", "title": "GetActorLocation", "x": 0, "y": 240,
+      "in": [ { "name": "Target", "type": "object", "value": "self" } ],
+      "out": [ { "name": "Return Value", "type": "vector" } ] },
+    { "id": "sub", "type": "op", "title": "−", "x": 250, "y": 170,
+      "in": [ { "type": "vector" }, { "type": "vector" } ], "out": [ { "type": "vector" } ] },
+    { "id": "norm", "type": "pure", "title": "Normalize", "x": 380, "y": 170,
+      "in": [ { "name": "A", "type": "vector" } ], "out": [ { "name": "Return Value", "type": "vector" } ] },
+    { "id": "speed", "type": "var", "title": "Speed", "x": 400, "y": 290, "out": [ { "type": "float" } ] },
+    { "id": "mul", "type": "op", "title": "×", "x": 590, "y": 190,
+      "in": [ { "type": "vector" }, { "type": "float" }, { "type": "float" } ], "out": [ { "type": "vector" } ] },
+    { "id": "add", "type": "function", "title": "AddActorWorldOffset", "x": 760, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object", "value": "self" }, { "name": "Delta Location", "type": "vector" }, { "name": "Sweep", "type": "bool", "value": true } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "tick", 0, "add", 0 ],
+    [ "tloc", 0, "sub", 0 ],
+    [ "mloc", 0, "sub", 1 ],
+    [ "sub", 0, "norm", 0 ],
+    [ "norm", 0, "mul", 0 ],
+    [ "speed", 0, "mul", 1 ],
+    [ "tick", 1, "mul", 2 ],
+    [ "mul", 0, "add", 2 ]
+  ]
+}
+</script>
+    </div>
+  </div>
+
+  <div class="callout perf">
+    <p class="callout-title">Comparer des distances au carré</p>
+    <p>La racine carrée de <code>Size()</code> a un coût. Pour savoir si une cible est à moins de 1 000 cm, comparez plutôt <code>FVector::DistSquared(A, B) &lt; 1000.0 * 1000.0</code> : même résultat, sans racine. Négligeable pour un objet, utile quand on teste des centaines d'ennemis par frame.</p>
+  </div>
+
+  <div class="callout warn">
+    <p class="callout-title">Normaliser un vecteur nul</p>
+    <p>Le vecteur <code>(0, 0, 0)</code> n'a pas de direction : le normaliser n'a pas de sens. <code>GetSafeNormal()</code> renvoie alors <code>(0, 0, 0)</code> au lieu de produire des valeurs invalides (<em>NaN</em>) qui contamineraient toute la physique. Utilisez toujours la version « Safe » (en Blueprint, <em>Normalize</em> est déjà sécurisé).</p>
+  </div>
+
+  <h2>Le produit scalaire</h2>
+  <p>Le <strong>produit scalaire</strong> (<em>dot product</em>) de deux vecteurs donne <strong>un nombre</strong>. Quand les deux vecteurs sont normalisés, ce nombre est le <strong>cosinus de l'angle</strong> entre eux, et il se lit très simplement :</p>
+  <p class="center"><code>A · B = Ax×Bx + Ay×By + Az×Bz = |A| × |B| × cos θ</code></p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 660 230" width="660" role="img" aria-label="Valeur du produit scalaire selon l'angle : 1 même direction, 0 perpendiculaire, -1 opposé">
+      <defs>
+        <marker id="d-b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5aa9ff"/></marker>
+        <marker id="d-o" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ffb15c"/></marker>
+      </defs>
+      <g font-size="13" fill="currentColor" text-anchor="middle">
+        <g transform="translate(90 130)">
+          <line x1="0" y1="0" x2="80" y2="0" stroke="#5aa9ff" stroke-width="4" marker-end="url(#d-b)"/>
+          <line x1="0" y1="8" x2="70" y2="8" stroke="#ffb15c" stroke-width="4" marker-end="url(#d-o)"/>
+          <text x="40" y="60" font-weight="700" font-size="20">1</text><text x="40" y="80">même direction</text>
+        </g>
+        <g transform="translate(250 130)">
+          <line x1="0" y1="0" x2="80" y2="0" stroke="#5aa9ff" stroke-width="4" marker-end="url(#d-b)"/>
+          <line x1="0" y1="0" x2="57" y2="-57" stroke="#ffb15c" stroke-width="4" marker-end="url(#d-o)"/>
+          <text x="40" y="60" font-weight="700" font-size="20">0,71</text><text x="40" y="80">45° : devant</text>
+        </g>
+        <g transform="translate(400 130)">
+          <line x1="0" y1="0" x2="80" y2="0" stroke="#5aa9ff" stroke-width="4" marker-end="url(#d-b)"/>
+          <line x1="0" y1="0" x2="0" y2="-80" stroke="#ffb15c" stroke-width="4" marker-end="url(#d-o)"/>
+          <text x="40" y="60" font-weight="700" font-size="20">0</text><text x="40" y="80">perpendiculaire</text>
+        </g>
+        <g transform="translate(560 130)">
+          <line x1="0" y1="0" x2="70" y2="0" stroke="#5aa9ff" stroke-width="4" marker-end="url(#d-b)"/>
+          <line x1="0" y1="8" x2="-60" y2="8" stroke="#ffb15c" stroke-width="4" marker-end="url(#d-o)"/>
+          <text x="10" y="60" font-weight="700" font-size="20">−1</text><text x="10" y="80">opposé : derrière</text>
+        </g>
+      </g>
+      <text x="20" y="28" font-size="13" fill="#5aa9ff" font-weight="600">Bleu : direction du regard (Forward Vector)</text>
+      <text x="20" y="48" font-size="13" fill="#ffb15c" font-weight="600">Orange : direction vers la cible (normalisée)</text>
+    </svg>
+    <figcaption>Le signe du produit scalaire suffit à savoir si une cible est devant (&gt; 0) ou derrière (&lt; 0).</figcaption>
+  </figure>
+
+  <h3>Application : le cône de vision d'un garde</h3>
+  <p>Un garde voit le joueur si celui-ci est assez proche et dans un cône de 90° (45° de chaque côté) devant lui. On compare le produit scalaire au cosinus du demi-angle : <code>cos 45° ≈ 0,707</code>. Si le dot est plus grand, l'angle est plus petit, donc le joueur est dans le cône.</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 560 300" width="560" role="img" aria-label="Cône de vision de 90 degrés : un joueur à l'intérieur est vu, un joueur hors du cône ou trop loin ne l'est pas">
+      <path d="M60 150 L201.4 8.6 A200 200 0 0 1 201.4 291.4 Z" fill="#facc15" fill-opacity="0.10" stroke="#facc15" stroke-opacity="0.5"/>
+      <circle cx="60" cy="150" r="14" fill="#5aa9ff"/>
+      <line x1="60" y1="150" x2="170" y2="150" stroke="#5aa9ff" stroke-width="3"/>
+      <text x="38" y="186" font-size="13" fill="currentColor">Garde</text>
+      <path d="M110 150 A50 50 0 0 0 95.4 114.6" fill="none" stroke="currentColor" stroke-opacity="0.6"/>
+      <text x="114" y="128" font-size="12" fill="currentColor">45°</text>
+      <text x="180" y="146" font-size="12" fill="#5aa9ff">Forward</text>
+      <circle cx="230" cy="172" r="10" fill="#4ade80"/><text x="246" y="176" font-size="13" fill="#4ade80">vu (dot = 0,99)</text>
+      <circle cx="130" cy="262" r="10" fill="#ff6b6b"/><text x="146" y="266" font-size="13" fill="#ff6b6b">hors du cône (dot = 0,54)</text>
+      <circle cx="360" cy="140" r="10" fill="#ff6b6b"/><text x="376" y="144" font-size="13" fill="#ff6b6b">trop loin</text>
+      <text x="300" y="40" font-size="12" fill="currentColor" opacity="0.7">rayon de vision : SightRadius</text>
+    </svg>
+    <figcaption>Deux tests combinés : la distance, puis le produit scalaire comparé à cos(45°).</figcaption>
+  </figure>
+
+  <div class="tabs">
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="Guard.cpp (extrait)" data-highlight="13-14">
+bool AGuard::CanSee(const AActor* Other) const
+{
+    if (!Other) { return false; }
+
+    const FVector ToOther = Other->GetActorLocation() - GetActorLocation();
+
+    // 1. Assez proche ? (comparaison au carré : pas de racine)
+    if (ToOther.SizeSquared() > FMath::Square(SightRadius)) { return false; }
+
+    // 2. Dans le cône ? Les deux vecteurs doivent être normalisés
+    const FVector Direction = ToOther.GetSafeNormal();
+    const double CosHalfAngle = FMath::Cos(FMath::DegreesToRadians(HalfAngleDegrees));
+    const double Dot = FVector::DotProduct(GetActorForwardVector(), Direction); // ou : Forward | Direction
+    return Dot >= CosHalfAngle;
+}
+</script>
+    </div>
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="Le test « dans le cône » : Dot(Forward, Direction) ≥ Cos(45°). Le test de distance s'ajoute avec un AND.">
+{
+  "nodes": [
+    { "id": "fwd", "type": "pure", "title": "GetActorForwardVector", "x": 0, "y": 0,
+      "in": [ { "name": "Target", "type": "object", "value": "self" } ],
+      "out": [ { "name": "Return Value", "type": "vector" } ] },
+    { "id": "dir", "type": "var", "title": "DirectionToPlayer", "x": 0, "y": 110, "out": [ { "type": "vector" } ] },
+    { "id": "dot", "type": "pure", "title": "Dot Product", "x": 260, "y": 30,
+      "in": [ { "name": "A", "type": "vector" }, { "name": "B", "type": "vector" } ],
+      "out": [ { "name": "Return Value", "type": "float" } ] },
+    { "id": "half", "type": "var", "title": "HalfAngle", "x": 60, "y": 200, "out": [ { "type": "float" } ] },
+    { "id": "cos", "type": "pure", "title": "Cos (Degrees)", "x": 260, "y": 170,
+      "in": [ { "name": "A", "type": "float" } ], "out": [ { "name": "Return Value", "type": "float" } ] },
+    { "id": "ge", "type": "op", "title": "≥", "x": 480, "y": 90,
+      "in": [ { "type": "float" }, { "type": "float" } ], "out": [ { "type": "bool" } ] },
+    { "id": "ret", "type": "flow", "title": "Return Node", "x": 640, "y": 60,
+      "in": [ { "type": "exec" }, { "name": "In Cone", "type": "bool" } ] }
+  ],
+  "links": [
+    [ "fwd", 0, "dot", 0 ],
+    [ "dir", 0, "dot", 1 ],
+    [ "half", 0, "cos", 0 ],
+    [ "dot", 0, "ge", 0 ],
+    [ "cos", 0, "ge", 1 ],
+    [ "ge", 0, "ret", 1 ]
+  ]
+}
+</script>
+    </div>
+  </div>
+
+  <h3>Autres usages du produit scalaire</h3>
+  <dl class="defs">
+    <dt>Attaque dans le dos</dt><dd><code>Dot(VictimForward, AttackerForward) &gt; 0.5</code> : l'attaquant regarde dans la même direction que la victime, il est donc derrière elle. Bonus de dégâts !</dd>
+    <dt>Projection</dt><dd><code>Dot(Velocity, Forward)</code> donne la vitesse « vers l'avant » d'un véhicule, en ignorant la composante latérale (qui sert à mesurer la dérive).</dd>
+    <dt>Pente</dt><dd><code>Dot(Hit.ImpactNormal, FVector::UpVector)</code> vaut 1 sur un sol plat, 0 sur un mur : idéal pour savoir si une surface est praticable (c'est ce que fait le <em>Walkable Floor Angle</em> du Character Movement).</dd>
+  </dl>
+
+  <h2>Le produit vectoriel</h2>
+  <p>Le <strong>produit vectoriel</strong> (<em>cross product</em>) de deux vecteurs donne <strong>un troisième vecteur, perpendiculaire aux deux</strong>. Sa longueur est maximale quand A et B sont perpendiculaires, nulle quand ils sont parallèles. En C++ : <code>FVector::CrossProduct(A, B)</code> ou l'opérateur <code>A ^ B</code>.</p>
+  <p class="center"><code>A × B = (Ay×Bz − Az×By, Az×Bx − Ax×Bz, Ax×By − Ay×Bx)</code></p>
+  <p>Avec les axes d'Unreal : <code>Forward ^ Right = Up</code>, c'est-à-dire <code>(1,0,0) ^ (0,1,0) = (0,0,1)</code>. Attention, l'ordre compte : <code>B ^ A = -(A ^ B)</code>.</p>
+
+  <table>
+    <thead><tr><th>Problème</th><th>Solution avec le produit vectoriel</th></tr></thead>
+    <tbody>
+      <tr><td>La cible est-elle à ma gauche ou à ma droite ?</td><td><code>(Forward ^ ToTarget).Z</code> : positif à droite, négatif à gauche (Z vers le haut). Équivalent plus lisible : le signe de <code>Dot(RightVector, ToTarget)</code>.</td></tr>
+      <tr><td>Trouver la normale d'un triangle</td><td><code>((B - A) ^ (C - A)).GetSafeNormal()</code></td></tr>
+      <tr><td>Construire un repère à partir d'une direction</td><td><code>Right = (Up ^ Forward).GetSafeNormal()</code>, puis <code>Up = Forward ^ Right</code></td></tr>
+      <tr><td>Axe de rotation pour aligner A sur B</td><td><code>(A ^ B).GetSafeNormal()</code>, avec l'angle <code>Acos(Dot(A, B))</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="quiz">
+    <p class="q">Le Forward Vector d'une tourelle est <code>(1, 0, 0)</code>. La direction normalisée vers le joueur est <code>(0, -1, 0)</code>. Que vaut leur produit scalaire, et que signifie-t-il ?</p>
+    <ul>
+      <li>1 : le joueur est droit devant</li>
+      <li data-correct>0 : le joueur est exactement sur le côté (ici à gauche, puisque Y négatif)</li>
+      <li>−1 : le joueur est derrière</li>
+      <li>(0, 0, −1) : le joueur est en dessous</li>
+    </ul>
+    <p class="explain"><code>1×0 + 0×(−1) + 0×0 = 0</code> : les vecteurs sont perpendiculaires. Le produit scalaire renvoie un nombre, pas un vecteur. Pour savoir de quel côté, on regarde le signe de Y (ou de <code>Dot(Right, Direction)</code>) : négatif, donc à gauche.</p>
+  </div>
+
+  <h2>Les rotations</h2>
+  <h3>FRotator : Pitch, Yaw, Roll</h3>
+  <p>La façon la plus intuitive de décrire une orientation est de donner trois angles en <strong>degrés</strong>. C'est le <code>FRotator</code> (pins bleu lavande en Blueprint). Attention à l'ordre du constructeur C++ : <code>FRotator(Pitch, Yaw, Roll)</code>.</p>
+  <div class="cards">
+    <div class="card">
+      <span class="card-tag">Yaw · autour de Z</span>
+      <h4>Tourner la tête (non)</h4>
+      <p>Gauche / droite. C'est l'angle qu'on modifie pour orienter un personnage ou une tourelle sur le sol.</p>
+    </div>
+    <div class="card">
+      <span class="card-tag">Pitch · autour de Y</span>
+      <h4>Hocher la tête (oui)</h4>
+      <p>Haut / bas. Limité en général à ±89° pour une caméra, sinon l'image se retourne.</p>
+    </div>
+    <div class="card">
+      <span class="card-tag">Roll · autour de X</span>
+      <h4>Pencher la tête</h4>
+      <p>Inclinaison latérale. Utilisé pour un avion qui vire ou une caméra qui tangue.</p>
+    </div>
+  </div>
+
+  <dl class="defs">
+    <dt>Rotation vers une direction</dt><dd><code>Direction.Rotation()</code> (C++) ou <em>Rotation From X Vector</em> (Blueprint) : le FRotator qui fait regarder dans cette direction.</dd>
+    <dt>Regarder une cible</dt><dd><code>UKismetMathLibrary::FindLookAtRotation(Start, Target)</code>, nœud <em>Find Look at Rotation</em>.</dd>
+    <dt>Direction d'une rotation</dt><dd><code>Rotator.Vector()</code> (<em>Get Forward Vector</em> d'un rotator) : le vecteur unitaire vers lequel il pointe.</dd>
+    <dt>Angle entre deux orientations</dt><dd>Ne soustrayez pas les angles bruts : 350° et 10° sont à 20° l'un de l'autre, pas à 340°. Utilisez <code>FRotator::NormalizeAxis</code>, <code>FMath::FindDeltaAngleDegrees</code> ou le nœud <em>Delta (Rotator)</em>.</dd>
+  </dl>
+
+  <h3>Le blocage de cardan et les quaternions</h3>
+  <p>Les angles d'Euler ont un défaut célèbre : le <strong>blocage de cardan</strong> (<em>gimbal lock</em>). Quand le Pitch atteint ±90°, les axes Yaw et Roll se confondent et l'on perd un degré de liberté : certaines rotations deviennent impossibles à exprimer de façon continue, et les interpolations font des détours étranges. Pour une caméra de jeu classique (Pitch limité), ce n'est jamais un problème. Pour un vaisseau spatial qui fait des loopings, il faut des <strong>quaternions</strong>.</p>
+  <p>Un <strong>quaternion</strong> (<code>FQuat</code>) représente une rotation comme <em>un axe et un angle</em>, codés sur quatre nombres. Inutile de comprendre sa formule : retenez qu'il n'a pas de blocage de cardan, qu'il se combine par multiplication, et qu'il s'interpole parfaitement avec <code>FQuat::Slerp</code>. Les composants d'Unreal stockent d'ailleurs leur rotation en interne sous forme de quaternion.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Spaceship.cpp (extrait)" data-highlight="7-9">
+void ASpaceship::ApplySteering(float PitchInput, float YawInput, float RollInput, float DeltaSeconds)
+{
+    const float Step = TurnRateDegrees * DeltaSeconds;
+
+    // Rotations autour des axes LOCAUX du vaisseau : aucune limite, aucun blocage de cardan
+    const FQuat Delta =
+        FQuat(FVector::RightVector,   FMath::DegreesToRadians(PitchInput * Step)) *
+        FQuat(FVector::UpVector,      FMath::DegreesToRadians(YawInput * Step)) *
+        FQuat(FVector::ForwardVector, FMath::DegreesToRadians(RollInput * Step));
+
+    AddActorLocalRotation(Delta);
+}
+</script>
+
+  <div class="callout info">
+    <p class="callout-title">L'ordre des multiplications compte</p>
+    <p>Comme pour le produit vectoriel, <code>A * B</code> n'est pas égal à <code>B * A</code> pour des quaternions : tourner de 90° en Yaw puis de 90° en Pitch ne donne pas la même orientation que l'inverse. Faites l'essai avec un livre posé sur une table : c'est la nature même des rotations en 3D.</p>
+  </div>
+
+  <h2>Les transforms : local et monde</h2>
+  <p>Un <code>FTransform</code> (pins orange) regroupe tout ce qui place un objet : <strong>position</strong> (<em>Location</em>), <strong>rotation</strong> (un quaternion) et <strong>échelle</strong> (<em>Scale 3D</em>). Chaque composant a un transform <strong>relatif</strong> à son parent, et un transform <strong>monde</strong> qui en découle.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    W["Monde<br>origine (0, 0, 0)"] -->|"Actor Transform<br>Location (1000, 0, 0)<br>Yaw 90°"| A["Racine du vaisseau"]
+    A -->|"Relative Transform<br>Location (50, 100, 0)"| G["Canon gauche"]
+    G -->|"Socket Muzzle<br>(80, 0, 0)"| M["Bouche du canon"]
+    M -.->|"Position monde<br>calculée par le moteur"| R["(900, 130, 0)"]
+</pre>
+    <figcaption>Les transforms se composent de parent en enfant. Le canon est à (50, 100, 0) dans le repère du vaisseau ; son repère tourne avec le vaisseau.</figcaption>
+  </figure>
+
+  <p>Passer d'un espace à l'autre est une opération fréquente : « où est, dans le monde, le point situé 200 cm devant et 50 cm au-dessus de ce personnage ? » ou, à l'inverse, « où est le joueur <em>par rapport</em> au garde ? ».</p>
+<script type="text/plain" data-lang="cpp" data-file="Exemples de changements de repère">
+const FTransform& ActorTransform = GetActorTransform();
+
+// Local -> monde : un point 200 cm devant et 50 cm au-dessus de l'Actor, quelle que soit son orientation
+const FVector WorldPoint = ActorTransform.TransformPosition(FVector(200.0, 0.0, 50.0));
+
+// Monde -> local : la position du joueur vue depuis le garde (X > 0 : devant, Y > 0 : à droite)
+const FVector LocalPlayer = ActorTransform.InverseTransformPosition(Player->GetActorLocation());
+
+// Pour une DIRECTION, on ne veut ni la translation ni l'échelle : TransformVectorNoScale
+const FVector WorldDir = ActorTransform.TransformVectorNoScale(FVector::ForwardVector);
+
+// Équivalents directs sur l'Actor
+const FVector Forward = GetActorForwardVector(); // X local exprimé dans le monde
+const FVector Right = GetActorRightVector();
+const FVector Up = GetActorUpVector();
+</script>
+  <p>En Blueprint, les nœuds correspondants sont <em>Transform Location</em>, <em>Inverse Transform Location</em> et <em>Transform Direction</em>. Côté composants, distinguez bien <em>Set Relative Location</em> (par rapport au parent) et <em>Set World Location</em> (absolue).</p>
+
+  <div class="callout warn">
+    <p class="callout-title">L'échelle non uniforme</p>
+    <p>Une échelle différente sur chaque axe (par exemple <code>(1, 1, 3)</code>) déforme aussi les enfants et les directions transformées. Évitez de mettre une échelle non uniforme sur un parent qui a des enfants tournés : ils seront cisaillés. Mettez l'échelle sur le mesh, pas sur la racine.</p>
+  </div>
+
+  <h2>Interpolation : bouger en douceur</h2>
+  <p>Un mouvement instantané paraît brutal. On veut presque toujours passer d'une valeur à une autre <strong>progressivement</strong>. Deux familles d'outils existent.</p>
+
+  <h3>Lerp : un mélange piloté par Alpha</h3>
+  <p><code>Lerp(A, B, Alpha)</code> (<em>linear interpolation</em>) renvoie A quand Alpha vaut 0, B quand Alpha vaut 1, et le mélange proportionnel entre les deux : <code>A + (B − A) × Alpha</code>. C'est l'outil idéal quand on <strong>connaît la durée</strong> de la transition : on fait avancer Alpha de 0 à 1 avec une Timeline ou un chrono, éventuellement à travers une <strong>courbe d'accélération</strong> (<em>easing</em>).</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 600 290" width="600" role="img" aria-label="Courbes d'interpolation : linéaire, ease-in-out et l'approche exponentielle d'InterpTo">
+      <g font-size="13" fill="currentColor">
+        <line x1="60" y1="16" x2="90" y2="16" stroke="#5aa9ff" stroke-width="3"/><text x="98" y="20">Lerp linéaire</text>
+        <line x1="215" y1="16" x2="245" y2="16" stroke="#b195ff" stroke-width="3"/><text x="253" y="20">Lerp + ease in-out</text>
+        <line x1="405" y1="16" x2="435" y2="16" stroke="#4ade80" stroke-width="3"/><text x="443" y="20">FInterpTo</text>
+      </g>
+      <g transform="translate(0 30)">
+      <line x1="60" y1="220" x2="560" y2="220" stroke="currentColor" stroke-opacity="0.6" stroke-width="1.5"/>
+      <line x1="60" y1="220" x2="60" y2="30" stroke="currentColor" stroke-opacity="0.6" stroke-width="1.5"/>
+      <line x1="60" y1="40" x2="560" y2="40" stroke="currentColor" stroke-opacity="0.15" stroke-dasharray="4 4"/>
+      <polyline fill="none" stroke="#5aa9ff" stroke-width="2.5" points="60,220 560,40"/>
+      <polyline fill="none" stroke="#b195ff" stroke-width="2.5" stroke-linejoin="round" points="60,220 110,215.2 160,201.4 210,180.2 260,153.7 310,130 360,106.3 410,79.8 460,58.6 510,44.8 560,40"/>
+      <polyline fill="none" stroke="#4ade80" stroke-width="2.5" stroke-linejoin="round" points="60,220 85,166 110,128.2 135,101.8 160,83.2 185,70.3 210,61.2 260,50.3 310,45 360,42.6 410,41.3 460,40.6 560,40.1"/>
+      <g font-size="12" fill="currentColor">
+        <text x="52" y="44" text-anchor="end">B</text>
+        <text x="52" y="224" text-anchor="end">A</text>
+        <text x="560" y="240" text-anchor="end">temps</text>
+      </g>
+      </g>
+    </svg>
+    <figcaption>Lerp suit la courbe qu'on lui donne sur une durée fixe ; InterpTo se rapproche de la cible d'une fraction à chaque frame.</figcaption>
+  </figure>
+
+  <h3>InterpTo : suivre une cible qui bouge</h3>
+  <p>Quand la cible change en permanence (une caméra qui suit le joueur, une jauge qui rattrape la vraie valeur de vie), on utilise <code>FMath::FInterpTo</code>, <code>VInterpTo</code> (vecteurs) ou <code>RInterpTo</code> (rotations) dans le Tick. À chaque frame, la valeur parcourt une fraction de la distance restante, proportionnelle à <code>DeltaTime × InterpSpeed</code> : rapide quand on est loin, lent à l'approche.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Turret.cpp (extrait)" data-highlight="10-11">
+void ATurret::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+    if (!Target) { return; }
+
+    // Rotation idéale : regarder la cible, mais seulement en Yaw (la tourelle tourne sur son socle)
+    FRotator Desired = (Target->GetActorLocation() - GetActorLocation()).Rotation();
+    Desired.Pitch = 0.f;
+    Desired.Roll = 0.f;
+
+    const FRotator Smoothed = FMath::RInterpTo(GetActorRotation(), Desired, DeltaSeconds, TurnSpeed);
+    SetActorRotation(Smoothed);
+}
+</script>
+
+  <div class="compare">
+    <div class="good">
+      <h4>Correct</h4>
+      <p><code>FInterpTo(Current, Target, DeltaTime, Speed)</code> : le temps écoulé est pris en compte, le résultat est le même à 30 et à 144 images par seconde.</p>
+    </div>
+    <div class="bad">
+      <h4>Piège</h4>
+      <p><code>Lerp(Current, Target, 0.1)</code> appelé à chaque frame : on parcourt 10 % <em>par frame</em>, donc deux fois plus vite à 120 FPS qu'à 60. Si vous l'utilisez, l'Alpha doit dépendre de DeltaTime.</p>
+    </div>
+  </div>
+  <p>Pour un mouvement à <strong>vitesse constante</strong> qui s'arrête pile sur la cible (un ascenseur, un curseur), utilisez les variantes <code>FInterpConstantTo</code>, <code>VInterpConstantTo</code> et <code>RInterpConstantTo</code>.</p>
+
+  <h3>Les fonctions trigonométriques pour les mouvements cycliques</h3>
+  <p>Le sinus oscille indéfiniment entre -1 et 1 : c'est le moyen le plus simple de faire flotter une orbe, clignoter une lumière ou balancer une plateforme. Multipliez-le par une <strong>amplitude</strong> (la hauteur du mouvement) et multipliez le temps par une <strong>fréquence</strong>.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="FloatingOrb.cpp (extrait)" data-highlight="6-7">
+void AFloatingOrb::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    RunningTime += DeltaSeconds;
+    const double Offset = FMath::Sin(RunningTime * 2.0 * PI * BobFrequency) * BobAmplitude; // en cm
+    SetActorLocation(StartLocation + FVector(0.0, 0.0, Offset));
+
+    AddActorLocalRotation(FRotator(0.0, SpinSpeed * DeltaSeconds, 0.0)); // tourne sur lui-même
+}
+</script>
+
+  <dl class="defs">
+    <dt>Sin et Cos</dt><dd>Prennent des <strong>radians</strong> en C++ (<code>FMath::Sin</code>). En Blueprint, les nœuds <em>Sin (Degrees)</em> et <em>Sin (Radians)</em> existent : vérifiez lequel vous utilisez.</dd>
+    <dt>Placer des objets en cercle</dt><dd>Le point d'angle θ sur un cercle de rayon R est <code>(R × cos θ, R × sin θ)</code>. Pour 8 orbes : <code>θ = i × 360° / 8</code>.</dd>
+    <dt>Atan2</dt><dd><code>FMath::Atan2(Y, X)</code> donne l'angle d'une direction 2D, en gérant correctement les quatre quadrants. C'est ce que fait <code>Rotation()</code> pour le Yaw.</dd>
+    <dt>Acos</dt><dd><code>FMath::Acos(Dot)</code> transforme un produit scalaire de vecteurs normalisés en angle (en radians). Pensez à borner le dot entre -1 et 1 avec <code>FMath::Clamp</code>, les erreurs d'arrondi peuvent donner 1,0000001.</dd>
+  </dl>
+
+  <h2>Hasard et utilitaires</h2>
+  <table>
+    <thead><tr><th>Besoin</th><th>C++</th><th>Blueprint</th></tr></thead>
+    <tbody>
+      <tr><td>Nombre aléatoire</td><td><code>FMath::RandRange(Min, Max)</code></td><td><em>Random Float in Range</em>, <em>Random Integer in Range</em></td></tr>
+      <tr><td>Direction aléatoire</td><td><code>FMath::VRand()</code>, <code>FMath::VRandCone(Dir, Angle)</code></td><td><em>Random Unit Vector</em>, <em>Random Unit Vector in Cone</em></td></tr>
+      <tr><td>Point aléatoire dans une boîte</td><td><code>FMath::RandPointInBox(Box)</code></td><td><em>Random Point in Bounding Box</em></td></tr>
+      <tr><td>Hasard reproductible</td><td><code>FRandomStream Stream(Seed)</code></td><td><em>Random Stream</em> (variable) et nœuds « from Stream »</td></tr>
+      <tr><td>Borner une valeur</td><td><code>FMath::Clamp(V, Min, Max)</code></td><td><em>Clamp</em></td></tr>
+      <tr><td>Changer d'échelle de valeurs</td><td><code>FMath::GetMappedRangeValueClamped</code></td><td><em>Map Range Clamped</em></td></tr>
+      <tr><td>Comparer des flottants</td><td><code>FMath::IsNearlyEqual(A, B)</code>, <code>V.IsNearlyZero()</code></td><td><em>Nearly Equal (Float)</em></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <p class="callout-title">Ne testez jamais l'égalité exacte de deux flottants</p>
+    <p>À cause des arrondis, <code>0.1 + 0.2 == 0.3</code> est faux en informatique. Une interpolation qui « attend » que <code>Current == Target</code> peut ne jamais se terminer. Utilisez toujours une tolérance : <code>FMath::IsNearlyEqual(Current, Target, 0.01)</code>.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Une caméra suit le joueur avec <code>Location = Lerp(Location, PlayerLocation, 0.1)</code> appelé dans le Tick. Sur un PC à 144 FPS, la caméra semble beaucoup plus « collée » au joueur que sur un PC à 30 FPS. Comment corriger ?</p>
+    <ul>
+      <li>Remplacer 0.1 par 0.5</li>
+      <li>Limiter le jeu à 30 FPS</li>
+      <li data-correct>Utiliser <code>VInterpTo(Location, PlayerLocation, DeltaTime, Speed)</code>, qui tient compte du temps écoulé</li>
+      <li>Utiliser un quaternion</li>
+    </ul>
+    <p class="explain">Un Alpha fixe applique la même fraction à chaque frame : plus il y a de frames par seconde, plus la caméra rattrape vite. Les fonctions InterpTo intègrent DeltaTime pour un comportement identique sur toutes les machines.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Vous voulez savoir si un ennemi est à moins de 15 mètres. Quelle est la comparaison correcte et efficace ?</p>
+    <ul>
+      <li><code>FVector::Dist(A, B) &lt; 15</code></li>
+      <li><code>FVector::DistSquared(A, B) &lt; 1500</code></li>
+      <li data-correct><code>FVector::DistSquared(A, B) &lt; 1500 * 1500</code></li>
+      <li><code>(A - B).GetSafeNormal().Size() &lt; 1500</code></li>
+    </ul>
+    <p class="explain">Les unités sont des centimètres : 15 m = 1 500. Si l'on compare une distance au carré, il faut comparer au carré du seuil. Un vecteur normalisé a toujours une longueur de 1 (ou 0).</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Une tourelle qui ne tire que si elle vise juste</h4>
+    <p>Créez une tourelle qui pivote en douceur (seulement en Yaw) vers le joueur s'il est à moins de 20 mètres, et qui ne tire que lorsque le joueur est à moins de 5° de son axe de visée. Bonus : affichez « À gauche » ou « À droite » selon le côté où se trouve le joueur.</p>
+    <details>
+      <summary>Voir la solution</summary>
+<script type="text/plain" data-lang="cpp" data-file="Turret.cpp (Tick complet)">
+void ATurret::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    const APawn* Player = UGameplayStatics::GetPlayerPawn(this, 0);
+    if (!Player) { return; }
+
+    FVector ToPlayer = Player->GetActorLocation() - GetActorLocation();
+    ToPlayer.Z = 0.0; // on raisonne à plat : la tourelle ne tourne qu'en Yaw
+
+    if (ToPlayer.SizeSquared() > FMath::Square(2000.0)) { return; } // 20 m
+
+    // 1. Pivoter en douceur
+    const FRotator Desired = ToPlayer.Rotation();
+    SetActorRotation(FMath::RInterpTo(GetActorRotation(), Desired, DeltaSeconds, TurnSpeed));
+
+    // 2. Viser juste ? Dot entre la visée et la direction (toutes deux normalisées)
+    const FVector Direction = ToPlayer.GetSafeNormal();
+    const double Dot = FVector::DotProduct(GetActorForwardVector(), Direction);
+    if (Dot >= FMath::Cos(FMath::DegreesToRadians(5.0)))
+    {
+        TryFire(); // respecte une cadence de tir avec un timer
+    }
+
+    // 3. Bonus : le côté, avec le Right Vector
+    const bool bOnRight = FVector::DotProduct(GetActorRightVector(), Direction) > 0.0;
+    GEngine->AddOnScreenDebugMessage(1, 0.f, FColor::Yellow, bOnRight ? TEXT("À droite") : TEXT("À gauche"));
+}
+</script>
+      <p>En Blueprint, la chaîne est identique : <em>Get Player Pawn</em>, soustraction de positions, <em>Rotation From X Vector</em>, <em>RInterp To</em>, <em>Set Actor Rotation</em>, puis <em>Dot Product</em> comparé à <em>Cos (Degrees)</em> de 5. Mettre <code>Z</code> à zéro avant de normaliser évite qu'un joueur qui saute fasse « décrocher » la visée.</p>
+    </details>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Repère d'Unreal : <strong>X avant</strong> (rouge), <strong>Y droite</strong> (vert), <strong>Z haut</strong> (bleu) ; 1 unité = 1 cm.</li>
+      <li><code>B - A</code> va de A vers B ; sa longueur est la distance, <code>GetSafeNormal()</code> en donne la direction.</li>
+      <li>Multipliez toute vitesse par <strong>DeltaTime</strong> ; comparez les distances <strong>au carré</strong> quand c'est possible.</li>
+      <li><strong>Produit scalaire</strong> (vecteurs normalisés) : 1 même direction, 0 perpendiculaire, -1 opposé. Devant/derrière, cône de vision, pente.</li>
+      <li><strong>Produit vectoriel</strong> : un vecteur perpendiculaire aux deux autres. Normale, côté gauche/droite, construction d'un repère.</li>
+      <li><code>FRotator(Pitch, Yaw, Roll)</code> en degrés pour les cas simples ; <code>FQuat</code> pour les rotations libres, sans blocage de cardan.</li>
+      <li><code>FTransform</code> = position + rotation + échelle ; <code>TransformPosition</code> / <code>InverseTransformPosition</code> passent du local au monde et inversement.</li>
+      <li><strong>Lerp</strong> pour une transition de durée connue, <strong>InterpTo</strong> pour suivre une cible, <strong>Sin</strong> pour les mouvements cycliques ; jamais d'égalité exacte entre flottants.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>
