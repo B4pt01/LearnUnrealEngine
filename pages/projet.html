@@ -1,0 +1,1774 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Projet guidé : Orb Rush — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="projet">
+<article class="doc">
+
+  <h1>Projet guidé : Orb Rush</h1>
+  <p class="lead">Il est temps de tout assembler. Dans ce projet, vous allez construire de A à Z un petit jeu complet : <strong>Orb Rush</strong>. Le joueur doit ramasser 10 orbes lumineuses en 90 secondes dans une arène, pendant qu'un Gardien contrôlé par l'IA patrouille et le prend en chasse dès qu'il l'aperçoit. Trois vies, un HUD, des écrans de victoire et de défaite, un menu principal, des sons, des effets, et pour finir un exécutable à envoyer à vos amis.</p>
+
+  <div class="objectives">
+    <p>Dans ce projet</p>
+    <ul>
+      <li>Organiser un projet C++ complet en <strong>module</strong> et en dossiers par fonctionnalité</li>
+      <li>Répartir les responsabilités entre <strong>GameMode</strong>, <strong>GameState</strong>, <strong>PlayerController</strong> et <strong>Character</strong></li>
+      <li>Coder des orbes à ramasser, un chronomètre et un système de vies</li>
+      <li>Créer un <strong>Gardien IA</strong> avec perception, Behavior Tree et tâche C++ personnalisée</li>
+      <li>Afficher un <strong>HUD</strong> et des écrans de fin avec des widgets C++ et Blueprint</li>
+      <li>Ajouter un <strong>menu principal</strong>, des <strong>sons</strong> et des <strong>effets</strong></li>
+      <li><strong>Packager</strong> le jeu en version Shipping</li>
+    </ul>
+  </div>
+
+  <div class="callout info">
+    <p class="callout-title">Avant de commencer</p>
+    <p>Ce projet suppose que vous avez lu les chapitres <a href="architecture.html">Architecture</a>, <a href="blueprints.html">Blueprints</a> et <a href="cpp-bases.html">C++ : les bases</a>. Les autres chapitres (IA, UI, collisions…) sont rappelés au fil des étapes. Le code est écrit pour <strong>Unreal Engine 5.4 et suivants</strong>. Comptez deux à trois heures. Chaque étape se termine par un <strong>point de contrôle</strong> : ne passez pas à la suite tant qu'il n'est pas validé.</p>
+  </div>
+
+  <h2>Le jeu en un coup d'œil</h2>
+  <table>
+    <thead><tr><th>Élément</th><th>Règle</th></tr></thead>
+    <tbody>
+      <tr><td>Objectif</td><td>Ramasser <strong>10 orbes</strong> (12 sont placées dans l'arène)</td></tr>
+      <tr><td>Temps</td><td><strong>90 secondes</strong> ; à zéro, la partie est perdue</td></tr>
+      <tr><td>Vies</td><td><strong>3 vies</strong> ; le Gardien en retire une en touchant le joueur, qui réapparaît au point de départ avec 2 secondes d'invulnérabilité</td></tr>
+      <tr><td>Gardien</td><td>Patrouille entre des points ; poursuit le joueur dès qu'il le voit (un peu moins vite que lui) ; abandonne s'il le perd de vue</td></tr>
+      <tr><td>Écrans</td><td>Menu principal → partie → écran de victoire ou de défaite (rejouer ou retour au menu)</td></tr>
+    </tbody>
+  </table>
+
+  <figure class="figure">
+    <svg viewBox="0 0 520 440" width="520" role="img" aria-label="Plan de l'arène vu de dessus : point de départ au sud, orbes réparties, piliers, et la ronde du Gardien entre quatre points de patrouille">
+      <rect x="40" y="20" width="440" height="400" rx="6" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.5" stroke-width="3"/>
+      <g fill="currentColor" fill-opacity="0.18" stroke="currentColor" stroke-opacity="0.4">
+        <rect x="140" y="110" width="40" height="40" rx="4"/>
+        <rect x="340" y="110" width="40" height="40" rx="4"/>
+        <rect x="140" y="270" width="40" height="40" rx="4"/>
+        <rect x="340" y="270" width="40" height="40" rx="4"/>
+        <rect x="235" y="190" width="50" height="50" rx="4"/>
+      </g>
+      <path d="M110 70 L410 70 L410 340 L110 340 Z" fill="none" stroke="#ff6b6b" stroke-width="2" stroke-dasharray="7 6"/>
+      <g fill="#ff6b6b">
+        <circle cx="110" cy="70" r="7"/><circle cx="410" cy="70" r="7"/><circle cx="410" cy="340" r="7"/><circle cx="110" cy="340" r="7"/>
+      </g>
+      <g font-size="11" fill="#ff6b6b" font-weight="600">
+        <text x="72" y="62">TP_A</text><text x="420" y="62">TP_B</text><text x="420" y="356">TP_C</text><text x="66" y="356">TP_D</text>
+      </g>
+      <path d="M410 200 l-14 -10 l0 20 z" fill="#ff6b6b"/>
+      <circle cx="430" cy="200" r="14" fill="#ff6b6b" fill-opacity="0.25" stroke="#ff6b6b" stroke-width="2"/>
+      <text x="404" y="232" font-size="12" fill="#ff6b6b" font-weight="700">Gardien</text>
+      <g fill="#facc15" stroke="#facc15" stroke-opacity="0.4" stroke-width="6">
+        <circle cx="80" cy="45" r="7"/><circle cx="260" cy="60" r="7"/><circle cx="455" cy="120" r="7"/>
+        <circle cx="200" cy="200" r="7"/><circle cx="320" cy="215" r="7"/><circle cx="90" cy="230" r="7"/>
+        <circle cx="455" cy="300" r="7"/><circle cx="260" cy="300" r="7"/><circle cx="160" cy="380" r="7"/>
+        <circle cx="380" cy="390" r="7"/><circle cx="260" cy="150" r="7"/><circle cx="60" cy="395" r="7"/>
+      </g>
+      <polygon points="260,385 248,405 272,405" fill="#4ade80"/>
+      <text x="282" y="405" font-size="12" fill="#4ade80" font-weight="700">PlayerStart</text>
+    </svg>
+    <figcaption>L'arène (40 × 40 m) vue de dessus : 12 orbes (jaune), 5 piliers pour se cacher, la ronde du Gardien entre quatre <em>Target Points</em> (rouge) et le point de départ du joueur (vert).</figcaption>
+  </figure>
+
+  <h3>L'architecture du code</h3>
+  <p>Chaque classe a un rôle précis, conformément au Gameplay Framework. Le <strong>GameMode</strong> applique les règles ; le <strong>GameState</strong> stocke l'état de la partie et prévient l'interface quand il change ; le <strong>PlayerController</strong> gère l'affichage ; les Actors (orbes, Gardien) signalent les événements au GameMode.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    ORB["AOrb<br>orbe à ramasser"] -->|"OrbCollected()"| GM["AOrbRushGameMode<br>règles, chrono"]
+    GUA["AGuardianCharacter<br>+ AGuardianAIController"] -->|"PlayerCaught()"| GM
+    GM -->|"SetOrbs, SetLives,<br>SetRemainingTime"| GS["AOrbRushGameState<br>état + délégués"]
+    GM -->|"Respawn()"| CH["AOrbRushCharacter<br>joueur"]
+    GS -->|"OnOrbsChanged<br>OnTimeChanged<br>OnLivesChanged"| HUD["UOrbRushHUDWidget<br>(WBP_HUD)"]
+    GS -->|"OnMatchStateChanged"| PC["AOrbRushPlayerController"]
+    PC -->|"crée"| HUD
+    PC -->|"crée à la fin"| END["UOrbRushEndScreenWidget<br>(WBP_EndScreen)"]
+</pre>
+    <figcaption>Qui parle à qui. Les flèches pleines sont des appels de fonctions ; les délégués du GameState permettent à l'interface de réagir sans que la logique connaisse l'interface.</figcaption>
+  </figure>
+
+  <figure class="diagram">
+<pre class="mermaid">
+stateDiagram-v2
+    [*] --> Menu
+    Menu --> Playing : Jouer (OpenLevel Lvl_Arena)
+    Playing --> Playing : orbe ramassée / vie perdue
+    Playing --> Won : 10 orbes
+    Playing --> Lost : chrono à 0
+    Playing --> Lost : 0 vie
+    Won --> Playing : Rejouer
+    Lost --> Playing : Rejouer
+    Won --> Menu : Menu
+    Lost --> Menu : Menu
+</pre>
+    <figcaption>Les états d'une partie : <code>EOrbRushMatchState</code> vaut Playing, Won ou Lost.</figcaption>
+  </figure>
+
+  <h2>Étape 1 : créer le projet et le module</h2>
+  <ol class="steps">
+    <li><strong>Créer le projet</strong>Dans le launcher, lancez UE 5.4 ou plus récent. <em>Games → Blank</em>, type <strong>C++</strong>, <em>Starter Content</em> décoché, nom <code>OrbRush</code>. Le moteur génère un module de jeu nommé <code>OrbRush</code>, dont la macro d'export est <code>ORBRUSH_API</code>.</li>
+    <li><strong>Ajouter le contenu de départ</strong>Bouton <em>Add → Add Feature or Content Pack → Third Person</em> : vous récupérez le mannequin, ses animations et les Input Actions d'exemple. Nous écrirons quand même notre propre personnage en C++.</li>
+    <li><strong>Préparer les dossiers</strong>Créez <code>Content/OrbRush/</code> avec les sous-dossiers <code>Core</code>, <code>Player</code>, <code>Pickups</code>, <code>AI</code>, <code>UI</code>, <code>Audio</code>, <code>FX</code> et <code>Maps</code> (voir <a href="editeur.html">Prendre en main l'éditeur</a>).</li>
+    <li><strong>Déclarer les dépendances du module</strong>Remplacez le contenu de <code>OrbRush.Build.cs</code> par celui ci-dessous, fermez l'éditeur, faites un clic droit sur <code>OrbRush.uproject</code> → <em>Generate Visual Studio project files</em>, puis compilez depuis l'IDE.</li>
+  </ol>
+
+<script type="text/plain" data-lang="csharp" data-file="Source/OrbRush/OrbRush.Build.cs" data-highlight="9,11-16">
+using UnrealBuildTool;
+
+public class OrbRush : ModuleRules
+{
+    public OrbRush(ReadOnlyTargetRules Target) : base(Target)
+    {
+        PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+
+        PublicIncludePaths.Add(ModuleDirectory); // permet #include "Core/...", "AI/..." depuis tous les dossiers
+
+        PublicDependencyModuleNames.AddRange(new string[]
+        {
+            "Core", "CoreUObject", "Engine", "InputCore",
+            "EnhancedInput",                                   // Input Actions, Mapping Contexts
+            "AIModule", "GameplayTasks", "NavigationSystem",   // AIController, Behavior Tree, perception, NavMesh
+            "UMG", "Slate", "SlateCore",                       // widgets
+            "Niagara"                                          // effets visuels
+        });
+    }
+}
+</script>
+
+  <p>Le code source sera rangé par fonctionnalité, comme le contenu :</p>
+  <ul class="tree">
+    <li><span class="node c-purple">Source/OrbRush</span>
+      <ul>
+        <li><span class="node c-yellow">OrbRush.Build.cs</span><span class="desc">dépendances du module</span></li>
+        <li><span class="node c-yellow">OrbRush.h / OrbRush.cpp</span><span class="desc">générés : IMPLEMENT_PRIMARY_GAME_MODULE</span></li>
+        <li><span class="node c-blue">Core</span><span class="desc">OrbRushGameMode, OrbRushGameState, OrbRushPlayerController</span></li>
+        <li><span class="node c-blue">Player</span><span class="desc">OrbRushCharacter</span></li>
+        <li><span class="node c-blue">Pickups</span><span class="desc">Orb</span></li>
+        <li><span class="node c-blue">AI</span><span class="desc">GuardianCharacter, GuardianAIController, BTTask_FindPatrolPoint</span></li>
+        <li><span class="node c-blue">UI</span><span class="desc">OrbRushHUDWidget, OrbRushEndScreenWidget</span></li>
+      </ul>
+    </li>
+  </ul>
+
+  <div class="callout tip">
+    <p class="callout-title">Ajouter les classes</p>
+    <p>Pour chaque classe, utilisez <em>Tools → New C++ Class</em>, choisissez la classe parente, puis indiquez le chemin (par exemple <code>OrbRush/Core/</code>) dans le champ <em>Path</em>. Vous pouvez aussi créer les fichiers dans l'IDE puis régénérer les fichiers de projet. Créez-les au fur et à mesure des étapes : un projet qui compile à chaque étape est bien plus facile à déboguer.</p>
+  </div>
+
+  <div class="callout ue">
+    <p class="callout-title">Point de contrôle 1</p>
+    <p>Le projet compile sans erreur depuis l'IDE (<em>Development Editor</em>), l'éditeur s'ouvre, et les dossiers <code>Content/OrbRush/…</code> existent. Créez un niveau <em>Basic</em> enregistré sous <code>Maps/Lvl_Arena</code>, avec un sol de 40 × 40 m, quatre murs et cinq piliers, comme sur le plan.</p>
+  </div>
+
+  <h2>Étape 2 : le personnage du joueur</h2>
+  <p>Notre personnage reprend le schéma du chapitre <a href="input-personnage.html">Enhanced Input &amp; personnage</a> : caméra à la troisième personne sur un Spring Arm, déplacement relatif à la caméra, saut. Il ajoute une fonction <code>Respawn</code> et une courte invulnérabilité, utilisées quand le Gardien l'attrape.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/Player/OrbRushCharacter.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Character.h"
+#include "OrbRushCharacter.generated.h"
+
+class UCameraComponent;
+class USpringArmComponent;
+class UInputAction;
+class UInputMappingContext;
+struct FInputActionValue;
+
+UCLASS()
+class ORBRUSH_API AOrbRushCharacter : public ACharacter
+{
+    GENERATED_BODY()
+
+public:
+    AOrbRushCharacter();
+
+    virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
+
+    // Téléporte le joueur et le rend invulnérable quelques secondes
+    void Respawn(const FTransform& SpawnTransform);
+
+    bool IsInvulnerable() const { return bInvulnerable; }
+
+protected:
+    virtual void NotifyControllerChanged() override;
+
+    // Implémenté dans BP_OrbRushCharacter : effet et son de réapparition
+    UFUNCTION(BlueprintImplementableEvent, Category = "Orb Rush")
+    void OnRespawned();
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
+    TObjectPtr<USpringArmComponent> CameraBoom;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
+    TObjectPtr<UCameraComponent> FollowCamera;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Input")
+    TObjectPtr<UInputMappingContext> DefaultMappingContext;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Input")
+    TObjectPtr<UInputAction> MoveAction;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Input")
+    TObjectPtr<UInputAction> LookAction;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Input")
+    TObjectPtr<UInputAction> JumpAction;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Orb Rush", meta = (ClampMin = "0.0"))
+    float InvulnerabilityDuration = 2.f;
+
+private:
+    void Move(const FInputActionValue& Value);
+    void Look(const FInputActionValue& Value);
+    void EndInvulnerability();
+
+    bool bInvulnerable = false;
+    FTimerHandle InvulnerabilityHandle;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/Player/OrbRushCharacter.cpp" data-highlight="97-100">
+#include "Player/OrbRushCharacter.h"
+#include "Camera/CameraComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "EnhancedInputComponent.h"
+#include "EnhancedInputSubsystems.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/SpringArmComponent.h"
+#include "InputActionValue.h"
+#include "TimerManager.h"
+
+AOrbRushCharacter::AOrbRushCharacter()
+{
+    PrimaryActorTick.bCanEverTick = false;
+    GetCapsuleComponent()->InitCapsuleSize(42.f, 96.f);
+
+    // Le personnage se tourne dans la direction du mouvement, pas de la caméra
+    bUseControllerRotationPitch = false;
+    bUseControllerRotationYaw = false;
+    bUseControllerRotationRoll = false;
+
+    UCharacterMovementComponent* Movement = GetCharacterMovement();
+    Movement->bOrientRotationToMovement = true;
+    Movement->RotationRate = FRotator(0.f, 540.f, 0.f);
+    Movement->MaxWalkSpeed = 600.f;
+    Movement->JumpZVelocity = 700.f;
+    Movement->AirControl = 0.35f;
+
+    CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
+    CameraBoom->SetupAttachment(RootComponent);
+    CameraBoom->TargetArmLength = 450.f;
+    CameraBoom->bUsePawnControlRotation = true;
+
+    FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
+    FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
+    FollowCamera->bUsePawnControlRotation = false;
+}
+
+void AOrbRushCharacter::NotifyControllerChanged()
+{
+    Super::NotifyControllerChanged();
+
+    if (const APlayerController* PC = Cast<APlayerController>(Controller))
+    {
+        if (UEnhancedInputLocalPlayerSubsystem* Subsystem =
+                ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()))
+        {
+            Subsystem->AddMappingContext(DefaultMappingContext, 0);
+        }
+    }
+}
+
+void AOrbRushCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
+{
+    Super::SetupPlayerInputComponent(PlayerInputComponent);
+
+    if (UEnhancedInputComponent* Input = Cast<UEnhancedInputComponent>(PlayerInputComponent))
+    {
+        Input->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
+        Input->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+        Input->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AOrbRushCharacter::Move);
+        Input->BindAction(LookAction, ETriggerEvent::Triggered, this, &AOrbRushCharacter::Look);
+    }
+}
+
+void AOrbRushCharacter::Move(const FInputActionValue& Value)
+{
+    const FVector2D Input = Value.Get<FVector2D>();
+    if (!Controller) { return; }
+
+    // Avancer « vers où regarde la caméra », à plat (seulement le Yaw)
+    const FRotator YawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f);
+    const FVector Forward = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
+    const FVector Right = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
+
+    AddMovementInput(Forward, Input.Y);
+    AddMovementInput(Right, Input.X);
+}
+
+void AOrbRushCharacter::Look(const FInputActionValue& Value)
+{
+    const FVector2D Input = Value.Get<FVector2D>();
+    AddControllerYawInput(Input.X);
+    AddControllerPitchInput(Input.Y);
+}
+
+void AOrbRushCharacter::Respawn(const FTransform& SpawnTransform)
+{
+    SetActorLocationAndRotation(SpawnTransform.GetLocation(), SpawnTransform.Rotator(),
+        false, nullptr, ETeleportType::TeleportPhysics);
+    GetCharacterMovement()->StopMovementImmediately();
+
+    if (Controller)
+    {
+        Controller->SetControlRotation(SpawnTransform.Rotator());
+    }
+
+    // Deux secondes de grâce : le Gardien ne peut pas reprendre une vie tout de suite
+    bInvulnerable = true;
+    GetWorldTimerManager().SetTimer(InvulnerabilityHandle, this,
+        &AOrbRushCharacter::EndInvulnerability, InvulnerabilityDuration, false);
+
+    OnRespawned();
+}
+
+void AOrbRushCharacter::EndInvulnerability()
+{
+    bInvulnerable = false;
+}
+</script>
+
+  <p>Dans l'éditeur, créez les assets d'entrée dans <code>Content/OrbRush/Player/Input</code> (ou réutilisez ceux du contenu Third Person) :</p>
+  <table>
+    <thead><tr><th>Asset</th><th>Value Type</th><th>Touches dans <code>IMC_OrbRush</code></th></tr></thead>
+    <tbody>
+      <tr><td><code>IA_Move</code></td><td>Axis2D</td><td><kbd>Z</kbd>/<kbd>W</kbd> (Swizzle YXZ), <kbd>S</kbd> (Swizzle + Negate), <kbd>D</kbd>, <kbd>Q</kbd>/<kbd>A</kbd> (Negate), stick gauche</td></tr>
+      <tr><td><code>IA_Look</code></td><td>Axis2D</td><td>Souris XY (Negate Y), stick droit</td></tr>
+      <tr><td><code>IA_Jump</code></td><td>Digital (bool)</td><td><kbd>Espace</kbd>, bouton A / Croix</td></tr>
+    </tbody>
+  </table>
+  <p>Créez ensuite <code>BP_OrbRushCharacter</code> (classe parente <code>OrbRushCharacter</code>) dans <code>Player/</code> : assignez le Skeletal Mesh du mannequin (position Z -96, rotation Yaw -90), son Animation Blueprint, et les quatre assets d'entrée dans la catégorie <em>Input</em>. Implémentez enfin l'événement de réapparition :</p>
+
+  <script type="application/json" class="bp-graph" data-caption="BP_OrbRushCharacter : un effet de téléportation et un son quand le joueur réapparaît.">
+{
+  "nodes": [
+    { "id": "ev", "type": "event", "title": "Event On Respawned", "x": 0, "y": 0,
+      "out": [ { "type": "exec" } ] },
+    { "id": "mesh", "type": "var", "title": "Mesh", "x": 20, "y": 120, "out": [ { "type": "object" } ] },
+    { "id": "fx", "type": "function", "title": "Spawn System Attached", "x": 230, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "System Template", "type": "object", "value": "NS_Respawn" }, { "name": "Attach to Component", "type": "object" } ],
+      "out": [ { "type": "exec" }, { "name": "Return Value", "type": "object" } ] },
+    { "id": "snd", "type": "function", "title": "Play Sound 2D", "x": 640, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Sound", "type": "object", "value": "SW_Respawn" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ev", 0, "fx", 0 ],
+    [ "mesh", 0, "fx", 2 ],
+    [ "fx", 0, "snd", 0 ]
+  ]
+}
+  </script>
+
+  <div class="callout ue">
+    <p class="callout-title">Point de contrôle 2</p>
+    <p>Placez temporairement <code>BP_OrbRushCharacter</code> dans le niveau avec <em>Auto Possess Player = Player 0</em> (ou réglez-le comme Default Pawn dans les World Settings). Au lancement du PIE, vous déplacez le personnage au clavier et à la manette, la caméra tourne à la souris, le saut fonctionne. Si rien ne bouge, vérifiez que <code>DefaultMappingContext</code> est bien assigné : c'est l'oubli numéro un.</p>
+  </div>
+
+  <h2>Étape 3 : les règles (GameMode et GameState)</h2>
+  <p>Le <strong>GameState</strong> contient l'état de la partie (orbes, temps, vies, état du match) et diffuse chaque changement par un délégué. Il ne prend aucune décision : ses fonctions <code>Set…</code> sont appelées par le GameMode.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/Core/OrbRushGameState.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/GameStateBase.h"
+#include "OrbRushGameState.generated.h"
+
+UENUM(BlueprintType)
+enum class EOrbRushMatchState : uint8
+{
+    Playing,
+    Won,
+    Lost
+};
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnOrbsChanged, int32, Collected, int32, Goal);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTimeChanged, int32, RemainingSeconds);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLivesChanged, int32, Lives);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMatchStateChanged, EOrbRushMatchState, NewState);
+
+UCLASS()
+class ORBRUSH_API AOrbRushGameState : public AGameStateBase
+{
+    GENERATED_BODY()
+
+public:
+    void SetOrbs(int32 InCollected, int32 InGoal);
+    void SetRemainingTime(int32 Seconds);
+    void SetLives(int32 InLives);
+    void SetMatchState(EOrbRushMatchState NewState);
+
+    UFUNCTION(BlueprintPure, Category = "Orb Rush")
+    int32 GetOrbsCollected() const { return OrbsCollected; }
+
+    UFUNCTION(BlueprintPure, Category = "Orb Rush")
+    int32 GetOrbsGoal() const { return OrbsGoal; }
+
+    UFUNCTION(BlueprintPure, Category = "Orb Rush")
+    int32 GetRemainingTime() const { return RemainingTime; }
+
+    UFUNCTION(BlueprintPure, Category = "Orb Rush")
+    int32 GetLives() const { return Lives; }
+
+    UFUNCTION(BlueprintPure, Category = "Orb Rush")
+    EOrbRushMatchState GetMatchState() const { return MatchState; }
+
+    UPROPERTY(BlueprintAssignable, Category = "Orb Rush|Events")
+    FOnOrbsChanged OnOrbsChanged;
+
+    UPROPERTY(BlueprintAssignable, Category = "Orb Rush|Events")
+    FOnTimeChanged OnTimeChanged;
+
+    UPROPERTY(BlueprintAssignable, Category = "Orb Rush|Events")
+    FOnLivesChanged OnLivesChanged;
+
+    UPROPERTY(BlueprintAssignable, Category = "Orb Rush|Events")
+    FOnMatchStateChanged OnMatchStateChanged;
+
+private:
+    UPROPERTY(VisibleInstanceOnly, Category = "Orb Rush")
+    int32 OrbsCollected = 0;
+
+    UPROPERTY(VisibleInstanceOnly, Category = "Orb Rush")
+    int32 OrbsGoal = 10;
+
+    UPROPERTY(VisibleInstanceOnly, Category = "Orb Rush")
+    int32 RemainingTime = 0;
+
+    UPROPERTY(VisibleInstanceOnly, Category = "Orb Rush")
+    int32 Lives = 0;
+
+    UPROPERTY(VisibleInstanceOnly, Category = "Orb Rush")
+    EOrbRushMatchState MatchState = EOrbRushMatchState::Playing;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/Core/OrbRushGameState.cpp">
+#include "Core/OrbRushGameState.h"
+
+void AOrbRushGameState::SetOrbs(int32 InCollected, int32 InGoal)
+{
+    OrbsCollected = InCollected;
+    OrbsGoal = InGoal;
+    OnOrbsChanged.Broadcast(OrbsCollected, OrbsGoal);
+}
+
+void AOrbRushGameState::SetRemainingTime(int32 Seconds)
+{
+    RemainingTime = FMath::Max(0, Seconds);
+    OnTimeChanged.Broadcast(RemainingTime);
+}
+
+void AOrbRushGameState::SetLives(int32 InLives)
+{
+    Lives = FMath::Max(0, InLives);
+    OnLivesChanged.Broadcast(Lives);
+}
+
+void AOrbRushGameState::SetMatchState(EOrbRushMatchState NewState)
+{
+    if (MatchState == NewState) { return; }
+    MatchState = NewState;
+    OnMatchStateChanged.Broadcast(MatchState);
+}
+</script>
+
+  <p>Le <strong>GameMode</strong> applique les règles : il initialise l'état, fait tourner le chronomètre avec un timer d'une seconde, compte les orbes, retire des vies et décide de la fin de partie. Les valeurs (10 orbes, 90 secondes, 3 vies) sont des <code>UPROPERTY</code> réglables dans le Blueprint enfant, pour équilibrer sans recompiler.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/Core/OrbRushGameMode.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/GameModeBase.h"
+#include "OrbRushGameMode.generated.h"
+
+class AOrbRushCharacter;
+
+UCLASS()
+class ORBRUSH_API AOrbRushGameMode : public AGameModeBase
+{
+    GENERATED_BODY()
+
+public:
+    AOrbRushGameMode();
+
+    virtual void StartPlay() override;
+
+    // Appelée par AOrb quand le joueur ramasse une orbe
+    void OrbCollected();
+
+    // Appelée par AGuardianCharacter quand il touche le joueur
+    void PlayerCaught(AOrbRushCharacter* Player);
+
+    bool IsPlaying() const;
+
+protected:
+    UPROPERTY(EditDefaultsOnly, Category = "Rules", meta = (ClampMin = "1"))
+    int32 OrbsToWin = 10;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Rules", meta = (ClampMin = "1"))
+    int32 TimeLimitSeconds = 90;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Rules", meta = (ClampMin = "1"))
+    int32 StartingLives = 3;
+
+private:
+    void TickCountdown();
+    void EndMatch(bool bVictory);
+
+    FTimerHandle CountdownHandle;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/Core/OrbRushGameMode.cpp" data-highlight="17-26">
+#include "Core/OrbRushGameMode.h"
+#include "Core/OrbRushGameState.h"
+#include "Core/OrbRushPlayerController.h"
+#include "Player/OrbRushCharacter.h"
+#include "TimerManager.h"
+
+AOrbRushGameMode::AOrbRushGameMode()
+{
+    GameStateClass = AOrbRushGameState::StaticClass();
+    PlayerControllerClass = AOrbRushPlayerController::StaticClass();
+    DefaultPawnClass = AOrbRushCharacter::StaticClass(); // remplacés par les Blueprints dans BP_OrbRushGameMode
+}
+
+void AOrbRushGameMode::StartPlay()
+{
+    // Le GameState existe déjà : on l'initialise AVANT le BeginPlay des Actors
+    if (AOrbRushGameState* GS = GetGameState<AOrbRushGameState>())
+    {
+        GS->SetOrbs(0, OrbsToWin);
+        GS->SetRemainingTime(TimeLimitSeconds);
+        GS->SetLives(StartingLives);
+    }
+
+    Super::StartPlay(); // déclenche le BeginPlay de tous les Actors du niveau
+
+    GetWorldTimerManager().SetTimer(CountdownHandle, this, &AOrbRushGameMode::TickCountdown, 1.f, true);
+}
+
+bool AOrbRushGameMode::IsPlaying() const
+{
+    const AOrbRushGameState* GS = GetGameState<AOrbRushGameState>();
+    return GS && GS->GetMatchState() == EOrbRushMatchState::Playing;
+}
+
+void AOrbRushGameMode::TickCountdown()
+{
+    AOrbRushGameState* GS = GetGameState<AOrbRushGameState>();
+    if (!GS || !IsPlaying()) { return; }
+
+    GS->SetRemainingTime(GS->GetRemainingTime() - 1);
+    UE_LOG(LogTemp, Log, TEXT("Orb Rush : %d s restantes"), GS->GetRemainingTime());
+
+    if (GS->GetRemainingTime() <= 0)
+    {
+        EndMatch(false);
+    }
+}
+
+void AOrbRushGameMode::OrbCollected()
+{
+    AOrbRushGameState* GS = GetGameState<AOrbRushGameState>();
+    if (!GS || !IsPlaying()) { return; }
+
+    GS->SetOrbs(GS->GetOrbsCollected() + 1, OrbsToWin);
+
+    if (GS->GetOrbsCollected() >= OrbsToWin)
+    {
+        EndMatch(true);
+    }
+}
+
+void AOrbRushGameMode::PlayerCaught(AOrbRushCharacter* Player)
+{
+    AOrbRushGameState* GS = GetGameState<AOrbRushGameState>();
+    if (!GS || !Player || !IsPlaying() || Player->IsInvulnerable()) { return; }
+
+    GS->SetLives(GS->GetLives() - 1);
+
+    if (GS->GetLives() <= 0)
+    {
+        EndMatch(false);
+        return;
+    }
+
+    // Retour au PlayerStart du niveau
+    const AActor* Start = FindPlayerStart(Player->GetController());
+    Player->Respawn(Start ? Start->GetActorTransform() : FTransform(FVector(0.0, 0.0, 200.0)));
+}
+
+void AOrbRushGameMode::EndMatch(bool bVictory)
+{
+    GetWorldTimerManager().ClearTimer(CountdownHandle);
+
+    if (AOrbRushGameState* GS = GetGameState<AOrbRushGameState>())
+    {
+        GS->SetMatchState(bVictory ? EOrbRushMatchState::Won : EOrbRushMatchState::Lost);
+    }
+}
+</script>
+
+  <div class="callout warn">
+    <p class="callout-title">Le PlayerController n'existe pas encore ?</p>
+    <p><code>OrbRushGameMode.cpp</code> inclut <code>Core/OrbRushPlayerController.h</code>, écrit à l'étape 7. Pour compiler dès maintenant, créez tout de suite la classe <code>OrbRushPlayerController</code> (parent <em>PlayerController</em>) avec son contenu par défaut : vous la complèterez plus tard.</p>
+  </div>
+
+  <p>Dans l'éditeur, créez <code>BP_OrbRushGameMode</code> (parent <code>OrbRushGameMode</code>) dans <code>Core/</code> : <em>Default Pawn Class</em> = <code>BP_OrbRushCharacter</code>. Dans les <em>World Settings</em> de <code>Lvl_Arena</code>, choisissez-le comme <em>GameMode Override</em>, et retirez le personnage placé à la main à l'étape 2 : c'est maintenant le GameMode qui le fait apparaître sur le <code>PlayerStart</code>.</p>
+
+  <div class="callout ue">
+    <p class="callout-title">Point de contrôle 3</p>
+    <p>Au lancement du PIE, le personnage apparaît sur le <code>PlayerStart</code> et l'<em>Output Log</em> affiche « Orb Rush : 89 s restantes », puis 88, 87… Pour tester la fin sans attendre, réglez temporairement <code>TimeLimitSeconds</code> à 5 dans <code>BP_OrbRushGameMode</code> : le décompte s'arrête à 0 (l'écran de défaite viendra à l'étape 8).</p>
+  </div>
+
+  <h2>Étape 4 : les orbes</h2>
+  <p>Une orbe est un Actor simple : une sphère de collision en <em>Overlap</em> comme racine, un mesh lumineux qui flotte et tourne (avec un sinus, voir <a href="maths.html">Maths du jeu vidéo</a>), et un son et un effet Niagara joués au ramassage. Seul le joueur peut la ramasser, et seulement pendant la partie.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/Pickups/Orb.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "Orb.generated.h"
+
+class UNiagaraSystem;
+class USoundBase;
+class USphereComponent;
+class UStaticMeshComponent;
+
+UCLASS()
+class ORBRUSH_API AOrb : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    AOrb();
+
+    virtual void Tick(float DeltaSeconds) override;
+
+protected:
+    virtual void BeginPlay() override;
+    virtual void NotifyActorBeginOverlap(AActor* OtherActor) override;
+
+    UPROPERTY(VisibleAnywhere, Category = "Orb")
+    TObjectPtr<USphereComponent> Collision;
+
+    UPROPERTY(VisibleAnywhere, Category = "Orb")
+    TObjectPtr<UStaticMeshComponent> Mesh;
+
+    UPROPERTY(EditAnywhere, Category = "Orb|Motion")
+    float BobAmplitude = 20.f;   // cm
+
+    UPROPERTY(EditAnywhere, Category = "Orb|Motion")
+    float BobFrequency = 0.5f;   // oscillations par seconde
+
+    UPROPERTY(EditAnywhere, Category = "Orb|Motion")
+    float SpinSpeed = 90.f;      // degrés par seconde
+
+    UPROPERTY(EditDefaultsOnly, Category = "Orb|Feedback")
+    TObjectPtr<USoundBase> PickupSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Orb|Feedback")
+    TObjectPtr<UNiagaraSystem> PickupEffect;
+
+private:
+    float RunningTime = 0.f;
+    bool bCollected = false;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/Pickups/Orb.cpp" data-highlight="46-50">
+#include "Pickups/Orb.h"
+#include "Components/SphereComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Core/OrbRushGameMode.h"
+#include "Kismet/GameplayStatics.h"
+#include "NiagaraFunctionLibrary.h"
+#include "Player/OrbRushCharacter.h"
+
+AOrb::AOrb()
+{
+    PrimaryActorTick.bCanEverTick = true;
+
+    Collision = CreateDefaultSubobject<USphereComponent>(TEXT("Collision"));
+    Collision->InitSphereRadius(60.f);
+    Collision->SetCollisionProfileName(TEXT("OverlapAllDynamic"));
+    Collision->SetGenerateOverlapEvents(true);
+    RootComponent = Collision;
+
+    // Le mesh est purement visuel : c'est la sphère qui détecte le joueur
+    Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
+    Mesh->SetupAttachment(Collision);
+    Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+}
+
+void AOrb::BeginPlay()
+{
+    Super::BeginPlay();
+    RunningTime = FMath::FRandRange(0.f, 10.f); // les orbes ne flottent pas toutes en même temps
+}
+
+void AOrb::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    RunningTime += DeltaSeconds;
+    const float Offset = FMath::Sin(RunningTime * 2.f * PI * BobFrequency) * BobAmplitude;
+    Mesh->SetRelativeLocation(FVector(0.f, 0.f, Offset));
+    Mesh->AddLocalRotation(FRotator(0.f, SpinSpeed * DeltaSeconds, 0.f));
+}
+
+void AOrb::NotifyActorBeginOverlap(AActor* OtherActor)
+{
+    Super::NotifyActorBeginOverlap(OtherActor);
+    if (bCollected || !Cast<AOrbRushCharacter>(OtherActor)) { return; } // le Gardien ne ramasse rien
+
+    AOrbRushGameMode* GameMode = GetWorld()->GetAuthGameMode<AOrbRushGameMode>();
+    if (!GameMode || !GameMode->IsPlaying()) { return; }
+
+    bCollected = true;
+    GameMode->OrbCollected();
+
+    UGameplayStatics::PlaySoundAtLocation(this, PickupSound, GetActorLocation());
+    if (PickupEffect)
+    {
+        UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, PickupEffect, GetActorLocation());
+    }
+    Destroy();
+}
+</script>
+
+  <ol class="steps">
+    <li><strong>Le matériau</strong>Dans <code>Pickups/</code>, créez <code>M_Orb</code> : un paramètre vectoriel <code>Color</code> multiplié par un scalaire <code>Glow</code> (20) branché sur <em>Emissive Color</em>. Puis <code>MI_Orb_Gold</code>, une instance avec une couleur dorée (voir <a href="graphismes.html">Matériaux, lumière &amp; VFX</a>).</li>
+    <li><strong>Le Blueprint</strong><code>BP_Orb</code> (parent <code>Orb</code>) : mesh <em>Sphere</em> à l'échelle 0,4 avec <code>MI_Orb_Gold</code>. Ajoutez un <em>Point Light</em> doré de faible rayon pour qu'elle éclaire le sol : on la repère de loin.</li>
+    <li><strong>Le retour visuel et sonore</strong>Créez <code>NS_OrbPickup</code> dans <code>FX/</code> (à partir du modèle <em>Fountain</em> ou <em>Simple Sprite Burst</em> : une gerbe brève de particules dorées) et <code>MS_OrbPickup</code> dans <code>Audio/</code> (une MetaSound qui joue un « ding » avec une légère variation de hauteur, voir <a href="audio.html">Audio</a>). Assignez-les dans <code>BP_Orb</code>.</li>
+    <li><strong>Placer 12 orbes</strong>Répartissez-les dans l'arène selon le plan, dont quelques-unes près de la ronde du Gardien pour créer du risque. Rangez-les dans un dossier d'Outliner <code>Orbs</code>.</li>
+  </ol>
+
+  <div class="callout ue">
+    <p class="callout-title">Point de contrôle 4</p>
+    <p>Les orbes flottent et tournent, chacune à son rythme. En passant dessus, elles disparaissent avec une gerbe de particules et un son. Pour vérifier le compteur avant d'avoir le HUD, ouvrez la console et tapez <code>DisplayAll OrbRushGameState OrbsCollected</code> : la valeur augmente à chaque orbe. À la dixième, l'état passe à <em>Won</em> (<code>DisplayAll OrbRushGameState MatchState</code>).</p>
+  </div>
+
+  <h2>Étape 5 : le Gardien</h2>
+  <p>Le Gardien est un <code>ACharacter</code> piloté par un <code>AAIController</code>, comme dans le chapitre <a href="ia.html">Intelligence artificielle</a>. Son comportement est décrit par un Behavior Tree simple : <strong>s'il voit le joueur, il le poursuit ; sinon, il fait sa ronde</strong>.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TD
+    ROOT(["Root"]) --> SEL{"Selector"}
+    SEL --> CHASE["Sequence : Poursuite<br>Décorateur Blackboard :<br>TargetActor Is Set<br>Observer Aborts : Both"]
+    SEL --> PATROL["Sequence : Patrouille"]
+    CHASE --> M1["Move To<br>TargetActor"]
+    PATROL --> F["Find Patrol Point<br>(tâche C++)<br>→ PatrolLocation"]
+    PATROL --> M2["Move To<br>PatrolLocation"]
+    PATROL --> W["Wait<br>1,5 s ± 0,5"]
+</pre>
+    <figcaption><code>BT_Guardian</code>. Grâce à <em>Observer Aborts : Both</em>, la patrouille est interrompue dès que la perception renseigne <code>TargetActor</code>, et la poursuite s'arrête dès que la clé est vidée.</figcaption>
+  </figure>
+
+  <table>
+    <thead><tr><th>Clé de <code>BB_Guardian</code></th><th>Type</th><th>Écrite par</th></tr></thead>
+    <tbody>
+      <tr><td><code>TargetActor</code></td><td>Object (Base Class : Actor)</td><td>Le contrôleur, quand la perception voit ou perd le joueur</td></tr>
+      <tr><td><code>PatrolLocation</code></td><td>Vector</td><td>La tâche <em>Find Patrol Point</em></td></tr>
+    </tbody>
+  </table>
+
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/AI/GuardianCharacter.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Character.h"
+#include "GuardianCharacter.generated.h"
+
+class UBehaviorTree;
+class USoundBase;
+class USphereComponent;
+
+UCLASS()
+class ORBRUSH_API AGuardianCharacter : public ACharacter
+{
+    GENERATED_BODY()
+
+public:
+    AGuardianCharacter();
+
+    UBehaviorTree* GetBehaviorTree() const { return BehaviorTree; }
+
+    // Renvoie le prochain point de la ronde (ou nullptr s'il n'y en a aucun)
+    AActor* GetNextPatrolPoint();
+
+    // Appelée par le contrôleur quand il voit ou perd le joueur
+    void SetChasing(bool bNewChasing);
+
+protected:
+    virtual void BeginPlay() override;
+
+    UFUNCTION()
+    void HandleCatchOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
+        UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+
+    // Implémenté dans BP_Guardian : couleur des yeux, musique…
+    UFUNCTION(BlueprintImplementableEvent, Category = "Guardian")
+    void OnChaseStateChanged(bool bIsChasing);
+
+    UPROPERTY(VisibleAnywhere, Category = "Guardian")
+    TObjectPtr<USphereComponent> CatchSphere;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Guardian|AI")
+    TObjectPtr<UBehaviorTree> BehaviorTree;
+
+    // Les Target Points de la ronde, choisis sur l'instance placée dans le niveau
+    UPROPERTY(EditInstanceOnly, Category = "Guardian|AI")
+    TArray<TObjectPtr<AActor>> PatrolPoints;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Guardian|Movement")
+    float PatrolSpeed = 250.f;
+
+    // Moins rapide que le joueur (600) : on peut lui échapper
+    UPROPERTY(EditDefaultsOnly, Category = "Guardian|Movement")
+    float ChaseSpeed = 480.f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Guardian|Feedback")
+    TObjectPtr<USoundBase> AlertSound;
+
+private:
+    int32 PatrolIndex = 0;
+    bool bChasing = false;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/AI/GuardianCharacter.cpp">
+#include "AI/GuardianCharacter.h"
+#include "AI/GuardianAIController.h"
+#include "Components/SphereComponent.h"
+#include "Core/OrbRushGameMode.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "Player/OrbRushCharacter.h"
+
+AGuardianCharacter::AGuardianCharacter()
+{
+    PrimaryActorTick.bCanEverTick = false;
+    AIControllerClass = AGuardianAIController::StaticClass();
+    AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
+
+    // Zone de capture un peu plus large que la capsule : un contact suffit
+    CatchSphere = CreateDefaultSubobject<USphereComponent>(TEXT("CatchSphere"));
+    CatchSphere->SetupAttachment(GetRootComponent());
+    CatchSphere->InitSphereRadius(90.f);
+    CatchSphere->SetCollisionProfileName(TEXT("OverlapOnlyPawn"));
+
+    bUseControllerRotationYaw = false;
+    GetCharacterMovement()->bOrientRotationToMovement = true;
+    GetCharacterMovement()->RotationRate = FRotator(0.f, 360.f, 0.f);
+}
+
+void AGuardianCharacter::BeginPlay()
+{
+    Super::BeginPlay();
+    GetCharacterMovement()->MaxWalkSpeed = PatrolSpeed;
+    CatchSphere->OnComponentBeginOverlap.AddDynamic(this, &AGuardianCharacter::HandleCatchOverlap);
+}
+
+AActor* AGuardianCharacter::GetNextPatrolPoint()
+{
+    if (PatrolPoints.IsEmpty()) { return nullptr; }
+
+    AActor* Point = PatrolPoints[PatrolIndex];
+    PatrolIndex = (PatrolIndex + 1) % PatrolPoints.Num();
+    return Point;
+}
+
+void AGuardianCharacter::SetChasing(bool bNewChasing)
+{
+    if (bChasing == bNewChasing) { return; }
+    bChasing = bNewChasing;
+
+    GetCharacterMovement()->MaxWalkSpeed = bChasing ? ChaseSpeed : PatrolSpeed;
+    if (bChasing)
+    {
+        UGameplayStatics::PlaySoundAtLocation(this, AlertSound, GetActorLocation());
+    }
+    OnChaseStateChanged(bChasing);
+}
+
+void AGuardianCharacter::HandleCatchOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
+    UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+{
+    AOrbRushCharacter* Player = Cast<AOrbRushCharacter>(OtherActor);
+    if (!Player) { return; }
+
+    if (AOrbRushGameMode* GameMode = GetWorld()->GetAuthGameMode<AOrbRushGameMode>())
+    {
+        GameMode->PlayerCaught(Player);
+    }
+}
+</script>
+
+  <p>Le contrôleur configure la vue (15 m, 120° au total), lance le Behavior Tree en possédant le Gardien, et traduit les perceptions en valeurs de Blackboard :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/AI/GuardianAIController.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "AIController.h"
+#include "Perception/AIPerceptionTypes.h"
+#include "GuardianAIController.generated.h"
+
+class UAISenseConfig_Sight;
+
+UCLASS()
+class ORBRUSH_API AGuardianAIController : public AAIController
+{
+    GENERATED_BODY()
+
+public:
+    AGuardianAIController();
+
+    static const FName TargetActorKey;
+
+protected:
+    virtual void OnPossess(APawn* InPawn) override;
+
+    UFUNCTION()
+    void HandleTargetPerception(AActor* Actor, FAIStimulus Stimulus);
+
+    UPROPERTY(VisibleAnywhere, Category = "AI")
+    TObjectPtr<UAISenseConfig_Sight> SightConfig;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/AI/GuardianAIController.cpp" data-highlight="50-59">
+#include "AI/GuardianAIController.h"
+#include "AI/GuardianCharacter.h"
+#include "BehaviorTree/BlackboardComponent.h"
+#include "Perception/AIPerceptionComponent.h"
+#include "Perception/AISenseConfig_Sight.h"
+#include "Player/OrbRushCharacter.h"
+
+const FName AGuardianAIController::TargetActorKey(TEXT("TargetActor"));
+
+AGuardianAIController::AGuardianAIController()
+{
+    UAIPerceptionComponent* Perception = CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("Perception"));
+    SetPerceptionComponent(*Perception);
+
+    SightConfig = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
+    SightConfig->SightRadius = 1500.f;
+    SightConfig->LoseSightRadius = 1900.f;              // plus grand : il ne lâche pas au moindre pas
+    SightConfig->PeripheralVisionAngleDegrees = 60.f;   // demi-angle : 120° au total
+    SightConfig->DetectionByAffiliation.bDetectEnemies = true;
+    SightConfig->DetectionByAffiliation.bDetectNeutrals = true; // sans équipes, le joueur est « neutre »
+    SightConfig->DetectionByAffiliation.bDetectFriendlies = true;
+    SightConfig->SetMaxAge(3.f);
+
+    Perception->ConfigureSense(*SightConfig);
+    Perception->SetDominantSense(SightConfig->GetSenseImplementation());
+}
+
+void AGuardianAIController::OnPossess(APawn* InPawn)
+{
+    Super::OnPossess(InPawn);
+
+    GetPerceptionComponent()->OnTargetPerceptionUpdated.AddUniqueDynamic(
+        this, &AGuardianAIController::HandleTargetPerception);
+
+    const AGuardianCharacter* Guardian = Cast<AGuardianCharacter>(InPawn);
+    if (Guardian && Guardian->GetBehaviorTree())
+    {
+        RunBehaviorTree(Guardian->GetBehaviorTree()); // crée aussi le Blackboard de l'arbre
+    }
+}
+
+void AGuardianAIController::HandleTargetPerception(AActor* Actor, FAIStimulus Stimulus)
+{
+    if (!Cast<AOrbRushCharacter>(Actor)) { return; }
+
+    UBlackboardComponent* BB = GetBlackboardComponent();
+    AGuardianCharacter* Guardian = Cast<AGuardianCharacter>(GetPawn());
+    if (!BB || !Guardian) { return; }
+
+    if (Stimulus.WasSuccessfullySensed())
+    {
+        BB->SetValueAsObject(TargetActorKey, Actor); // le Behavior Tree bascule en poursuite
+        Guardian->SetChasing(true);
+    }
+    else
+    {
+        BB->ClearValue(TargetActorKey);              // retour à la patrouille
+        Guardian->SetChasing(false);
+    }
+}
+</script>
+
+  <p>Enfin, la tâche qui choisit la prochaine destination de la ronde. S'il n'y a aucun point de patrouille, elle prend un point accessible au hasard sur le NavMesh, pour que le Gardien ne reste jamais planté :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/AI/BTTask_FindPatrolPoint.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "BehaviorTree/BTTaskNode.h"
+#include "BTTask_FindPatrolPoint.generated.h"
+
+UCLASS()
+class ORBRUSH_API UBTTask_FindPatrolPoint : public UBTTaskNode
+{
+    GENERATED_BODY()
+
+public:
+    UBTTask_FindPatrolPoint();
+
+    virtual EBTNodeResult::Type ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) override;
+
+protected:
+    UPROPERTY(EditAnywhere, Category = "Blackboard")
+    FBlackboardKeySelector PatrolLocationKey;
+
+    UPROPERTY(EditAnywhere, Category = "Patrol", meta = (ClampMin = "100.0"))
+    float FallbackRadius = 1000.f;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/AI/BTTask_FindPatrolPoint.cpp">
+#include "AI/BTTask_FindPatrolPoint.h"
+#include "AI/GuardianCharacter.h"
+#include "AIController.h"
+#include "BehaviorTree/BlackboardComponent.h"
+#include "NavigationSystem.h"
+
+UBTTask_FindPatrolPoint::UBTTask_FindPatrolPoint()
+{
+    NodeName = TEXT("Find Patrol Point");
+    // Seules les clés de type Vector sont proposées dans la liste déroulante
+    PatrolLocationKey.AddVectorFilter(this, GET_MEMBER_NAME_CHECKED(UBTTask_FindPatrolPoint, PatrolLocationKey));
+}
+
+EBTNodeResult::Type UBTTask_FindPatrolPoint::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
+{
+    const AAIController* AIController = OwnerComp.GetAIOwner();
+    AGuardianCharacter* Guardian = AIController ? Cast<AGuardianCharacter>(AIController->GetPawn()) : nullptr;
+    UBlackboardComponent* BB = OwnerComp.GetBlackboardComponent();
+    if (!Guardian || !BB) { return EBTNodeResult::Failed; }
+
+    FVector Destination;
+    if (const AActor* Point = Guardian->GetNextPatrolPoint())
+    {
+        Destination = Point->GetActorLocation();
+    }
+    else
+    {
+        const UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent<UNavigationSystemV1>(Guardian->GetWorld());
+        FNavLocation Random;
+        if (!NavSys || !NavSys->GetRandomReachablePointInRadius(Guardian->GetActorLocation(), FallbackRadius, Random))
+        {
+            return EBTNodeResult::Failed;
+        }
+        Destination = Random.Location;
+    }
+
+    BB->SetValueAsVector(PatrolLocationKey.SelectedKeyName, Destination);
+    return EBTNodeResult::Succeeded;
+}
+</script>
+
+  <div class="callout info">
+    <p class="callout-title">Pourquoi l'index de patrouille est dans le Gardien</p>
+    <p>Une tâche de Behavior Tree C++ n'est pas instanciée par IA : le même objet sert à tous les Gardiens qui utilisent l'arbre. Si <code>PatrolIndex</code> était un membre de la tâche, deux Gardiens se partageraient la même ronde. On le garde donc dans le Pawn (on aurait aussi pu utiliser une clé de Blackboard).</p>
+  </div>
+
+  <ol class="steps">
+    <li><strong>Le NavMesh</strong>Ajoutez un <em>Nav Mesh Bounds Volume</em> qui englobe toute l'arène, puis appuyez sur <kbd>P</kbd> dans le viewport : les zones praticables s'affichent en vert, contournant les piliers.</li>
+    <li><strong>Blackboard et Behavior Tree</strong>Dans <code>AI/</code>, créez <code>BB_Guardian</code> avec les deux clés du tableau, puis <code>BT_Guardian</code> selon le schéma. Dans la tâche <em>Find Patrol Point</em>, choisissez <code>PatrolLocation</code> comme clé. Sur le décorateur de la poursuite, réglez <em>Key Query</em> sur <em>Is Set</em> et <em>Observer Aborts</em> sur <em>Both</em>.</li>
+    <li><strong>Le Blueprint</strong><code>BP_Guardian</code> (parent <code>GuardianCharacter</code>) : un mesh imposant et menaçant (le mannequin à l'échelle 1,3 avec un matériau sombre suffit), un <em>Point Light</em> nommé <code>EyeLight</code> au niveau de la tête, <code>BT_Guardian</code> dans <em>Behavior Tree</em>, un son d'alerte dans <em>Alert Sound</em>.</li>
+    <li><strong>Placer la ronde</strong>Placez quatre <em>Target Points</em> (<code>TP_A</code> à <code>TP_D</code>), puis le Gardien. Sur l'instance, ajoutez les quatre points au tableau <em>Patrol Points</em> avec la pipette.</li>
+  </ol>
+
+  <p>Le Blueprint donne au joueur un signal clair de l'état du Gardien : ses yeux passent du bleu au rouge quand il le poursuit.</p>
+  <script type="application/json" class="bp-graph" data-caption="BP_Guardian : la couleur des yeux trahit l'état du Gardien.">
+{
+  "nodes": [
+    { "id": "ev", "type": "event", "title": "Event On Chase State Changed", "x": 0, "y": 0,
+      "out": [ { "type": "exec" }, { "name": "Is Chasing", "type": "bool" } ] },
+    { "id": "sel", "type": "pure", "title": "Select Linear Color", "x": 280, "y": 110,
+      "in": [ { "name": "A", "type": "struct", "value": "Rouge (1, 0.1, 0.05)" }, { "name": "B", "type": "struct", "value": "Bleu (0.1, 0.4, 1)" }, { "name": "Pick A", "type": "bool" } ],
+      "out": [ { "name": "Return Value", "type": "struct" } ] },
+    { "id": "eye", "type": "var", "title": "EyeLight", "x": 340, "y": 280, "out": [ { "type": "object" } ] },
+    { "id": "set", "type": "function", "title": "Set Light Color", "x": 610, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object" }, { "name": "New Light Color", "type": "struct" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ev", 0, "set", 0 ],
+    [ "ev", 1, "sel", 2 ],
+    [ "eye", 0, "set", 1 ],
+    [ "sel", 0, "set", 2 ]
+  ]
+}
+  </script>
+
+  <div class="callout ue">
+    <p class="callout-title">Point de contrôle 5</p>
+    <p>En PIE, le Gardien fait sa ronde de point en point en contournant les piliers, avec de courtes pauses. Quand vous entrez dans son champ de vision, ses yeux deviennent rouges, un son d'alerte retentit et il vous poursuit ; cachez-vous derrière un pilier ou distancez-le, et il retourne à sa ronde. Appuyez sur <kbd>'</kbd> (apostrophe) pendant le PIE pour ouvrir le <em>Gameplay Debugger</em>, puis sur la touche du pavé numérique correspondant à <em>Perception</em> pour voir son cône de vision.</p>
+  </div>
+
+  <h2>Étape 6 : les vies et la réapparition</h2>
+  <p>Tout est déjà en place : le Gardien appelle <code>PlayerCaught</code> sur le GameMode, qui retire une vie, puis fait réapparaître le joueur sur le <code>PlayerStart</code> (ou termine la partie à zéro vie). Il ne reste qu'à vérifier l'enchaînement complet :</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    participant G as AGuardianCharacter
+    participant GM as AOrbRushGameMode
+    participant GS as AOrbRushGameState
+    participant P as AOrbRushCharacter
+    participant HUD as WBP_HUD
+    G->>GM: PlayerCaught(Player) (CatchSphere touche le joueur)
+    GM->>P: IsInvulnerable() ?
+    P-->>GM: false
+    GM->>GS: SetLives(Lives - 1)
+    GS-->>HUD: OnLivesChanged(2)
+    alt Il reste des vies
+        GM->>P: Respawn(transform du PlayerStart)
+        P->>P: invulnérable 2 s, OnRespawned (effet, son)
+    else Plus aucune vie
+        GM->>GS: SetMatchState(Lost)
+    end
+</pre>
+    <figcaption>Le joueur est attrapé : une seule fonction du GameMode décide de la suite.</figcaption>
+  </figure>
+
+  <div class="callout warn">
+    <p class="callout-title">Les deux pièges de la capture</p>
+    <p><strong>Perdre trois vies d'un coup</strong> : sans invulnérabilité, le joueur qui réapparaît trop près du Gardien serait rattrapé aussitôt. C'est le rôle de <code>IsInvulnerable()</code>. <strong>Ne jamais être attrapé</strong> : si la <code>CatchSphere</code> ne génère pas d'overlap, vérifiez que son profil est <em>OverlapOnlyPawn</em> et que la capsule du joueur a bien <em>Generate Overlap Events</em> coché (c'est le cas par défaut pour un Character).</p>
+  </div>
+
+  <div class="callout ue">
+    <p class="callout-title">Point de contrôle 6</p>
+    <p>Laissez-vous attraper : vous réapparaissez au point de départ avec un effet, et la console (<code>DisplayAll OrbRushGameState Lives</code>) affiche 2. Pendant deux secondes, le Gardien ne peut plus vous toucher. Au troisième contact, <code>MatchState</code> passe à <em>Lost</em> et le chrono s'arrête dans l'Output Log.</p>
+  </div>
+
+  <h2>Étape 7 : le HUD</h2>
+  <p>Le HUD suit la méthode hybride du chapitre <a href="ui.html">Interfaces avec UMG</a> : une classe C++ contient la logique et se lie aux délégués du GameState ; le Widget Blueprint qui en hérite contient la mise en page et les animations. Les widgets sont reliés par leur nom grâce à <code>BindWidget</code>.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/UI/OrbRushHUDWidget.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Blueprint/UserWidget.h"
+#include "OrbRushHUDWidget.generated.h"
+
+class UTextBlock;
+
+UCLASS(Abstract)
+class ORBRUSH_API UOrbRushHUDWidget : public UUserWidget
+{
+    GENERATED_BODY()
+
+protected:
+    virtual void NativeOnInitialized() override;
+
+    UFUNCTION()
+    void HandleOrbsChanged(int32 Collected, int32 Goal);
+
+    UFUNCTION()
+    void HandleTimeChanged(int32 RemainingSeconds);
+
+    UFUNCTION()
+    void HandleLivesChanged(int32 Lives);
+
+    // Implémentés dans WBP_HUD : animations et sons
+    UFUNCTION(BlueprintImplementableEvent, Category = "Orb Rush")
+    void OnOrbCollected();
+
+    UFUNCTION(BlueprintImplementableEvent, Category = "Orb Rush")
+    void OnLowTime(int32 RemainingSeconds);
+
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UTextBlock> OrbsText;
+
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UTextBlock> TimeText;
+
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UTextBlock> LivesText;
+
+    UPROPERTY(EditAnywhere, Category = "Orb Rush")
+    int32 LowTimeThreshold = 10;
+
+    UPROPERTY(EditAnywhere, Category = "Orb Rush")
+    FSlateColor LowTimeColor = FSlateColor(FLinearColor(1.f, 0.25f, 0.2f));
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/UI/OrbRushHUDWidget.cpp" data-highlight="13-15">
+#include "UI/OrbRushHUDWidget.h"
+#include "Components/TextBlock.h"
+#include "Core/OrbRushGameState.h"
+
+void UOrbRushHUDWidget::NativeOnInitialized()
+{
+    Super::NativeOnInitialized();
+
+    AOrbRushGameState* GS = GetWorld() ? GetWorld()->GetGameState<AOrbRushGameState>() : nullptr;
+    if (!GS) { return; }
+
+    // Liaison une seule fois (NativeOnInitialized), puis affichage des valeurs actuelles
+    GS->OnOrbsChanged.AddDynamic(this, &UOrbRushHUDWidget::HandleOrbsChanged);
+    GS->OnTimeChanged.AddDynamic(this, &UOrbRushHUDWidget::HandleTimeChanged);
+    GS->OnLivesChanged.AddDynamic(this, &UOrbRushHUDWidget::HandleLivesChanged);
+
+    HandleOrbsChanged(GS->GetOrbsCollected(), GS->GetOrbsGoal());
+    HandleTimeChanged(GS->GetRemainingTime());
+    HandleLivesChanged(GS->GetLives());
+}
+
+void UOrbRushHUDWidget::HandleOrbsChanged(int32 Collected, int32 Goal)
+{
+    OrbsText->SetText(FText::Format(NSLOCTEXT("OrbRush", "OrbsFormat", "{0} / {1}"), Collected, Goal));
+    if (Collected > 0)
+    {
+        OnOrbCollected();
+    }
+}
+
+void UOrbRushHUDWidget::HandleTimeChanged(int32 RemainingSeconds)
+{
+    TimeText->SetText(FText::FromString(FString::Printf(TEXT("%d:%02d"), RemainingSeconds / 60, RemainingSeconds % 60)));
+
+    if (RemainingSeconds <= LowTimeThreshold)
+    {
+        TimeText->SetColorAndOpacity(LowTimeColor);
+        if (RemainingSeconds > 0)
+        {
+            OnLowTime(RemainingSeconds);
+        }
+    }
+}
+
+void UOrbRushHUDWidget::HandleLivesChanged(int32 Lives)
+{
+    LivesText->SetText(FText::AsNumber(Lives));
+}
+</script>
+
+  <p>Le PlayerController crée le HUD au démarrage et réagit à la fin de partie (l'écran de fin est codé à l'étape suivante, mais vous pouvez déjà écrire toute la classe) :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/Core/OrbRushPlayerController.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/PlayerController.h"
+#include "Core/OrbRushGameState.h"
+#include "OrbRushPlayerController.generated.h"
+
+class UOrbRushEndScreenWidget;
+class UOrbRushHUDWidget;
+
+UCLASS()
+class ORBRUSH_API AOrbRushPlayerController : public APlayerController
+{
+    GENERATED_BODY()
+
+protected:
+    virtual void BeginPlay() override;
+
+    UFUNCTION()
+    void HandleMatchStateChanged(EOrbRushMatchState NewState);
+
+    UPROPERTY(EditDefaultsOnly, Category = "UI")
+    TSubclassOf<UOrbRushHUDWidget> HUDWidgetClass;
+
+    UPROPERTY(EditDefaultsOnly, Category = "UI")
+    TSubclassOf<UOrbRushEndScreenWidget> EndScreenClass;
+
+private:
+    UPROPERTY()
+    TObjectPtr<UOrbRushHUDWidget> HUDWidget;
+
+    UPROPERTY()
+    TObjectPtr<UOrbRushEndScreenWidget> EndScreen;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/Core/OrbRushPlayerController.cpp" data-highlight="40-44">
+#include "Core/OrbRushPlayerController.h"
+#include "UI/OrbRushEndScreenWidget.h"
+#include "UI/OrbRushHUDWidget.h"
+
+void AOrbRushPlayerController::BeginPlay()
+{
+    Super::BeginPlay();
+    if (!IsLocalController()) { return; }
+
+    SetInputMode(FInputModeGameOnly());
+    SetShowMouseCursor(false);
+
+    if (HUDWidgetClass)
+    {
+        HUDWidget = CreateWidget<UOrbRushHUDWidget>(this, HUDWidgetClass);
+        HUDWidget->AddToViewport();
+    }
+
+    if (AOrbRushGameState* GS = GetWorld()->GetGameState<AOrbRushGameState>())
+    {
+        GS->OnMatchStateChanged.AddDynamic(this, &AOrbRushPlayerController::HandleMatchStateChanged);
+    }
+}
+
+void AOrbRushPlayerController::HandleMatchStateChanged(EOrbRushMatchState NewState)
+{
+    const AOrbRushGameState* GS = GetWorld()->GetGameState<AOrbRushGameState>();
+    if (NewState == EOrbRushMatchState::Playing || !EndScreenClass || !GS) { return; }
+
+    if (HUDWidget)
+    {
+        HUDWidget->RemoveFromParent();
+    }
+
+    EndScreen = CreateWidget<UOrbRushEndScreenWidget>(this, EndScreenClass);
+    EndScreen->Setup(NewState == EOrbRushMatchState::Won, GS->GetOrbsCollected(), GS->GetOrbsGoal(), GS->GetRemainingTime());
+    EndScreen->AddToViewport();
+
+    // La souris sert maintenant aux boutons, et le monde se fige derrière l'écran
+    FInputModeUIOnly InputMode;
+    InputMode.SetWidgetToFocus(EndScreen->TakeWidget());
+    SetInputMode(InputMode);
+    SetShowMouseCursor(true);
+    SetPause(true);
+}
+</script>
+
+  <ol class="steps">
+    <li><strong>La mise en page</strong>Dans <code>UI/</code>, créez <code>WBP_HUD</code> (Widget Blueprint, puis <em>File → Reparent Blueprint</em> vers <code>OrbRushHUDWidget</code>, ou choisissez-le comme parent à la création). Dans un <em>Canvas Panel</em> : en haut à gauche une icône d'orbe et un <em>Text Block</em> nommé <strong>exactement</strong> <code>OrbsText</code> ; en haut au centre <code>TimeText</code> en grand ; en haut à droite une icône de cœur et <code>LivesText</code>. Ancrez chaque groupe à son coin (voir <a href="ui.html">Ancres et mise à l'échelle</a>).</li>
+    <li><strong>Les animations</strong>Créez deux animations UMG : <code>OrbPop</code> (l'icône d'orbe grossit puis revient) et <code>TimePulse</code> (le chrono pulse en rouge).</li>
+    <li><strong>Le Blueprint du contrôleur</strong>Créez <code>BP_OrbRushPlayerController</code> (parent <code>OrbRushPlayerController</code>) : <em>HUD Widget Class</em> = <code>WBP_HUD</code>. Dans <code>BP_OrbRushGameMode</code>, réglez <em>Player Controller Class</em> sur ce Blueprint.</li>
+  </ol>
+
+  <script type="application/json" class="bp-graph" data-caption="WBP_HUD : les événements déclarés en C++ déclenchent animations et sons. Le « tic » des dix dernières secondes met la pression.">
+{
+  "nodes": [
+    { "id": "ev1", "type": "event", "title": "Event On Orb Collected", "x": 0, "y": 0,
+      "out": [ { "type": "exec" } ] },
+    { "id": "pop", "type": "var", "title": "OrbPop", "x": 20, "y": 100, "out": [ { "type": "object" } ] },
+    { "id": "play1", "type": "function", "title": "Play Animation", "x": 240, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "In Animation", "type": "object" } ],
+      "out": [ { "type": "exec" }, { "name": "Return Value", "type": "object" } ] },
+    { "id": "ev2", "type": "event", "title": "Event On Low Time", "x": 0, "y": 190,
+      "out": [ { "type": "exec" }, { "name": "Remaining Seconds", "type": "int" } ] },
+    { "id": "pulse", "type": "var", "title": "TimePulse", "x": 20, "y": 300, "out": [ { "type": "object" } ] },
+    { "id": "play2", "type": "function", "title": "Play Animation", "x": 240, "y": 190,
+      "in": [ { "type": "exec" }, { "name": "In Animation", "type": "object" } ],
+      "out": [ { "type": "exec" }, { "name": "Return Value", "type": "object" } ] },
+    { "id": "tick", "type": "function", "title": "Play Sound 2D", "x": 520, "y": 190,
+      "in": [ { "type": "exec" }, { "name": "Sound", "type": "object", "value": "SW_ClockTick" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ev1", 0, "play1", 0 ],
+    [ "pop", 0, "play1", 1 ],
+    [ "ev2", 0, "play2", 0 ],
+    [ "pulse", 0, "play2", 1 ],
+    [ "play2", 0, "tick", 0 ]
+  ]
+}
+  </script>
+
+  <div class="callout ue">
+    <p class="callout-title">Point de contrôle 7</p>
+    <p>Le HUD affiche « 0 / 10 », « 1:30 » et « 3 » dès le début. Le chrono décompte chaque seconde, le compteur monte avec une petite animation à chaque orbe, les vies baissent quand le Gardien vous attrape, et sous 10 secondes le chrono devient rouge en faisant « tic ». Si le Widget Blueprint refuse de compiler avec « A required widget binding … was not found », un nom de Text Block ne correspond pas exactement à la propriété C++.</p>
+  </div>
+
+  <h2>Étape 8 : victoire et défaite</h2>
+  <p>Un seul widget sert aux deux issues : il reçoit le résultat et adapte son titre. Les boutons sont liés dans <code>NativeOnInitialized</code>, appelé une seule fois. <em>Rejouer</em> recharge le niveau courant ; <em>Menu</em> ouvre le niveau du menu, référencé par un <code>TSoftObjectPtr</code> pour ne pas le charger en mémoire inutilement.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/UI/OrbRushEndScreenWidget.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Blueprint/UserWidget.h"
+#include "OrbRushEndScreenWidget.generated.h"
+
+class UButton;
+class UTextBlock;
+
+UCLASS(Abstract)
+class ORBRUSH_API UOrbRushEndScreenWidget : public UUserWidget
+{
+    GENERATED_BODY()
+
+public:
+    void Setup(bool bVictory, int32 Orbs, int32 Goal, int32 RemainingSeconds);
+
+protected:
+    virtual void NativeOnInitialized() override;
+
+    UFUNCTION()
+    void HandleRetryClicked();
+
+    UFUNCTION()
+    void HandleMenuClicked();
+
+    // Implémenté dans WBP_EndScreen : animation d'apparition, jingle
+    UFUNCTION(BlueprintImplementableEvent, Category = "Orb Rush")
+    void OnShown(bool bVictory);
+
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UTextBlock> TitleText;
+
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UTextBlock> DetailText;
+
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UButton> RetryButton;
+
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UButton> MenuButton;
+
+    // Textes modifiables (et traduisibles) dans le Widget Blueprint
+    UPROPERTY(EditAnywhere, Category = "Orb Rush")
+    FText VictoryTitle = NSLOCTEXT("OrbRush", "VictoryTitle", "VICTOIRE !");
+
+    UPROPERTY(EditAnywhere, Category = "Orb Rush")
+    FText DefeatTitle = NSLOCTEXT("OrbRush", "DefeatTitle", "PERDU...");
+
+    UPROPERTY(EditAnywhere, Category = "Orb Rush")
+    TSoftObjectPtr<UWorld> MainMenuLevel;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/UI/OrbRushEndScreenWidget.cpp">
+#include "UI/OrbRushEndScreenWidget.h"
+#include "Components/Button.h"
+#include "Components/TextBlock.h"
+#include "Kismet/GameplayStatics.h"
+
+void UOrbRushEndScreenWidget::NativeOnInitialized()
+{
+    Super::NativeOnInitialized();
+    RetryButton->OnClicked.AddDynamic(this, &UOrbRushEndScreenWidget::HandleRetryClicked);
+    MenuButton->OnClicked.AddDynamic(this, &UOrbRushEndScreenWidget::HandleMenuClicked);
+}
+
+void UOrbRushEndScreenWidget::Setup(bool bVictory, int32 Orbs, int32 Goal, int32 RemainingSeconds)
+{
+    TitleText->SetText(bVictory ? VictoryTitle : DefeatTitle);
+
+    const FText Detail = bVictory
+        ? FText::Format(NSLOCTEXT("OrbRush", "VictoryDetail", "{0} orbes - {1} s d'avance"), Orbs, RemainingSeconds)
+        : FText::Format(NSLOCTEXT("OrbRush", "DefeatDetail", "{0} / {1} orbes"), Orbs, Goal);
+    DetailText->SetText(Detail);
+
+    OnShown(bVictory);
+}
+
+void UOrbRushEndScreenWidget::HandleRetryClicked()
+{
+    // Recharger le niveau remet tout à zéro, y compris la pause
+    UGameplayStatics::OpenLevel(this, FName(UGameplayStatics::GetCurrentLevelName(this)));
+}
+
+void UOrbRushEndScreenWidget::HandleMenuClicked()
+{
+    if (!MainMenuLevel.IsNull())
+    {
+        UGameplayStatics::OpenLevelBySoftObjectPtr(this, MainMenuLevel);
+    }
+}
+</script>
+
+  <div class="callout tip">
+    <p class="callout-title">Pourquoi les textes ne sont-ils pas en français accentué dans le code ?</p>
+    <p>Les textes visibles par le joueur sont des <code>FText</code> exposés à l'éditeur : on les écrit (avec tous les accents voulus) dans le Widget Blueprint, et ils passent par le système de localisation. Les valeurs par défaut du C++ restent en ASCII pour éviter tout problème d'encodage du fichier source.</p>
+  </div>
+
+  <p>Créez <code>WBP_EndScreen</code> (parent <code>OrbRushEndScreenWidget</code>) : un fond semi-transparent plein écran, <code>TitleText</code> en très grand, <code>DetailText</code> en dessous, et deux boutons <code>RetryButton</code> (« Rejouer ») et <code>MenuButton</code> (« Menu principal »). Saisissez <em>VICTOIRE !</em> et <em>DÉFAITE…</em> dans les champs de titre, et choisissez <code>Lvl_MainMenu</code> (créé à l'étape suivante) dans <em>Main Menu Level</em>. Dans <code>BP_OrbRushPlayerController</code>, assignez <em>End Screen Class</em>.</p>
+
+  <div class="callout ue">
+    <p class="callout-title">Point de contrôle 8</p>
+    <p>Ramassez 10 orbes : le jeu se fige, le HUD disparaît, l'écran « VICTOIRE ! » s'affiche avec le temps restant, la souris apparaît. Perdez (chrono ou vies) : écran de défaite. <em>Rejouer</em> relance une partie complète, avec chrono, orbes et vies remis à zéro. Le bouton <em>Menu</em> fonctionnera après l'étape 9.</p>
+  </div>
+
+  <h2>Étape 9 : le menu principal</h2>
+  <p>Le menu est entièrement en Blueprint : c'est un bon exemple de la répartition du travail, la logique de jeu en C++ et les écrans simples en Blueprint.</p>
+  <ol class="steps">
+    <li><strong>Le niveau</strong>Créez <code>Maps/Lvl_MainMenu</code> (<em>File → New Level → Empty Level</em>), avec un ciel, une lumière et une orbe qui tourne devant la caméra pour le décor.</li>
+    <li><strong>Un GameMode sans personnage</strong><code>BP_MenuGameMode</code> (parent <em>Game Mode Base</em>) avec <em>Default Pawn Class</em> = <em>None</em>. Choisissez-le comme <em>GameMode Override</em> dans les World Settings du menu.</li>
+    <li><strong>Le widget</strong><code>WBP_MainMenu</code> : le titre « ORB RUSH », un bouton <code>PlayButton</code> « Jouer » et un bouton <code>QuitButton</code> « Quitter ».</li>
+    <li><strong>Afficher le menu</strong>Dans le Level Blueprint du menu, créez le widget et passez en mode d'entrée UI (graphe ci-dessous).</li>
+  </ol>
+
+  <script type="application/json" class="bp-graph" data-caption="Level Blueprint de Lvl_MainMenu : afficher le menu et donner la souris au joueur.">
+{
+  "nodes": [
+    { "id": "begin", "type": "event", "title": "Event BeginPlay", "x": 0, "y": 0,
+      "out": [ { "type": "exec" } ] },
+    { "id": "pc", "type": "pure", "title": "Get Player Controller", "x": 0, "y": 250,
+      "in": [ { "name": "Player Index", "type": "int", "value": "0" } ],
+      "out": [ { "name": "Return Value", "type": "object" } ] },
+    { "id": "create", "type": "function", "title": "Create WBP Main Menu Widget", "x": 260, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Class", "type": "class", "value": "WBP_MainMenu" }, { "name": "Owning Player", "type": "object" } ],
+      "out": [ { "type": "exec" }, { "name": "Return Value", "type": "object" } ] },
+    { "id": "add", "type": "function", "title": "Add to Viewport", "x": 660, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "mode", "type": "function", "title": "Set Input Mode UI Only", "x": 380, "y": 200,
+      "in": [ { "type": "exec" }, { "name": "Player Controller", "type": "object" }, { "name": "In Widget to Focus", "type": "object" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "cursor", "type": "set", "title": "SET Show Mouse Cursor", "x": 760, "y": 200,
+      "in": [ { "type": "exec" }, { "name": "Show Mouse Cursor", "type": "bool", "value": true }, { "name": "Target", "type": "object" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "begin", 0, "create", 0 ],
+    [ "pc", 0, "create", 2 ],
+    [ "create", 0, "add", 0 ],
+    [ "create", 1, "add", 1 ],
+    [ "add", 0, "mode", 0 ],
+    [ "pc", 0, "mode", 1 ],
+    [ "create", 1, "mode", 2 ],
+    [ "mode", 0, "cursor", 0 ],
+    [ "pc", 0, "cursor", 2 ]
+  ]
+}
+  </script>
+
+  <script type="application/json" class="bp-graph" data-caption="WBP_MainMenu : les deux boutons. Open Level (by Object Reference) évite de taper le nom du niveau à la main.">
+{
+  "nodes": [
+    { "id": "play", "type": "event", "title": "On Clicked (PlayButton)", "x": 0, "y": 0,
+      "out": [ { "type": "exec" } ] },
+    { "id": "open", "type": "function", "title": "Open Level (by Object Reference)", "x": 260, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Level", "type": "object", "value": "Lvl_Arena" }, { "name": "Absolute", "type": "bool", "value": true } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "quit", "type": "event", "title": "On Clicked (QuitButton)", "x": 0, "y": 150,
+      "out": [ { "type": "exec" } ] },
+    { "id": "q", "type": "function", "title": "Quit Game", "x": 260, "y": 150,
+      "in": [ { "type": "exec" }, { "name": "Specific Player", "type": "object" }, { "name": "Quit Preference", "type": "enum", "value": "Quit" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "play", 0, "open", 0 ],
+    [ "quit", 0, "q", 0 ]
+  ]
+}
+  </script>
+
+  <p>Enfin, dans <em>Project Settings → Maps &amp; Modes</em> : <em>Game Default Map</em> = <code>Lvl_MainMenu</code>, <em>Editor Startup Map</em> = <code>Lvl_Arena</code>, <em>Default GameMode</em> = <code>BP_OrbRushGameMode</code>. Le jeu final démarrera sur le menu, l'éditeur sur l'arène.</p>
+
+  <div class="callout ue">
+    <p class="callout-title">Point de contrôle 9</p>
+    <p>Ouvrez <code>Lvl_MainMenu</code> et lancez le PIE : le menu s'affiche avec la souris. <em>Jouer</em> charge l'arène, le HUD apparaît et la souris disparaît (le PlayerController de la partie repasse en <code>FInputModeGameOnly</code>). Terminez la partie, cliquez sur <em>Menu</em> : vous revenez au menu. <em>Quitter</em> arrête le PIE.</p>
+  </div>
+
+  <h2>Étape 10 : sons et effets</h2>
+  <p>Le jeu fonctionne ; c'est maintenant le retour sensoriel (le <em>game feel</em>) qui va le rendre agréable. Voici la liste complète des assets et où ils sont branchés :</p>
+  <table>
+    <thead><tr><th>Asset</th><th>Dossier</th><th>Utilisé par</th><th>Rôle</th></tr></thead>
+    <tbody>
+      <tr><td><code>MS_OrbPickup</code></td><td>Audio</td><td><code>BP_Orb</code> → <em>Pickup Sound</em></td><td>Un « ding » cristallin avec variation de hauteur</td></tr>
+      <tr><td><code>NS_OrbPickup</code></td><td>FX</td><td><code>BP_Orb</code> → <em>Pickup Effect</em></td><td>Gerbe de particules dorées</td></tr>
+      <tr><td><code>SW_GuardianAlert</code></td><td>Audio</td><td><code>BP_Guardian</code> → <em>Alert Sound</em></td><td>Grondement quand le Gardien repère le joueur, avec atténuation</td></tr>
+      <tr><td><code>NS_Respawn</code>, <code>SW_Respawn</code></td><td>FX, Audio</td><td><code>BP_OrbRushCharacter</code> → <em>On Respawned</em></td><td>Effet de téléportation</td></tr>
+      <tr><td><code>SW_ClockTick</code></td><td>Audio</td><td><code>WBP_HUD</code> → <em>On Low Time</em></td><td>Tic des dix dernières secondes</td></tr>
+      <tr><td><code>SW_Victory</code>, <code>SW_Defeat</code></td><td>Audio</td><td><code>WBP_EndScreen</code> → <em>On Shown</em></td><td>Jingle de fin (avec <em>Play Sound 2D</em>)</td></tr>
+      <tr><td><code>SW_Music_Arena</code></td><td>Audio</td><td><em>Ambient Sound</em> placé dans <code>Lvl_Arena</code></td><td>Musique en boucle, classe <code>SC_Music</code>, sans atténuation</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li><strong>Atténuation du Gardien</strong> : créez <code>ATT_Guardian</code> (Inner Radius 300, Falloff 2 500) et assignez-la à son son d'alerte : le joueur entend s'il est proche ou loin.</li>
+    <li><strong>Lumière</strong> : baissez la lumière directionnelle et laissez les orbes et les yeux du Gardien éclairer l'arène ; Lumen rend ces sources émissives très lisibles.</li>
+    <li><strong>Post-process</strong> : un léger vignettage et un peu de bloom font briller les orbes (voir <a href="graphismes.html">Le post-process</a>).</li>
+  </ul>
+
+  <div class="callout perf">
+    <p class="callout-title">Des orbes qui ne coûtent rien</p>
+    <p>Douze orbes qui tickent, c'est négligeable. Si vous en placiez des centaines, le flottement pourrait passer dans le matériau (<em>World Position Offset</em> avec un sinus du temps) et le Tick de <code>AOrb</code> serait désactivé : le GPU anime alors toutes les orbes pour presque rien (voir <a href="optimisation.html">Débogage &amp; optimisation</a>).</p>
+  </div>
+
+  <div class="callout ue">
+    <p class="callout-title">Point de contrôle 10</p>
+    <p>Faites jouer quelqu'un d'autre, sans rien lui expliquer. Comprend-il en moins de dix secondes ce qu'il faut faire, quand le Gardien l'a repéré, et combien de temps il lui reste ? Si non, renforcez le retour visuel ou sonore correspondant.</p>
+  </div>
+
+  <h2>Étape 11 : packager le jeu</h2>
+  <p>Dernière étape : produire un exécutable, comme décrit dans <a href="packaging.html">Packaging &amp; publication</a>. Vérifiez d'abord que les deux niveaux seront bien inclus :</p>
+
+<script type="text/plain" data-lang="ini" data-file="Config/DefaultEngine.ini (extrait)">
+[/Script/EngineSettings.GameMapsSettings]
+GameDefaultMap=/Game/OrbRush/Maps/Lvl_MainMenu.Lvl_MainMenu
+EditorStartupMap=/Game/OrbRush/Maps/Lvl_Arena.Lvl_Arena
+GlobalDefaultGameMode=/Game/OrbRush/Core/BP_OrbRushGameMode.BP_OrbRushGameMode_C
+</script>
+<script type="text/plain" data-lang="ini" data-file="Config/DefaultGame.ini (extrait)">
+[/Script/EngineSettings.GeneralProjectSettings]
+ProjectName=Orb Rush
+ProjectVersion=1.0.0
+
+[/Script/UnrealEd.ProjectPackagingSettings]
+BuildConfiguration=PPBC_Shipping
++MapsToCook=(FilePath="/Game/OrbRush/Maps/Lvl_MainMenu")
++MapsToCook=(FilePath="/Game/OrbRush/Maps/Lvl_Arena")
+</script>
+
+  <ol class="steps">
+    <li><strong>Compiler en Development d'abord</strong>Menu <em>Platforms → Windows → Package Project</em> en configuration <em>Development</em> : la console et les logs restent disponibles pour diagnostiquer un problème.</li>
+    <li><strong>Tester le build</strong>Lancez <code>OrbRush.exe</code> : menu, partie, victoire, défaite, retour au menu, quitter. Testez aussi sur une autre machine.</li>
+    <li><strong>Packager en Shipping</strong>Une fois tout validé, recommencez en <em>Shipping</em> : l'exécutable est plus léger, plus rapide, sans console.</li>
+  </ol>
+
+  <div class="callout danger">
+    <p class="callout-title">« Ça marchait dans l'éditeur ! »</p>
+    <p>Les trois causes les plus fréquentes : un niveau absent de <em>Maps to Cook</em> (le bouton <em>Jouer</em> ne fait rien), un asset référencé seulement par son nom en texte (non détecté par le cook ; c'est pourquoi on utilise <em>Open Level (by Object Reference)</em> et un <code>TSoftObjectPtr</code>), et une logique qui dépendait d'un Actor placé à la main dans le niveau de test. Lisez le log du jeu packagé dans <code>Saved/Logs</code> du build Development.</p>
+  </div>
+
+  <div class="callout ue">
+    <p class="callout-title">Point de contrôle final</p>
+    <p>Le dossier <code>Windows/</code> produit contient <code>OrbRush.exe</code>. Copié sur un autre PC, le jeu démarre sur le menu, se joue entièrement et se quitte proprement. Félicitations : vous avez terminé un jeu complet avec Unreal Engine 5 !</p>
+  </div>
+
+  <h2>Récapitulatif des classes</h2>
+  <table>
+    <thead><tr><th>Classe C++</th><th>Blueprint enfant</th><th>Responsabilité</th></tr></thead>
+    <tbody>
+      <tr><td><code>AOrbRushGameMode</code></td><td><code>BP_OrbRushGameMode</code></td><td>Règles : chrono, comptage, vies, fin de partie</td></tr>
+      <tr><td><code>AOrbRushGameState</code></td><td>—</td><td>État de la partie et délégués pour l'interface</td></tr>
+      <tr><td><code>AOrbRushPlayerController</code></td><td><code>BP_OrbRushPlayerController</code></td><td>HUD, écran de fin, mode d'entrée, pause</td></tr>
+      <tr><td><code>AOrbRushCharacter</code></td><td><code>BP_OrbRushCharacter</code></td><td>Déplacement, caméra, réapparition, invulnérabilité</td></tr>
+      <tr><td><code>AOrb</code></td><td><code>BP_Orb</code></td><td>Flottement, ramassage, son et effet</td></tr>
+      <tr><td><code>AGuardianCharacter</code></td><td><code>BP_Guardian</code></td><td>Capture du joueur, vitesses, ronde, signal d'alerte</td></tr>
+      <tr><td><code>AGuardianAIController</code></td><td>—</td><td>Perception visuelle, lancement du Behavior Tree</td></tr>
+      <tr><td><code>UBTTask_FindPatrolPoint</code></td><td>(nœud de <code>BT_Guardian</code>)</td><td>Choix de la prochaine destination</td></tr>
+      <tr><td><code>UOrbRushHUDWidget</code></td><td><code>WBP_HUD</code></td><td>Affichage orbes, temps, vies</td></tr>
+      <tr><td><code>UOrbRushEndScreenWidget</code></td><td><code>WBP_EndScreen</code></td><td>Résultat, rejouer, retour au menu</td></tr>
+    </tbody>
+  </table>
+
+  <div class="quiz">
+    <p class="q">Pourquoi les orbes appellent-elles <code>OrbCollected()</code> sur le GameMode au lieu de mettre à jour directement le texte du HUD ?</p>
+    <ul>
+      <li>Parce qu'un Actor ne peut pas accéder aux widgets</li>
+      <li data-correct>Pour séparer les règles de l'affichage : le GameMode décide (victoire à 10), le GameState diffuse, et le HUD se contente de réagir. On peut changer l'interface sans toucher aux orbes</li>
+      <li>Parce que le HUD n'existe pas pendant la partie</li>
+      <li>Pour des raisons de performance uniquement</li>
+    </ul>
+    <p class="explain">Si l'orbe modifiait le HUD, il faudrait aussi qu'elle vérifie la victoire, et chaque nouvel affichage (une barre de progression, un son) imposerait de modifier l'orbe. Avec les délégués du GameState, n'importe quel écran peut s'abonner sans que la logique ne change.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Le Gardien vous repère, mais quand vous vous cachez derrière un pilier il continue de vous poursuivre plusieurs secondes avant de reprendre sa ronde. Quel réglage explique ce comportement ?</p>
+    <ul>
+      <li>La vitesse <code>ChaseSpeed</code></li>
+      <li>Le rayon de la <code>CatchSphere</code></li>
+      <li data-correct>La perception : le stimulus « perdu » n'arrive qu'une fois la vue réellement perdue, et le Move To en cours se termine vers la dernière position connue</li>
+      <li>Le Wait de la séquence de patrouille</li>
+    </ul>
+    <p class="explain">C'est voulu : un Gardien qui abandonne instantanément serait trop facile à semer. Pour qu'il cherche activement, ajoutez une clé <code>LastKnownLocation</code> écrite à la perte de vue, et une branche « enquête » dans le Behavior Tree.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Après « Rejouer », le chrono, les orbes et les vies sont bien remis à zéro, et le jeu n'est plus en pause. Pourquoi n'a-t-on rien eu à réinitialiser à la main ?</p>
+    <ul>
+      <li>Parce que <code>SetPause(false)</code> est appelé automatiquement par le bouton</li>
+      <li data-correct>Parce qu'<code>OpenLevel</code> détruit le monde et en recrée un neuf : GameMode, GameState, Actors et état de pause repartent de zéro</li>
+      <li>Parce que le GameState est sauvegardé sur le disque</li>
+      <li>Parce que la GameInstance réinitialise les variables</li>
+    </ul>
+    <p class="explain">Changer de niveau (même pour le même) recrée tout ce qui appartient au monde. Seuls la GameInstance et ses subsystems survivent : c'est là qu'il faudrait stocker un meilleur score.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Aller plus loin : meilleur temps et deuxième Gardien</h4>
+    <p>Ajoutez deux fonctionnalités : (1) un <strong>meilleur temps</strong> sauvegardé sur le disque et affiché sur l'écran de victoire ; (2) un <strong>deuxième Gardien</strong> avec sa propre ronde, qui ne doit nécessiter <strong>aucune ligne de code</strong> en plus.</p>
+    <details>
+      <summary>Voir la solution</summary>
+      <p><strong>Deuxième Gardien</strong> : glissez une seconde instance de <code>BP_Guardian</code> dans le niveau, placez quatre nouveaux Target Points et assignez-les à son tableau <em>Patrol Points</em>. Tout fonctionne, car l'index de ronde est stocké par Gardien et chaque contrôleur a son propre Blackboard.</p>
+      <p><strong>Meilleur temps</strong> : une classe <code>USaveGame</code> avec une variable, lue et écrite à la fin d'une partie gagnée (voir <a href="systemes-gameplay.html">Système de sauvegarde</a>) :</p>
+<script type="text/plain" data-lang="cpp" data-file="Source/OrbRush/Core/OrbRushSaveGame.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/SaveGame.h"
+#include "OrbRushSaveGame.generated.h"
+
+UCLASS()
+class ORBRUSH_API UOrbRushSaveGame : public USaveGame
+{
+    GENERATED_BODY()
+
+public:
+    // Temps mis pour gagner, en secondes (0 = aucune victoire enregistrée)
+    UPROPERTY()
+    int32 BestTimeSeconds = 0;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="OrbRushGameMode.cpp (EndMatch modifié)" data-highlight="9-19">
+#include "Core/OrbRushSaveGame.h"
+#include "Kismet/GameplayStatics.h"
+
+void AOrbRushGameMode::EndMatch(bool bVictory)
+{
+    GetWorldTimerManager().ClearTimer(CountdownHandle);
+    AOrbRushGameState* GS = GetGameState<AOrbRushGameState>();
+
+    if (bVictory && GS)
+    {
+        static const FString SlotName = TEXT("OrbRush");
+        UOrbRushSaveGame* Save = Cast<UOrbRushSaveGame>(UGameplayStatics::LoadGameFromSlot(SlotName, 0));
+        if (!Save) { Save = Cast<UOrbRushSaveGame>(UGameplayStatics::CreateSaveGameObject(UOrbRushSaveGame::StaticClass())); }
+
+        const int32 Time = TimeLimitSeconds - GS->GetRemainingTime();
+        if (Save->BestTimeSeconds == 0 || Time < Save->BestTimeSeconds)
+        {
+            Save->BestTimeSeconds = Time;
+            UGameplayStatics::SaveGameToSlot(Save, SlotName, 0);
+        }
+    }
+
+    if (GS)
+    {
+        GS->SetMatchState(bVictory ? EOrbRushMatchState::Won : EOrbRushMatchState::Lost);
+    }
+}
+</script>
+      <p>La sauvegarde est faite <em>avant</em> <code>SetMatchState</code>, pour que l'écran de victoire, créé en réaction à ce changement d'état, puisse relire le meilleur temps avec <code>LoadGameFromSlot</code> et l'afficher (par exemple dans <code>OnShown</code> côté Blueprint).</p>
+    </details>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Un jeu complet, même petit, mobilise tout le Gameplay Framework : <strong>GameMode</strong> (règles), <strong>GameState</strong> (état), <strong>PlayerController</strong> (interface), <strong>Pawns</strong> (personnage, Gardien).</li>
+      <li>Les Actors signalent les événements au GameMode ; le GameState les diffuse par <strong>délégués</strong> ; l'interface s'abonne sans que la logique la connaisse.</li>
+      <li>Le C++ porte les systèmes et expose des réglages (<code>UPROPERTY</code>) et des événements (<code>BlueprintImplementableEvent</code>) ; les Blueprints assemblent, règlent et ajoutent sons, effets et mise en page.</li>
+      <li>L'IA combine <strong>perception</strong> (quand), <strong>Blackboard</strong> (quoi) et <strong>Behavior Tree</strong> (comment), avec une tâche C++ réutilisable.</li>
+      <li>Avancer par <strong>étapes qui compilent et se testent</strong> : chaque point de contrôle validé limite la zone où chercher un bug.</li>
+      <li>Packagez tôt en Development pour découvrir les problèmes de cook, puis en Shipping pour la version finale.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

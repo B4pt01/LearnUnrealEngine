@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Blueprints : le scripting visuel — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="blueprints">
+<article class="doc">
+
+  <h1>Blueprints : le scripting visuel</h1>
+  <p class="lead">Les Blueprints permettent de programmer un jeu entier en reliant des nœuds, sans écrire une ligne de code. Ce n'est pas un jouet : c'est un vrai langage, compilé, orienté objet, avec variables, fonctions, héritage et interfaces. Ce chapitre vous apprend à lire et écrire un graphe, à structurer votre logique, et surtout à faire <strong>communiquer</strong> vos Blueprints entre eux, la question qui bloque tous les débutants.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Comprendre ce qu'est un <strong>Blueprint</strong> et en connaître les différents types</li>
+      <li>Lire un graphe : nœuds, <strong>pins d'exécution</strong> et <strong>pins de données</strong>, couleurs des types</li>
+      <li>Utiliser <strong>variables</strong>, <strong>fonctions</strong>, <strong>macros</strong> et <strong>Custom Events</strong></li>
+      <li>Contrôler le flux : Branch, Sequence, boucles, Delay, timers</li>
+      <li>Générer du contenu avec le <strong>Construction Script</strong></li>
+      <li>Faire communiquer les Blueprints : référence directe, <strong>cast</strong>, <strong>interface</strong>, <strong>Event Dispatcher</strong></li>
+      <li>Déboguer un Blueprint et l'articuler avec du C++</li>
+    </ul>
+  </div>
+
+  <h2>Qu'est-ce qu'un Blueprint ?</h2>
+  <p>Un <strong>Blueprint Class</strong> (souvent simplement « Blueprint ») est une <strong>classe</strong>, exactement comme une classe C++ : un plan à partir duquel on crée des objets. Quand vous créez <code>BP_Orb</code> à partir de la classe <code>Actor</code>, vous créez une <strong>classe enfant</strong> d'<code>AActor</code>. Chaque orbe posée dans le niveau est une <strong>instance</strong> de cette classe, avec ses propres valeurs de variables.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TD
+    UO["UObject<br>(C++)"] --> AA["AActor<br>(C++)"]
+    AA --> PA["APawn (C++)"]
+    PA --> CH["ACharacter (C++)"]
+    AA --> BPO["BP_Orb<br>(Blueprint)"]
+    CH --> BPC["BP_OrbRushCharacter<br>(Blueprint)"]
+    BPO --> BPG["BP_Orb_Gold<br>(Blueprint enfant)"]
+    BPO -.->|"instance"| I1["Orbe n°1<br>dans le niveau"]
+    BPO -.->|"instance"| I2["Orbe n°2<br>dans le niveau"]
+</pre>
+    <figcaption>Un Blueprint hérite d'une classe C++ (ou d'un autre Blueprint). Les instances placées dans le niveau sont des objets créés à partir de cette classe.</figcaption>
+  </figure>
+
+  <p>Il existe plusieurs sortes d'assets Blueprint, chacune avec un rôle précis :</p>
+  <table>
+    <thead><tr><th>Type</th><th>Préfixe</th><th>Rôle</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Blueprint Class</strong></td><td><code>BP_</code></td><td>Une classe : Actor, Pawn, Character, Component, GameMode… Le cas le plus courant.</td></tr>
+      <tr><td><strong>Level Blueprint</strong></td><td>—</td><td>Un graphe unique attaché à un niveau. Pratique pour un événement scripté, mais non réutilisable : à utiliser avec parcimonie.</td></tr>
+      <tr><td><strong>Blueprint Interface</strong></td><td><code>BPI_</code></td><td>Une liste de fonctions sans implémentation, que plusieurs classes peuvent implémenter.</td></tr>
+      <tr><td><strong>Blueprint Function Library</strong></td><td><code>BPFL_</code></td><td>Des fonctions statiques utilisables depuis n'importe quel Blueprint.</td></tr>
+      <tr><td><strong>Blueprint Macro Library</strong></td><td><code>BPML_</code></td><td>Des macros partagées entre Blueprints d'une même classe de base.</td></tr>
+      <tr><td><strong>Widget Blueprint</strong></td><td><code>WBP_</code></td><td>Une interface utilisateur UMG (voir <a href="ui.html">Interfaces avec UMG</a>).</td></tr>
+      <tr><td><strong>Animation Blueprint</strong></td><td><code>ABP_</code></td><td>La logique d'animation d'un Skeletal Mesh (voir <a href="animation.html">Animation</a>).</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <p class="callout-title">Les Blueprints sont compilés</p>
+    <p>Le bouton <strong>Compile</strong> transforme votre graphe en <em>bytecode</em> exécuté par une machine virtuelle du moteur. Un Blueprint est donc plus lent que du C++ natif (surtout dans les boucles lourdes), mais largement assez rapide pour la logique de gameplay courante. Le vrai coût se cache rarement dans « Blueprint contre C++ » : il vient bien plus souvent d'un Tick inutile ou d'une boucle sur des milliers d'éléments.</p>
+  </div>
+
+  <h2>L'éditeur de Blueprint</h2>
+  <p>Double-cliquez sur un Blueprint Class : son éditeur s'ouvre. On y retrouve toujours les mêmes zones :</p>
+  <dl class="defs">
+    <dt>Components</dt><dd>En haut à gauche : la hiérarchie des composants de l'Actor (mesh, collision, caméra, son…). Le bouton <em>+ Add</em> en ajoute. Le premier composant est la racine (<em>DefaultSceneRoot</em> par défaut).</dd>
+    <dt>My Blueprint</dt><dd>En bas à gauche : les graphes, fonctions, macros, variables et Event Dispatchers de la classe. C'est ici qu'on les crée, avec les boutons <strong>+</strong>.</dd>
+    <dt>Viewport</dt><dd>L'aperçu 3D de l'Actor et de ses composants.</dd>
+    <dt>Event Graph</dt><dd>Le graphe principal, où l'on réagit aux événements (BeginPlay, overlap, input…).</dd>
+    <dt>Construction Script</dt><dd>Un graphe spécial exécuté dans l'éditeur à chaque modification de l'Actor (voir plus bas).</dd>
+    <dt>Details</dt><dd>À droite : les propriétés de ce qui est sélectionné (composant, variable, nœud).</dd>
+    <dt>Class Defaults / Class Settings</dt><dd>Boutons de la barre d'outils : les valeurs par défaut de la classe, et ses réglages (classe parente, interfaces implémentées).</dd>
+  </dl>
+
+  <div class="callout tip">
+    <p class="callout-title">Ajouter un nœud</p>
+    <p>Clic droit dans le graphe ouvre la palette contextuelle : tapez le nom du nœud (« print », « delay », « get actor location »). L'option <em>Context Sensitive</em> filtre les nœuds compatibles. Encore plus rapide : <strong>tirez un fil depuis un pin</strong> et relâchez dans le vide, la palette ne propose alors que des nœuds acceptant ce type.</p>
+  </div>
+
+  <h2>Lire un graphe : nœuds et pins</h2>
+  <p>Un graphe Blueprint contient deux sortes de fils, et toute la lecture repose sur cette distinction :</p>
+  <div class="compare">
+    <div class="neutral">
+      <h4>Les fils d'exécution (blancs)</h4>
+      <p>Ils relient les pins en forme de flèche ▷. Ils disent <strong>dans quel ordre</strong> les actions se produisent. L'exécution part d'un événement (nœud rouge) et suit le fil blanc de gauche à droite.</p>
+    </div>
+    <div class="alt">
+      <h4>Les fils de données (colorés)</h4>
+      <p>Ils relient les pins ronds. Ils transportent <strong>des valeurs</strong> : un nombre, un texte, un objet. Leur couleur indique le type. Une valeur est calculée au moment où un nœud exécuté en a besoin.</p>
+    </div>
+  </div>
+
+  <script type="application/json" class="bp-graph" data-caption="Les fils blancs donnent l'ordre d'exécution ; le fil rouge transporte un booléen qui choisit la branche suivie.">
+{
+  "nodes": [
+    { "id": "begin", "type": "event", "title": "Event BeginPlay", "x": 0, "y": 0,
+      "out": [ { "type": "exec" } ] },
+    { "id": "open", "type": "var", "title": "bIsOpen", "x": 40, "y": 110,
+      "out": [ { "type": "bool" } ] },
+    { "id": "branch", "type": "flow", "title": "Branch", "x": 240, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Condition", "type": "bool" } ],
+      "out": [ { "name": "True", "type": "exec" }, { "name": "False", "type": "exec" } ] },
+    { "id": "p1", "type": "function", "title": "Print String", "x": 470, "y": -60,
+      "in": [ { "type": "exec" }, { "name": "In String", "type": "string", "value": "La porte est ouverte" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "p2", "type": "function", "title": "Print String", "x": 470, "y": 80,
+      "in": [ { "type": "exec" }, { "name": "In String", "type": "string", "value": "La porte est fermée" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "begin", 0, "branch", 0 ],
+    [ "open", 0, "branch", 1 ],
+    [ "branch", 0, "p1", 0 ],
+    [ "branch", 1, "p2", 0 ]
+  ]
+}
+  </script>
+
+  <h3>Les familles de nœuds</h3>
+  <p>La couleur de l'en-tête d'un nœud indique sa nature :</p>
+  <table>
+    <thead><tr><th>En-tête</th><th>Nature</th><th>Exemples</th></tr></thead>
+    <tbody>
+      <tr><td>Rouge</td><td><strong>Événement</strong> : point de départ d'une exécution</td><td>Event BeginPlay, Event Tick, Event ActorBeginOverlap, Custom Event</td></tr>
+      <tr><td>Bleu</td><td><strong>Fonction</strong> avec pins d'exécution (elle <em>fait</em> quelque chose)</td><td>Print String, Destroy Actor, Set Actor Location</td></tr>
+      <tr><td>Vert</td><td><strong>Fonction pure</strong>, sans pin d'exécution (elle <em>calcule</em> une valeur)</td><td>Get Actor Location, Vector Length, Get Player Character</td></tr>
+      <tr><td>Gris</td><td><strong>Contrôle de flux</strong> et macros</td><td>Branch, Sequence, For Each Loop, Do Once</td></tr>
+      <tr><td>Turquoise</td><td><strong>Cast</strong> : conversion de type</td><td>Cast To BP_OrbRushCharacter</td></tr>
+      <tr><td>Violet</td><td><strong>Message d'interface</strong></td><td>Interact (Message)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Les couleurs des pins de données</h3>
+  <table>
+    <thead><tr><th>Couleur</th><th>Type Blueprint</th><th>Équivalent C++</th></tr></thead>
+    <tbody>
+      <tr><td><span style="color:#c4161c">●</span> Rouge foncé</td><td>Boolean</td><td><code>bool</code></td></tr>
+      <tr><td><span style="color:#1fe0a8">●</span> Vert d'eau</td><td>Integer</td><td><code>int32</code></td></tr>
+      <tr><td><span style="color:#9ef24c">●</span> Vert clair</td><td>Float (simple ou double précision)</td><td><code>float</code> / <code>double</code></td></tr>
+      <tr><td><span style="color:#109a8a">●</span> Turquoise foncé</td><td>Byte, Enum</td><td><code>uint8</code>, <code>UENUM</code></td></tr>
+      <tr><td><span style="color:#f13ad1">●</span> Magenta</td><td>String</td><td><code>FString</code></td></tr>
+      <tr><td><span style="color:#c88cff">●</span> Lilas</td><td>Name</td><td><code>FName</code></td></tr>
+      <tr><td><span style="color:#e8749a">●</span> Rose</td><td>Text (affichable, traduisible)</td><td><code>FText</code></td></tr>
+      <tr><td><span style="color:#ffc93c">●</span> Jaune</td><td>Vector</td><td><code>FVector</code></td></tr>
+      <tr><td><span style="color:#a3b6ff">●</span> Bleu lavande</td><td>Rotator</td><td><code>FRotator</code></td></tr>
+      <tr><td><span style="color:#ff7a1a">●</span> Orange</td><td>Transform</td><td><code>FTransform</code></td></tr>
+      <tr><td><span style="color:#1ea7f5">●</span> Bleu</td><td>Référence d'objet</td><td><code>AActor*</code>, <code>UObject*</code>…</td></tr>
+      <tr><td><span style="color:#8a4dff">●</span> Violet</td><td>Référence de classe</td><td><code>TSubclassOf&lt;…&gt;</code></td></tr>
+      <tr><td><span style="color:#2a6fdb">●</span> Bleu roi</td><td>Structure</td><td><code>USTRUCT</code> (FHitResult…)</td></tr>
+    </tbody>
+  </table>
+  <p>Un pin en forme de <strong>grille</strong> (trois par trois petits carrés) est un <strong>tableau</strong> (<em>Array</em>) ; un pin <strong>carré</strong> rouge est un <strong>délégué</strong> (un événement passé en paramètre).</p>
+
+  <h2>Les variables</h2>
+  <p>Dans le panneau <em>My Blueprint</em>, le bouton <strong>+ Variable</strong> crée une variable. Choisissez son type dans Details, compilez, puis donnez-lui une valeur par défaut. Glissez-la dans le graphe : <kbd>Ctrl</kbd> + glisser crée un nœud <strong>Get</strong> (lire), <kbd>Alt</kbd> + glisser un nœud <strong>Set</strong> (écrire).</p>
+
+  <dl class="defs">
+    <dt>Instance Editable (l'œil)</dt><dd>La variable apparaît dans le panneau Details de chaque instance placée dans le niveau : un level designer peut régler chaque orbe différemment.</dd>
+    <dt>Expose on Spawn</dt><dd>La variable devient un paramètre du nœud <em>Spawn Actor from Class</em> : on fixe sa valeur au moment de la création.</dd>
+    <dt>Private</dt><dd>Les autres Blueprints ne peuvent pas la lire ni l'écrire : on passe par des fonctions.</dd>
+    <dt>Category</dt><dd>Regroupe les variables dans Details et dans My Blueprint.</dd>
+    <dt>Tooltip</dt><dd>Le texte affiché au survol. Documentez vos variables : c'est la seule doc que lira votre game designer.</dd>
+    <dt>Replication</dt><dd>Synchronise la variable en multijoueur (voir <a href="multijoueur.html">Réseau &amp; multijoueur</a>).</dd>
+  </dl>
+
+  <p>Exemple classique : un système de points de vie. L'événement <em>Event AnyDamage</em> est appelé quand l'Actor reçoit des dégâts (via <em>Apply Damage</em>) :</p>
+
+  <script type="application/json" class="bp-graph" data-caption="Soustraire les dégâts, borner le résultat entre 0 et MaxHealth, puis tester la mort.">
+{
+  "nodes": [
+    { "id": "dmg", "type": "event", "title": "Event AnyDamage", "x": 0, "y": 0,
+      "out": [ { "type": "exec" }, { "name": "Damage", "type": "float" }, { "name": "Damage Causer", "type": "object" } ] },
+    { "id": "hp", "type": "var", "title": "Health", "x": 0, "y": 150, "out": [ { "type": "float" } ] },
+    { "id": "minus", "type": "op", "title": "−", "x": 150, "y": 140,
+      "in": [ { "type": "float" }, { "type": "float" } ], "out": [ { "type": "float" } ] },
+    { "id": "maxhp", "type": "var", "title": "MaxHealth", "x": 130, "y": 240, "out": [ { "type": "float" } ] },
+    { "id": "clamp", "type": "pure", "title": "Clamp (Float)", "x": 290, "y": 140,
+      "in": [ { "name": "Value", "type": "float" }, { "name": "Min", "type": "float", "value": "0.0" }, { "name": "Max", "type": "float" } ],
+      "out": [ { "name": "Return Value", "type": "float" } ] },
+    { "id": "set", "type": "set", "title": "SET Health", "x": 500, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Health", "type": "float" } ],
+      "out": [ { "type": "exec" }, { "type": "float" } ] },
+    { "id": "le", "type": "op", "title": "≤", "x": 680, "y": 120,
+      "in": [ { "type": "float" }, { "type": "float", "value": "0.0" } ], "out": [ { "type": "bool" } ] },
+    { "id": "branch", "type": "flow", "title": "Branch", "x": 700, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Condition", "type": "bool" } ],
+      "out": [ { "name": "True", "type": "exec" }, { "name": "False", "type": "exec" } ] },
+    { "id": "die", "type": "function", "title": "Die", "subtitle": "Fonction de BP_Enemy", "x": 890, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object", "value": "self" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "dmg", 0, "set", 0 ],
+    [ "hp", 0, "minus", 0 ],
+    [ "dmg", 1, "minus", 1 ],
+    [ "minus", 0, "clamp", 0 ],
+    [ "maxhp", 0, "clamp", 2 ],
+    [ "clamp", 0, "set", 1 ],
+    [ "set", 0, "branch", 0 ],
+    [ "set", 1, "le", 0 ],
+    [ "le", 0, "branch", 1 ],
+    [ "branch", 0, "die", 0 ]
+  ]
+}
+  </script>
+
+  <div class="callout warn">
+    <p class="callout-title">Les nœuds purs sont recalculés à chaque lecture</p>
+    <p>Un nœud vert (pur) n'a pas de pin d'exécution : il est réévalué <strong>chaque fois</strong> qu'un nœud exécuté lit sa sortie. Si vous branchez la sortie de <em>Random Integer</em> sur deux nœuds, vous obtiendrez deux nombres différents. Si un calcul pur est coûteux (<em>Get All Actors Of Class</em>, une recherche dans un tableau) ou aléatoire, stockez son résultat dans une variable locale avant de l'utiliser plusieurs fois.</p>
+  </div>
+
+  <h3>Tableaux, maps et sets</h3>
+  <p>Toute variable peut devenir un conteneur grâce à l'icône à droite de son type : <strong>Array</strong> (liste ordonnée, accès par index), <strong>Set</strong> (ensemble sans doublons) ou <strong>Map</strong> (dictionnaire clé → valeur). Ce sont les équivalents de <code>TArray</code>, <code>TSet</code> et <code>TMap</code> en C++. Les nœuds utiles : <em>Add</em>, <em>Remove</em>, <em>Get (a copy)</em>, <em>Length</em>, <em>Contains</em>, <em>Find</em>, et la boucle <em>For Each Loop</em>.</p>
+
+  <h2>Fonctions, macros et Custom Events</h2>
+  <p>Un Event Graph de 300 nœuds devient vite illisible (« spaghetti »). Trois outils permettent de découper la logique :</p>
+  <table>
+    <thead><tr><th></th><th>Fonction</th><th>Macro</th><th>Custom Event</th></tr></thead>
+    <tbody>
+      <tr><td>Valeur de retour</td><td>Oui (plusieurs sorties possibles)</td><td>Oui</td><td>Non</td></tr>
+      <tr><td>Variables locales</td><td>Oui</td><td>Non (seulement des nœuds <em>Local Variable</em> de macro)</td><td>Non</td></tr>
+      <tr><td>Nœuds latents (Delay, Timeline)</td><td><strong>Non</strong></td><td>Oui</td><td>Oui</td></tr>
+      <tr><td>Plusieurs sorties d'exécution</td><td>Non</td><td>Oui (comme Branch)</td><td>Non</td></tr>
+      <tr><td>Appelable depuis un autre Blueprint</td><td>Oui</td><td>Non</td><td>Oui</td></tr>
+      <tr><td>Peut être lié à un timer ou un dispatcher</td><td>Oui (par nom, avec <em>Set Timer by Function Name</em>)</td><td>Non</td><td>Oui</td></tr>
+      <tr><td>Réplication réseau (RPC)</td><td>Non</td><td>Non</td><td>Oui</td></tr>
+    </tbody>
+  </table>
+  <p>Règle simple : <strong>par défaut, une fonction</strong>. Un <strong>Custom Event</strong> quand vous avez besoin d'un Delay, d'un timer, d'un dispatcher ou d'un RPC. Une <strong>macro</strong> quand vous voulez plusieurs sorties d'exécution, ce qui reste rare.</p>
+  <p>Cochez <em>Pure</em> dans les détails d'une fonction qui ne modifie rien (un calcul, un getter) : elle perd ses pins d'exécution et devient verte. Cochez <em>Const</em> si elle ne modifie pas l'objet. Sélectionnez un groupe de nœuds puis clic droit → <em>Collapse to Function</em> pour transformer un morceau de graphe existant en fonction.</p>
+
+  <h2>Contrôler le flux d'exécution</h2>
+  <p>Les nœuds gris de contrôle de flux sont les « mots-clés » du langage :</p>
+  <dl class="defs">
+    <dt>Branch</dt><dd>Le <code>if</code> : suit <em>True</em> ou <em>False</em> selon une condition.</dd>
+    <dt>Sequence</dt><dd>Exécute <em>Then 0</em>, puis <em>Then 1</em>, puis <em>Then 2</em>… Utile pour aérer un graphe. Attention : si une branche contient un Delay, la suivante n'attend pas.</dd>
+    <dt>Switch on Int / Enum / String</dt><dd>Le <code>switch</code> : une sortie par valeur.</dd>
+    <dt>For Loop / For Each Loop / While Loop</dt><dd>Les boucles. Elles s'exécutent entièrement dans la même frame : une boucle de 100 000 tours fige le jeu, et une boucle infinie déclenche l'erreur « Infinite loop detected ».</dd>
+    <dt>Do Once / Do N</dt><dd>Ne laisse passer l'exécution qu'une fois (ou N fois) jusqu'à <em>Reset</em>.</dd>
+    <dt>Flip Flop</dt><dd>Alterne entre la sortie A et la sortie B à chaque passage : idéal pour un interrupteur.</dd>
+    <dt>Gate</dt><dd>Une porte qu'on ouvre (<em>Open</em>) et ferme (<em>Close</em>) : l'exécution ne passe que si elle est ouverte.</dd>
+    <dt>Delay</dt><dd>Un nœud <strong>latent</strong> : il reprend l'exécution après une durée, sans bloquer le jeu. Rappeler un Delay déjà en cours est ignoré.</dd>
+    <dt>Is Valid</dt><dd>Vérifie qu'une référence d'objet n'est ni vide ni en cours de destruction. À utiliser avant d'accéder à un objet qui a pu disparaître.</dd>
+  </dl>
+
+  <h3>Les timers</h3>
+  <p>Pour répéter une action à intervalle régulier (un chrono, une régénération), n'utilisez ni le Tick ni une boucle de Delay : utilisez un <strong>timer</strong>. <em>Set Timer by Event</em> appelle un Custom Event après un délai, éventuellement en boucle, et renvoie un <em>Timer Handle</em> qui permet de le mettre en pause ou de l'arrêter (<em>Clear and Invalidate Timer by Handle</em>).</p>
+
+  <script type="application/json" class="bp-graph" data-caption="Un compte à rebours : le timer appelle TickCountdown chaque seconde, qui décrémente RemainingTime et arrête tout à zéro.">
+{
+  "nodes": [
+    { "id": "begin", "type": "event", "title": "Event BeginPlay", "x": 0, "y": 0,
+      "out": [ { "type": "exec" } ] },
+    { "id": "timer", "type": "function", "title": "Set Timer by Event", "x": 240, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Event", "type": "delegate" }, { "name": "Time", "type": "float", "value": "1.0" }, { "name": "Looping", "type": "bool", "value": true } ],
+      "out": [ { "type": "exec" }, { "name": "Return Value", "type": "struct" } ] },
+    { "id": "sethandle", "type": "set", "title": "SET CountdownHandle", "x": 500, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Countdown Handle", "type": "struct" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "ev", "type": "custom", "title": "TickCountdown", "subtitle": "Custom Event", "x": 0, "y": 170,
+      "out": [ { "type": "delegate" }, { "type": "exec" } ] },
+    { "id": "rt", "type": "var", "title": "RemainingTime", "x": 20, "y": 300, "out": [ { "type": "int" } ] },
+    { "id": "minus", "type": "op", "title": "−", "x": 230, "y": 290,
+      "in": [ { "type": "int" }, { "type": "int", "value": "1" } ], "out": [ { "type": "int" } ] },
+    { "id": "setrt", "type": "set", "title": "SET RemainingTime", "x": 360, "y": 180,
+      "in": [ { "type": "exec" }, { "name": "Remaining Time", "type": "int" } ],
+      "out": [ { "type": "exec" }, { "type": "int" } ] },
+    { "id": "le", "type": "op", "title": "≤", "x": 560, "y": 290,
+      "in": [ { "type": "int" }, { "type": "int", "value": "0" } ], "out": [ { "type": "bool" } ] },
+    { "id": "branch", "type": "flow", "title": "Branch", "x": 700, "y": 180,
+      "in": [ { "type": "exec" }, { "name": "Condition", "type": "bool" } ],
+      "out": [ { "name": "True", "type": "exec" }, { "name": "False", "type": "exec" } ] },
+    { "id": "clear", "type": "function", "title": "Clear and Invalidate Timer by Handle", "x": 880, "y": 180,
+      "in": [ { "type": "exec" }, { "name": "Handle", "type": "struct" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "h", "type": "var", "title": "CountdownHandle", "x": 700, "y": 330, "out": [ { "type": "struct" } ] }
+  ],
+  "links": [
+    [ "begin", 0, "timer", 0 ],
+    [ "ev", 0, "timer", 1 ],
+    [ "timer", 0, "sethandle", 0 ],
+    [ "timer", 1, "sethandle", 1 ],
+    [ "ev", 1, "setrt", 0 ],
+    [ "rt", 0, "minus", 0 ],
+    [ "minus", 0, "setrt", 1 ],
+    [ "setrt", 0, "branch", 0 ],
+    [ "setrt", 1, "le", 0 ],
+    [ "le", 0, "branch", 1 ],
+    [ "branch", 0, "clear", 0 ],
+    [ "h", 0, "clear", 1 ]
+  ]
+}
+  </script>
+
+  <h3>Event Tick : à manier avec précaution</h3>
+  <p><em>Event Tick</em> s'exécute à chaque frame, avec le <em>Delta Seconds</em> écoulé depuis la frame précédente. C'est le bon outil pour un mouvement continu ou une interpolation de caméra ; c'est le mauvais outil pour vérifier « est-ce que la partie est finie ? » soixante fois par seconde. Préférez les <strong>événements</strong> (overlap, dégâts, dispatcher) et les <strong>timers</strong>. Si une classe n'a pas besoin du Tick, décochez <em>Start with Tick Enabled</em> dans Class Defaults.</p>
+
+  <div class="quiz">
+    <p class="q">Vous branchez la sortie d'un nœud <em>Random Integer in Range (1, 6)</em> à la fois sur un <em>Print String</em> et sur une variable <em>SET LastRoll</em>. Le texte affiché et la valeur stockée diffèrent. Pourquoi ?</p>
+    <ul>
+      <li>Le Print String arrondit les entiers</li>
+      <li data-correct>Un nœud pur est réévalué à chaque lecture : chaque nœud qui lit la sortie obtient un nouveau tirage</li>
+      <li>Il faut compiler le Blueprint deux fois</li>
+      <li>SET ne fonctionne pas avec des valeurs aléatoires</li>
+    </ul>
+    <p class="explain">Les nœuds purs n'ont pas de mémoire. Pour garder un tirage, enregistrez-le d'abord dans une variable (SET), puis lisez cette variable partout où vous en avez besoin.</p>
+  </div>
+
+  <h2>Le Construction Script</h2>
+  <p>Le <strong>Construction Script</strong> s'exécute <strong>dans l'éditeur</strong>, chaque fois que l'Actor est placé, déplacé ou qu'une de ses propriétés change, et une fois de plus quand il apparaît en jeu. Il sert à construire l'Actor en fonction de ses paramètres : une clôture dont on règle le nombre de poteaux, une lampe dont on choisit la couleur, une rangée d'orbes.</p>
+
+  <script type="application/json" class="bp-graph" data-caption="Une rangée d'orbes générée dans l'éditeur : changez Count dans Details et la rangée se reconstruit instantanément.">
+{
+  "nodes": [
+    { "id": "cs", "type": "event", "title": "Construction Script", "x": 0, "y": 0,
+      "out": [ { "type": "exec" } ] },
+    { "id": "count", "type": "var", "title": "Count", "x": 0, "y": 140, "out": [ { "type": "int" } ] },
+    { "id": "minus", "type": "op", "title": "−", "x": 150, "y": 130,
+      "in": [ { "type": "int" }, { "type": "int", "value": "1" } ], "out": [ { "type": "int" } ] },
+    { "id": "loop", "type": "macro", "title": "For Loop", "x": 250, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "First Index", "type": "int", "value": "0" }, { "name": "Last Index", "type": "int" } ],
+      "out": [ { "name": "Loop Body", "type": "exec" }, { "name": "Index", "type": "int" }, { "name": "Completed", "type": "exec" } ] },
+    { "id": "spacing", "type": "var", "title": "Spacing", "x": 270, "y": 220, "out": [ { "type": "float" } ] },
+    { "id": "mul", "type": "op", "title": "×", "x": 450, "y": 160,
+      "in": [ { "type": "int" }, { "type": "float" } ], "out": [ { "type": "float" } ] },
+    { "id": "vec", "type": "pure", "title": "Make Vector", "x": 560, "y": 140,
+      "in": [ { "name": "X", "type": "float" }, { "name": "Y", "type": "float", "value": "0.0" }, { "name": "Z", "type": "float", "value": "0.0" } ],
+      "out": [ { "type": "vector" } ] },
+    { "id": "mk", "type": "pure", "title": "Make Transform", "x": 720, "y": 150,
+      "in": [ { "name": "Location", "type": "vector" }, { "name": "Rotation", "type": "rotator" }, { "name": "Scale", "type": "vector", "value": "1, 1, 1" } ],
+      "out": [ { "type": "transform" } ] },
+    { "id": "add", "type": "function", "title": "Add Static Mesh Component", "x": 900, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object", "value": "self" }, { "name": "Relative Transform", "type": "transform" } ],
+      "out": [ { "type": "exec" }, { "name": "Return Value", "type": "object" } ] }
+  ],
+  "links": [
+    [ "cs", 0, "loop", 0 ],
+    [ "count", 0, "minus", 0 ],
+    [ "minus", 0, "loop", 2 ],
+    [ "loop", 0, "add", 0 ],
+    [ "loop", 1, "mul", 0 ],
+    [ "spacing", 0, "mul", 1 ],
+    [ "mul", 0, "vec", 0 ],
+    [ "vec", 0, "mk", 0 ],
+    [ "mk", 0, "add", 2 ]
+  ]
+}
+  </script>
+
+  <div class="callout perf">
+    <p class="callout-title">Rien de lourd dans le Construction Script</p>
+    <p>Il est réexécuté à chaque déplacement de la souris quand vous faites glisser l'Actor : un traitement coûteux rend l'éditeur saccadé. N'y faites pas non plus de logique de jeu (dégâts, score, sons) : elle appartient à <em>BeginPlay</em>. Pour beaucoup de copies d'un même mesh, préférez un <em>Instanced Static Mesh Component</em> et <em>Add Instance</em>, bien moins coûteux qu'un composant par copie.</p>
+  </div>
+
+  <h2>Faire communiquer les Blueprints</h2>
+  <p>Votre personnage ramasse une orbe : l'orbe doit prévenir le score. Le joueur appuie sur un bouton : la porte doit s'ouvrir. Faire parler deux Blueprints est <strong>la</strong> compétence clé. Il existe quatre techniques, chacune adaptée à une situation :</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TD
+    Q{"Qui parle à qui ?"} --> A{"L'émetteur connaît-il<br>précisément le receveur ?"}
+    A -->|"Oui, un objet précis<br>placé dans le niveau"| R["Référence directe<br>variable Instance Editable"]
+    A -->|"Il a une référence générique<br>(Actor touché, Pawn)"| B{"Le receveur est-il<br>d'un type connu ?"}
+    B -->|"Oui, toujours le même type"| C["Cast To"]
+    B -->|"Non, des types variés<br>(porte, coffre, PNJ)"| I["Blueprint Interface"]
+    Q --> D{"Un objet doit annoncer un fait<br>à des écouteurs inconnus ?"}
+    D -->|"Oui : « je suis mort »,<br>« bouton pressé »"| E["Event Dispatcher"]
+</pre>
+    <figcaption>Choisir la bonne technique de communication entre Blueprints.</figcaption>
+  </figure>
+
+  <h3>1. La référence directe</h3>
+  <p>Le cas le plus simple : un bouton doit ouvrir <em>cette</em> porte. Dans <code>BP_Button</code>, créez une variable <code>TargetDoor</code> de type <em>BP_Door (Object Reference)</em>, cochez <em>Instance Editable</em>, compilez. Dans le niveau, sélectionnez le bouton et choisissez la porte dans le champ <code>TargetDoor</code> avec la pipette. Le bouton peut alors appeler directement les fonctions de la porte.</p>
+
+  <h3>2. Le cast</h3>
+  <p>Beaucoup d'événements vous donnent une référence <strong>générique</strong> : <em>Event ActorBeginOverlap</em> fournit un <em>Actor</em>, <em>Get Player Character</em> un <em>Character</em>. Pour accéder aux variables et fonctions propres à votre classe, il faut <strong>convertir</strong> cette référence : c'est le <strong>Cast</strong>. Si l'objet est bien du type demandé (ou d'une classe enfant), la sortie principale est suivie avec la référence convertie ; sinon, c'est <em>Cast Failed</em>.</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+  <script type="application/json" class="bp-graph" data-caption="Dans BP_Orb : seul le personnage du joueur peut ramasser l'orbe. Tout autre Actor fait échouer le cast.">
+{
+  "nodes": [
+    { "id": "ov", "type": "event", "title": "Event ActorBeginOverlap", "x": 0, "y": 0,
+      "out": [ { "type": "exec" }, { "name": "Other Actor", "type": "object" } ] },
+    { "id": "cast", "type": "cast", "title": "Cast To BP_OrbRushCharacter", "x": 270, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Object", "type": "object" } ],
+      "out": [ { "type": "exec" }, { "name": "Cast Failed", "type": "exec" }, { "name": "As BP Orb Rush Character", "type": "object" } ] },
+    { "id": "add", "type": "function", "title": "Add Orb", "subtitle": "Target is BP Orb Rush Character", "x": 610, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object" }, { "name": "Amount", "type": "int", "value": "1" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "kill", "type": "function", "title": "DestroyActor", "x": 880, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object", "value": "self" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ov", 0, "cast", 0 ],
+    [ "ov", 1, "cast", 1 ],
+    [ "cast", 0, "add", 0 ],
+    [ "cast", 2, "add", 1 ],
+    [ "add", 0, "kill", 0 ]
+  ]
+}
+  </script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="Orb.cpp (extrait)">
+void AOrb::NotifyActorBeginOverlap(AActor* OtherActor)
+{
+    Super::NotifyActorBeginOverlap(OtherActor);
+
+    // Cast<T> renvoie nullptr si OtherActor n'est pas un AOrbRushCharacter (ou une classe enfant)
+    if (AOrbRushCharacter* Character = Cast<AOrbRushCharacter>(OtherActor))
+    {
+        Character->AddOrb(1);
+        Destroy();
+    }
+}
+</script>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <p class="callout-title">Le vrai coût du cast : les dépendances</p>
+    <p>Un cast en lui-même est très rapide. Mais un nœud <em>Cast To BP_Boss</em> crée une <strong>référence dure</strong> : charger votre Blueprint charge aussi <code>BP_Boss</code>, ses meshes, ses textures, ses sons… Multipliez les casts vers des Blueprints lourds et chaque asset finit par tout charger en mémoire. Castez de préférence vers des <strong>classes C++</strong> ou des Blueprints parents légers, et utilisez des interfaces quand plusieurs types sont possibles. Le <em>Size Map</em> révèle ces chaînes de dépendances.</p>
+  </div>
+
+  <h3>3. Les Blueprint Interfaces</h3>
+  <p>Le joueur appuie sur « Interagir » devant un objet. Ce peut être une porte, un coffre, un levier, un PNJ… Faire un cast vers chacun serait interminable. Une <strong>interface</strong> définit un <strong>contrat</strong> : « je sais répondre à <em>Interact</em> ». Chaque classe qui l'implémente fournit sa propre réponse, et l'appelant n'a pas besoin de connaître le type exact.</p>
+  <ol class="steps">
+    <li><strong>Créer l'interface</strong>Clic droit → <em>Blueprints → Blueprint Interface</em> : <code>BPI_Interactable</code>. Ajoutez une fonction <code>Interact</code> avec une entrée <code>Instigator</code> (<em>Pawn</em>). Pas d'implémentation ici : seulement la signature.</li>
+    <li><strong>L'implémenter</strong>Dans <code>BP_Door</code>, <em>Class Settings → Implemented Interfaces → Add → BPI_Interactable</em>. L'événement <em>Event Interact</em> apparaît dans My Blueprint : implémentez-le.</li>
+    <li><strong>Envoyer le message</strong>Dans le personnage, appelez <em>Interact (Message)</em> sur l'Actor visé. Si l'Actor n'implémente pas l'interface, rien ne se passe, sans erreur ni cast.</li>
+  </ol>
+
+  <script type="application/json" class="bp-graph" data-caption="Dans le personnage : envoyer le message Interact à tous les Actors à portée, quel que soit leur type.">
+{
+  "nodes": [
+    { "id": "ia", "type": "event", "title": "EnhancedInputAction IA_Interact", "x": 0, "y": 0,
+      "out": [ { "name": "Triggered", "type": "exec" }, { "name": "Started", "type": "exec" }, { "name": "Completed", "type": "exec" } ] },
+    { "id": "get", "type": "function", "title": "Get Overlapping Actors", "x": 300, "y": 30,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object", "value": "self" }, { "name": "Class Filter", "type": "class", "value": "Actor" } ],
+      "out": [ { "type": "exec" }, { "name": "Overlapping Actors", "type": "object", "array": true } ] },
+    { "id": "loop", "type": "macro", "title": "For Each Loop", "x": 620, "y": 30,
+      "in": [ { "type": "exec" }, { "name": "Array", "type": "object", "array": true } ],
+      "out": [ { "name": "Loop Body", "type": "exec" }, { "name": "Array Element", "type": "object" }, { "name": "Array Index", "type": "int" }, { "name": "Completed", "type": "exec" } ] },
+    { "id": "self", "type": "var", "title": "Self", "x": 660, "y": 210, "out": [ { "type": "object" } ] },
+    { "id": "msg", "type": "interface", "title": "Interact (Message)", "subtitle": "BPI_Interactable", "x": 870, "y": 30,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object" }, { "name": "Instigator", "type": "object" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ia", 1, "get", 0 ],
+    [ "get", 0, "loop", 0 ],
+    [ "get", 1, "loop", 1 ],
+    [ "loop", 0, "msg", 0 ],
+    [ "loop", 1, "msg", 1 ],
+    [ "self", 0, "msg", 2 ]
+  ]
+}
+  </script>
+
+  <script type="application/json" class="bp-graph" data-caption="Dans BP_Door : l'implémentation de l'interface. Flip Flop alterne entre ouverture et fermeture.">
+{
+  "nodes": [
+    { "id": "ev", "type": "event", "title": "Event Interact", "subtitle": "Interface BPI_Interactable", "x": 0, "y": 0,
+      "out": [ { "type": "exec" }, { "name": "Instigator", "type": "object" } ] },
+    { "id": "ff", "type": "macro", "title": "Flip Flop", "x": 260, "y": 0,
+      "in": [ { "type": "exec" } ],
+      "out": [ { "name": "A", "type": "exec" }, { "name": "B", "type": "exec" }, { "name": "Is A", "type": "bool" } ] },
+    { "id": "open", "type": "function", "title": "Play", "subtitle": "Target is Timeline DoorTimeline", "x": 450, "y": -40,
+      "in": [ { "type": "exec" } ], "out": [ { "type": "exec" } ] },
+    { "id": "close", "type": "function", "title": "Reverse", "subtitle": "Target is Timeline DoorTimeline", "x": 450, "y": 80,
+      "in": [ { "type": "exec" } ], "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ev", 0, "ff", 0 ],
+    [ "ff", 0, "open", 0 ],
+    [ "ff", 1, "close", 0 ]
+  ]
+}
+  </script>
+
+  <div class="callout info">
+    <p class="callout-title">Message ou appel direct ?</p>
+    <p>Sur une référence de type quelconque, la palette propose <em>Interact (Message)</em> : il fonctionne sur n'importe quel objet et ne fait rien si l'interface n'est pas implémentée. Pour savoir à l'avance si un objet répond, utilisez <em>Does Implement Interface</em>. En C++, une interface se déclare avec <code>UINTERFACE</code> et s'appelle avec <code>IInteractable::Execute_Interact(Actor, Instigator)</code> ; voir <a href="cpp-avance.html">C++ avancé</a>.</p>
+  </div>
+
+  <h3>4. Les Event Dispatchers</h3>
+  <p>Les trois techniques précédentes vont de l'émetteur vers un receveur qu'il connaît. Parfois c'est l'inverse : un objet veut <strong>annoncer</strong> qu'il s'est passé quelque chose, sans savoir qui est intéressé. Le boss meurt : la musique doit changer, une porte doit s'ouvrir, le HUD doit afficher « Victoire ». Le boss ne devrait connaître aucun de ces objets. C'est le rôle de l'<strong>Event Dispatcher</strong> (le <em>délégué multicast</em> du C++) : l'émetteur l'appelle (<em>Call</em>), les intéressés s'y abonnent (<em>Bind</em>).</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    participant D as BP_Door
+    participant M as BP_MusicManager
+    participant B as BP_Button
+    D->>B: Bind Event to OnPressed (au BeginPlay)
+    M->>B: Bind Event to OnPressed (au BeginPlay)
+    Note over B: Le joueur marche sur le bouton
+    B->>B: Call OnPressed
+    B-->>D: OpenDoor()
+    B-->>M: PlayFanfare()
+    Note over B: Le bouton ignore qui l'écoute
+</pre>
+    <figcaption>Les écouteurs s'abonnent au dispatcher ; l'émetteur se contente de l'appeler.</figcaption>
+  </figure>
+
+  <p>Dans <code>BP_Button</code>, créez le dispatcher <code>OnPressed</code> (bouton <strong>+</strong> de la section <em>Event Dispatchers</em>), puis appelez-le quand le joueur marche dessus :</p>
+
+  <script type="application/json" class="bp-graph" data-caption="Dans BP_Button : l'émetteur appelle le dispatcher, sans savoir qui l'écoute.">
+{
+  "nodes": [
+    { "id": "ov", "type": "event", "title": "Event ActorBeginOverlap", "x": 0, "y": 0,
+      "out": [ { "type": "exec" }, { "name": "Other Actor", "type": "object" } ] },
+    { "id": "once", "type": "macro", "title": "Do Once", "x": 280, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Reset", "type": "exec" }, { "name": "Start Closed", "type": "bool", "value": false } ],
+      "out": [ { "name": "Completed", "type": "exec" } ] },
+    { "id": "call", "type": "function", "title": "Call OnPressed", "x": 560, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object", "value": "self" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ov", 0, "once", 0 ],
+    [ "once", 0, "call", 0 ]
+  ]
+}
+  </script>
+
+  <p>Dans <code>BP_Door</code>, qui a une référence vers le bouton (variable <code>Button</code>, <em>Instance Editable</em>), on s'abonne au démarrage :</p>
+
+  <script type="application/json" class="bp-graph" data-caption="Dans BP_Door : s'abonner au dispatcher du bouton. Le Custom Event OpenDoor sera appelé à chaque Call OnPressed.">
+{
+  "nodes": [
+    { "id": "begin", "type": "event", "title": "Event BeginPlay", "x": 0, "y": 0,
+      "out": [ { "type": "exec" } ] },
+    { "id": "btn", "type": "var", "title": "Button", "x": 20, "y": 110, "out": [ { "type": "object" } ] },
+    { "id": "bind", "type": "function", "title": "Bind Event to OnPressed", "x": 250, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object" }, { "name": "Event", "type": "delegate" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "ev", "type": "custom", "title": "OpenDoor", "subtitle": "Custom Event", "x": 0, "y": 200,
+      "out": [ { "type": "delegate" }, { "type": "exec" } ] },
+    { "id": "play", "type": "function", "title": "Play", "subtitle": "Target is Timeline DoorTimeline", "x": 250, "y": 200,
+      "in": [ { "type": "exec" } ], "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "begin", 0, "bind", 0 ],
+    [ "btn", 0, "bind", 1 ],
+    [ "ev", 0, "bind", 2 ],
+    [ "ev", 1, "play", 0 ]
+  ]
+}
+  </script>
+
+  <table>
+    <thead><tr><th>Technique</th><th>Couplage</th><th>Idéal pour</th></tr></thead>
+    <tbody>
+      <tr><td>Référence directe</td><td>Fort, mais explicite</td><td>Liens fixes posés dans le niveau : bouton → porte</td></tr>
+      <tr><td>Cast</td><td>Fort (référence dure vers la classe)</td><td>Vérifier et utiliser un type connu : « est-ce le joueur ? »</td></tr>
+      <tr><td>Interface</td><td>Faible</td><td>Une même action sur des types variés : interagir, recevoir un coup</td></tr>
+      <tr><td>Event Dispatcher</td><td>Très faible (l'émetteur ignore les écouteurs)</td><td>Annoncer un événement à plusieurs systèmes : mort, score, fin de partie</td></tr>
+    </tbody>
+  </table>
+
+  <div class="quiz">
+    <p class="q">Un levier doit pouvoir activer, selon le niveau, une porte, une plateforme mobile ou un piège. Quelle technique est la plus adaptée pour que le levier appelle l'objet qu'on lui a assigné ?</p>
+    <ul>
+      <li>Trois casts successifs vers BP_Door, BP_Platform et BP_Trap</li>
+      <li data-correct>Une interface <code>BPI_Activatable</code> implémentée par les trois classes, et une variable <em>Actor</em> Instance Editable dans le levier</li>
+      <li>Un Level Blueprint par niveau</li>
+      <li><em>Get All Actors Of Class</em> à chaque activation</li>
+    </ul>
+    <p class="explain">Le levier ne connaît que l'interface : on peut ajouter demain un quatrième type activable sans toucher au levier. Les casts en cascade créent trois références dures et doivent être modifiés pour chaque nouveau type.</p>
+  </div>
+
+  <h2>Déboguer un Blueprint</h2>
+  <ul>
+    <li><strong>Print String</strong> : le réflexe de base. Il affiche un message à l'écran et dans l'Output Log. Donnez une <em>Key</em> pour remplacer le message précédent au lieu de les empiler.</li>
+    <li><strong>Points d'arrêt</strong> : sélectionnez un nœud et appuyez sur <kbd>F9</kbd>. Le jeu se fige quand l'exécution l'atteint ; <kbd>F10</kbd> avance d'un nœud, <kbd>F11</kbd> entre dans une fonction.</li>
+    <li><strong>Watch Value</strong> : clic droit sur un pin → <em>Watch this value</em> affiche sa valeur pendant l'exécution, et survoler un pin au point d'arrêt montre sa valeur actuelle.</li>
+    <li><strong>Choisir l'instance déboguée</strong> : pendant le PIE, le menu <em>Debug Object</em> de la barre d'outils choisit quelle instance observer. Les fils parcourus s'illuminent en temps réel.</li>
+    <li><strong>Blueprint Debugger</strong> : <em>Tools → Debug → Blueprint Debugger</em> affiche la pile d'appels et les variables surveillées.</li>
+    <li><strong>Erreurs de compilation</strong> : le panneau <em>Compiler Results</em> liste les problèmes ; cliquer sur une erreur sélectionne le nœud fautif. Un nœud marqué « ERROR » ou un pin non connecté obligatoire empêche la compilation.</li>
+  </ul>
+
+  <div class="callout danger">
+    <p class="callout-title">« Accessed None trying to read property »</p>
+    <p>L'erreur Blueprint la plus fréquente : vous utilisez une variable de référence qui est vide (<em>None</em>). Soit elle n'a jamais été assignée (oubli dans Details, cast raté), soit l'objet a été détruit. Le message d'erreur à la fin du PIE indique le Blueprint, la fonction et le nœud : cliquez dessus. La solution : assigner la référence, ou la protéger avec <em>Is Valid</em>.</p>
+  </div>
+
+  <h2>Blueprints et C++ ensemble</h2>
+  <p>Dans un projet professionnel, le C++ définit les classes de base et les systèmes, et les Blueprints en héritent pour assembler, régler et ajouter les effets. Quelques mots-clés suffisent à créer ce pont (détaillés dans <a href="cpp-bases.html">C++ pour Unreal : les bases</a>) :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="CollectibleBase.h" data-highlight="16-17,20-21,24-25,29-30,33-34">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "CollectibleBase.generated.h"
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCollectedSignature, AActor*, Collector);
+
+UCLASS(Abstract)
+class MYGAME_API ACollectibleBase : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    // Nœud bleu appelable depuis n'importe quel Blueprint
+    UFUNCTION(BlueprintCallable, Category = "Collectible")
+    void Collect(AActor* Collector);
+
+    // Nœud vert (pur) : ne modifie rien
+    UFUNCTION(BlueprintPure, Category = "Collectible")
+    int32 GetValue() const { return Value; }
+
+    // Event Dispatcher visible en Blueprint (Bind / Assign)
+    UPROPERTY(BlueprintAssignable, Category = "Collectible")
+    FOnCollectedSignature OnCollected;
+
+protected:
+    // Pas de corps en C++ : le Blueprint enfant l'implémente (effets, son)
+    UFUNCTION(BlueprintImplementableEvent, Category = "Collectible")
+    void PlayCollectEffects();
+
+    // Corps par défaut en C++ (_Implementation), surchargeable en Blueprint
+    UFUNCTION(BlueprintNativeEvent, Category = "Collectible")
+    bool CanBeCollectedBy(AActor* Collector) const;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collectible")
+    int32 Value = 1;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="CollectibleBase.cpp">
+#include "CollectibleBase.h"
+#include "GameFramework/Pawn.h"
+
+bool ACollectibleBase::CanBeCollectedBy_Implementation(AActor* Collector) const
+{
+    // Par défaut, seul un Pawn contrôlé par un joueur peut ramasser
+    const APawn* Pawn = Cast<APawn>(Collector);
+    return Pawn && Pawn->IsPlayerControlled();
+}
+
+void ACollectibleBase::Collect(AActor* Collector)
+{
+    if (!CanBeCollectedBy(Collector)) { return; }
+
+    PlayCollectEffects();          // implémenté dans le Blueprint enfant
+    OnCollected.Broadcast(Collector); // prévient tous les abonnés
+    Destroy();
+}
+</script>
+
+  <p>Dans le Blueprint enfant <code>BP_Coin</code> (classe parente : <code>CollectibleBase</code>), clic droit → <em>Add Event → Event Play Collect Effects</em> fait apparaître l'événement déclaré en C++. Le programmeur garde la logique, l'artiste branche les effets :</p>
+
+  <script type="application/json" class="bp-graph" data-caption="Dans BP_Coin : implémenter l'événement BlueprintImplementableEvent déclaré en C++.">
+{
+  "nodes": [
+    { "id": "ev", "type": "event", "title": "Event Play Collect Effects", "x": 0, "y": 0,
+      "out": [ { "type": "exec" } ] },
+    { "id": "loc", "type": "pure", "title": "GetActorLocation", "x": 20, "y": 120,
+      "in": [ { "name": "Target", "type": "object", "value": "self" } ],
+      "out": [ { "name": "Return Value", "type": "vector" } ] },
+    { "id": "fx", "type": "function", "title": "Spawn System at Location", "x": 270, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "System Template", "type": "object", "value": "NS_CoinSparkle" }, { "name": "Location", "type": "vector" } ],
+      "out": [ { "type": "exec" }, { "name": "Return Value", "type": "object" } ] },
+    { "id": "snd", "type": "function", "title": "Play Sound at Location", "x": 650, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Sound", "type": "object", "value": "MS_Coin" }, { "name": "Location", "type": "vector" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ev", 0, "fx", 0 ],
+    [ "loc", 0, "fx", 2 ],
+    [ "fx", 0, "snd", 0 ],
+    [ "loc", 0, "snd", 2 ]
+  ]
+}
+  </script>
+
+  <h2>Bonnes pratiques</h2>
+  <div class="cards">
+    <div class="card">
+      <span class="card-tag">Lisibilité</span>
+      <h4>Commentez et alignez</h4>
+      <p>Sélectionnez des nœuds et appuyez sur <kbd>C</kbd> pour les entourer d'un commentaire. <kbd>Q</kbd> aligne les nœuds sélectionnés. Les <em>Reroute Nodes</em> (double-clic sur un fil) évitent les fils qui se croisent.</p>
+    </div>
+    <div class="card">
+      <span class="card-tag">Structure</span>
+      <h4>Petites fonctions</h4>
+      <p>Une fonction = une responsabilité, avec un nom explicite (<code>ApplyDamage</code>, <code>UpdateScoreText</code>). Si un graphe ne tient pas à l'écran, découpez-le.</p>
+    </div>
+    <div class="card">
+      <span class="card-tag">Performance</span>
+      <h4>Événements plutôt que Tick</h4>
+      <p>Désactivez le Tick par défaut, réagissez aux événements, utilisez des timers. Évitez <em>Get All Actors Of Class</em> en cours de partie : gardez les références.</p>
+    </div>
+    <div class="card">
+      <span class="card-tag">Architecture</span>
+      <h4>Héritage et composants</h4>
+      <p>Un <code>BP_EnemyBase</code> parent avec les variables communes, des enfants pour les variantes. La logique réutilisable (santé, inventaire) va dans des <em>Actor Components</em>.</p>
+    </div>
+  </div>
+
+  <div class="callout tip">
+    <p class="callout-title">Quand passer au C++ ?</p>
+    <p>Restez en Blueprint tant que vous êtes productif. Envisagez le C++ quand un graphe devient trop complexe pour être lu, quand une boucle traite des centaines d'éléments par frame, quand vous avez besoin d'une API non exposée aux Blueprints, ou quand plusieurs personnes doivent modifier la même logique (les Blueprints sont des fichiers binaires qui ne se fusionnent pas).</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Vous voulez qu'un Delay de 2 secondes s'exécute au milieu d'un traitement réutilisable appelé depuis plusieurs endroits du graphe. Que créez-vous ?</p>
+    <ul>
+      <li>Une fonction : c'est toujours le meilleur choix</li>
+      <li data-correct>Un Custom Event (ou une macro), car les fonctions ne peuvent pas contenir de nœud latent comme Delay</li>
+      <li>Une fonction pure</li>
+      <li>Une Blueprint Function Library</li>
+    </ul>
+    <p class="explain">Une fonction s'exécute d'un seul tenant et doit se terminer dans la même frame : les nœuds latents (Delay, Timeline, Move To…) y sont interdits. Un Custom Event peut attendre, et il peut aussi être appelé depuis un autre Blueprint.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Un bouton, une porte, un interrupteur</h4>
+    <p>Créez <code>BP_Door</code> (un mesh qui pivote de 90° en une seconde quand il s'ouvre) et <code>BP_PressurePlate</code> (une plaque qui annonce <code>OnActivated</code> quand le joueur monte dessus et <code>OnDeactivated</code> quand il en descend). Une porte doit pouvoir écouter <strong>plusieurs</strong> plaques et ne s'ouvrir que lorsque <strong>toutes</strong> sont pressées.</p>
+    <details>
+      <summary>Voir la solution</summary>
+      <ol>
+        <li><strong>BP_PressurePlate</strong> : un Static Mesh et une Box Collision. Deux Event Dispatchers, <code>OnActivated</code> et <code>OnDeactivated</code>. Sur <em>On Component Begin Overlap</em> de la box, castez l'Actor vers votre personnage (seul le joueur active la plaque) puis <em>Call OnActivated</em> ; sur <em>End Overlap</em>, <em>Call OnDeactivated</em>.</li>
+        <li><strong>BP_Door</strong> : une variable <code>Plates</code> de type tableau de <em>BP_PressurePlate</em>, <em>Instance Editable</em>, et un entier <code>PressedCount</code>. Une <strong>Timeline</strong> <code>DoorTimeline</code> avec une piste float de 0 à 1 en 1 seconde ; sa sortie <em>Update</em> appelle <em>Set Relative Rotation</em> sur le mesh avec un Yaw de <code>Lerp(0, 90, Alpha)</code>.</li>
+        <li>Au <em>BeginPlay</em> de la porte : <em>For Each Loop</em> sur <code>Plates</code>, et pour chaque plaque <em>Bind Event to OnActivated</em> (Custom Event <code>PlatePressed</code>) et <em>Bind Event to OnDeactivated</em> (Custom Event <code>PlateReleased</code>).</li>
+        <li><code>PlatePressed</code> : <code>PressedCount + 1</code>, puis si <code>PressedCount == Length(Plates)</code>, <em>Play</em> sur la Timeline. <code>PlateReleased</code> : <code>PressedCount - 1</code>, puis <em>Reverse</em>.</li>
+        <li>Dans le niveau, sélectionnez la porte et ajoutez les plaques au tableau <code>Plates</code> avec la pipette.</li>
+      </ol>
+      <p>Les plaques ne connaissent pas la porte : vous pouvez réutiliser les mêmes plaques pour déclencher un piège, de la musique ou un ascenseur en ajoutant simplement d'autres écouteurs.</p>
+    </details>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Un Blueprint Class est une <strong>vraie classe</strong> qui hérite d'une classe C++ ; les objets du niveau en sont des instances.</li>
+      <li>Fils <strong>blancs</strong> = ordre d'exécution ; fils <strong>colorés</strong> = données, dont la couleur indique le type.</li>
+      <li>Les nœuds <strong>purs</strong> (verts) sont recalculés à chaque lecture : stockez les résultats coûteux ou aléatoires.</li>
+      <li>Par défaut une <strong>fonction</strong> ; un <strong>Custom Event</strong> pour les Delay, timers, dispatchers et RPC ; une <strong>macro</strong> pour plusieurs sorties d'exécution.</li>
+      <li>Le <strong>Construction Script</strong> construit l'Actor dans l'éditeur ; la logique de jeu va dans BeginPlay et les événements.</li>
+      <li>Communication : <strong>référence directe</strong> (lien fixe), <strong>cast</strong> (type connu, attention aux références dures), <strong>interface</strong> (types variés), <strong>Event Dispatcher</strong> (annonce à des écouteurs inconnus).</li>
+      <li>Déboguez avec Print String, <kbd>F9</kbd> et <em>Watch Value</em> ; « Accessed None » signale une référence vide.</li>
+      <li>Le C++ expose ses classes avec <code>BlueprintCallable</code>, <code>BlueprintPure</code>, <code>BlueprintImplementableEvent</code>, <code>BlueprintNativeEvent</code> et <code>BlueprintAssignable</code>.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

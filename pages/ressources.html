@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ressources &amp; glossaire — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="ressources">
+<article class="doc">
+
+  <h1>Ressources &amp; glossaire</h1>
+  <p class="lead">Ce guide vous a donné les fondations. Pour aller plus loin, il faut savoir où chercher : la documentation d'Epic, le code source du moteur, les projets d'exemple, les communautés. Ce dernier chapitre rassemble les meilleures ressources, une méthode pour débloquer un problème seul, un glossaire de tous les termes rencontrés et une checklist pour mesurer votre progression.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Savoir utiliser la <strong>documentation officielle</strong> et le <strong>code source</strong> du moteur</li>
+      <li>Découvrir les <strong>projets d'exemple</strong> d'Epic et ce qu'ils enseignent</li>
+      <li>Trouver des <strong>cours</strong>, des <strong>livres</strong> et des <strong>communautés</strong> fiables</li>
+      <li>Appliquer une <strong>méthode</strong> pour résoudre un problème et poser une bonne question</li>
+      <li>Retrouver la définition de chaque terme dans le <strong>glossaire</strong></li>
+      <li>Faire le point avec la <strong>checklist</strong> de compétences</li>
+    </ul>
+  </div>
+
+  <h2>La documentation officielle</h2>
+  <p>La documentation d'Epic Games est en anglais (une partie est traduite), mais c'est la référence : elle suit les versions du moteur. Pensez à <strong>sélectionner votre version</strong> dans le menu en haut de chaque page, les API changent d'une version à l'autre.</p>
+  <div class="cards">
+    <a class="card" href="https://dev.epicgames.com/documentation/en-us/unreal-engine" target="_blank" rel="noopener">
+      <span class="card-tag">Référence</span>
+      <h4>Documentation Unreal Engine</h4>
+      <p>Guides par thème (Gameplay Framework, rendu, animation, réseau…) et référence de l'API C++ et des nœuds Blueprint.</p>
+    </a>
+    <a class="card" href="https://dev.epicgames.com/community/unreal-engine/learning" target="_blank" rel="noopener">
+      <span class="card-tag">Cours</span>
+      <h4>Epic Developer Community</h4>
+      <p>Cours et tutoriels gratuits d'Epic et de la communauté, des parcours débutant aux sujets avancés.</p>
+    </a>
+    <a class="card" href="https://forums.unrealengine.com/" target="_blank" rel="noopener">
+      <span class="card-tag">Forum</span>
+      <h4>Forums Unreal Engine</h4>
+      <p>Questions-réponses, annonces de versions, retours de bugs. Cherchez avant de poster : la plupart des problèmes ont déjà été rencontrés.</p>
+    </a>
+    <a class="card" href="https://www.unrealengine.com/eula" target="_blank" rel="noopener">
+      <span class="card-tag">Licence</span>
+      <h4>Contrat de licence (EULA)</h4>
+      <p>Les conditions d'utilisation et de redevances, à relire avant toute publication (résumées dans le chapitre Packaging &amp; publication).</p>
+    </a>
+  </div>
+
+  <div class="callout tip">
+    <p class="callout-title">Lire la référence d'un nœud depuis l'éditeur</p>
+    <p>Survolez un nœud Blueprint : l'info-bulle affiche sa description, tirée des commentaires du code C++. Avec un IDE configuré, double-cliquer sur un nœud implémenté en C++ ouvre sa définition dans le code source : le moyen le plus rapide de voir ce qu'il fait vraiment.</p>
+  </div>
+
+  <h3>Le code source : la documentation ultime</h3>
+  <p>Unreal Engine est livré avec son code source complet. Quand la documentation est muette, <strong>le code dit toujours la vérité</strong>. Depuis votre IDE, <em>Aller à la définition</em> (<kbd>F12</kbd> dans Visual Studio, <kbd>Ctrl</kbd> + clic dans Rider) sur <code>UGameplayStatics::ApplyDamage</code> vous montre exactement ce que fait la fonction. Les commentaires des en-têtes sont souvent plus complets que la documentation en ligne.</p>
+<script type="text/plain" data-lang="cpp" data-file="Engine/Source/Runtime/Engine/Classes/Kismet/GameplayStatics.h (extrait commenté)">
+// Les en-têtes du moteur expliquent paramètres et cas particuliers.
+// Les métadonnées UFUNCTION indiquent aussi comment le nœud Blueprint est affiché :
+// DisplayName, WorldContext (paramètre rempli automatiquement), AdvancedDisplay (pins repliés)…
+UFUNCTION(BlueprintCallable, Category = "Game|Damage", meta = (WorldContext = "WorldContextObject", AutoCreateRefTerm = "IgnoreActors"))
+static bool ApplyRadialDamage(const UObject* WorldContextObject, float BaseDamage, const FVector& Origin,
+    float DamageRadius, TSubclassOf<UDamageType> DamageTypeClass, const TArray<AActor*>& IgnoreActors,
+    AActor* DamageCauser = nullptr, AController* InstigatedByController = nullptr,
+    bool bDoFullDamage = false, ECollisionChannel DamagePreventionChannel = ECC_Visibility);
+</script>
+  <p>Pour consulter le code sans IDE, le dépôt <a href="https://github.com/EpicGames/UnrealEngine" target="_blank" rel="noopener">EpicGames/UnrealEngine</a> sur GitHub est accessible après avoir lié votre compte Epic à votre compte GitHub (procédure décrite dans <a href="installation.html">Installation &amp; premier projet</a>). Sa recherche de code permet de trouver en quelques secondes tous les usages d'une fonction dans le moteur : d'excellents exemples d'utilisation.</p>
+
+  <h3>La console comme documentation</h3>
+  <p>La console du jeu (<kbd>²</kbd>) complète automatiquement les commandes et les variables (<em>CVars</em>). Quelques commandes pour explorer :</p>
+<script type="text/plain" data-lang="console" data-file="Console (touche ²)">
+help                      # ouvre une page listant toutes les commandes et CVars, avec leur description
+stat                      # puis Tab : liste des groupes de statistiques disponibles
+r.Lumen.                  # tapez un préfixe : l'autocomplétion montre toutes les variables du groupe
+showdebug                 # informations de débogage du HUD (caméra, animation, entrées…)
+</script>
+
+  <h2>Les projets d'exemple d'Epic</h2>
+  <p>Epic publie gratuitement des projets complets, téléchargeables depuis le launcher (onglet <em>Samples</em>) ou Fab. Ce sont des mines d'or : ouvrez-les, lancez-les, puis disséquez un système qui vous intéresse avec le <em>Reference Viewer</em> et les points d'arrêt.</p>
+  <table>
+    <thead><tr><th>Projet</th><th>Ce qu'il enseigne</th><th>Niveau</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Content Examples</strong></td><td>Des dizaines de petites salles qui illustrent chacune une fonctionnalité : matériaux, Blueprints, physique, Niagara, animation…</td><td><span class="badge beginner">Débutant</span></td></tr>
+      <tr><td><strong>Templates</strong> (Third Person, First Person, Top Down…)</td><td>Le point de départ de vos projets : personnage, caméra, Enhanced Input déjà configurés.</td><td><span class="badge beginner">Débutant</span></td></tr>
+      <tr><td><strong>Stack O Bot</strong></td><td>Un petit jeu de plateforme en Blueprint, lisible et bien organisé.</td><td><span class="badge beginner">Débutant</span></td></tr>
+      <tr><td><strong>Cropout</strong></td><td>Un jeu de stratégie en Blueprint, multiplateforme (souris, manette, tactile), avec Common UI.</td><td><span class="badge inter">Intermédiaire</span></td></tr>
+      <tr><td><strong>Game Animation Sample</strong></td><td>La locomotion moderne : Motion Matching, Pose Search, centaines d'animations.</td><td><span class="badge inter">Intermédiaire</span></td></tr>
+      <tr><td><strong>Lyra Starter Game</strong></td><td>L'architecture d'un jeu multijoueur professionnel en C++ : Gameplay Ability System, Game Features, Common UI, Modular Gameplay.</td><td><span class="badge advanced">Avancé</span></td></tr>
+      <tr><td><strong>City Sample</strong></td><td>Une ville immense : World Partition, MassEntity (foules et circulation), Nanite, Lumen. Très lourd.</td><td><span class="badge advanced">Avancé</span></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <p class="callout-title">Lyra n'est pas un projet de débutant</p>
+    <p>Lyra est souvent recommandé, mais son architecture (plugins Game Features, expériences, GAS partout) est conçue pour une grande équipe. Le lire trop tôt décourage. Revenez-y quand vous maîtrisez les chapitres C++ et <a href="systemes-gameplay.html">Systèmes de gameplay</a>, et commencez par un seul système (par exemple l'équipement ou les réglages).</p>
+  </div>
+
+  <h2>Cours, vidéos et livres</h2>
+  <h3>Chaînes et sites</h3>
+  <table>
+    <thead><tr><th>Ressource</th><th>Pour quoi</th></tr></thead>
+    <tbody>
+      <tr><td><a href="https://www.youtube.com/@UnrealEngine" target="_blank" rel="noopener">Unreal Engine (YouTube officiel)</a></td><td>Présentations des nouveautés, conférences Unreal Fest, sessions <em>Inside Unreal</em> très détaillées.</td></tr>
+      <tr><td><a href="https://www.youtube.com/@MathewWadsteinTutorials" target="_blank" rel="noopener">Mathew Wadstein</a></td><td>La série « WTF Is? » : une courte vidéo par nœud Blueprint. Idéal pour comprendre un nœud précis.</td></tr>
+      <tr><td><a href="https://www.tomlooman.com/" target="_blank" rel="noopener">Tom Looman</a></td><td>Articles et cours C++ approfondis : Gameplay Framework, GAS, optimisation.</td></tr>
+      <tr><td><a href="https://benui.ca/" target="_blank" rel="noopener">benui</a></td><td>La référence pour l'UI en C++ : UMG, Slate, spécificateurs <code>UPROPERTY</code> et <code>UFUNCTION</code>.</td></tr>
+      <tr><td><a href="https://github.com/Allar/ue5-style-guide" target="_blank" rel="noopener">Guide de style d'Allar</a></td><td>Les conventions de nommage et d'organisation utilisées dans ce guide (voir <a href="editeur.html">Prendre en main l'éditeur</a>).</td></tr>
+    </tbody>
+  </table>
+  <p>Les plateformes de cours payants (Udemy, GameDev.tv…) proposent de nombreux cours complets sur UE5 en C++ ou en Blueprint ; avant d'acheter, vérifiez la <strong>version du moteur</strong> utilisée et la date de mise à jour.</p>
+
+  <h3>Livres</h3>
+  <dl class="defs">
+    <dt><em>Game Programming Patterns</em> — Robert Nystrom</dt><dd>Les patrons de conception du jeu vidéo (game loop, update, commande, observateur, composant…) expliqués simplement. Lisible gratuitement en ligne sur <a href="https://gameprogrammingpatterns.com/" target="_blank" rel="noopener">gameprogrammingpatterns.com</a>. Le livre idéal pour comprendre <em>pourquoi</em> Unreal est conçu ainsi.</dd>
+    <dt><em>Blueprints Visual Scripting for Unreal Engine 5</em> — Marcos Romero</dt><dd>Un parcours progressif et complet sur les Blueprints, du premier nœud à un petit jeu de tir.</dd>
+    <dt><em>The Art of Game Design: A Book of Lenses</em> — Jesse Schell</dt><dd>Le game design, indépendamment du moteur : comment rendre un jeu intéressant. Existe en français (<em>L'Art du game design</em>).</dd>
+    <dt><em>Real-Time Rendering</em> — Akenine-Möller, Haines, Hoffman</dt><dd>La bible du rendu temps réel, pour comprendre ce que font Nanite, Lumen et les matériaux. Exigeant.</dd>
+  </dl>
+
+  <h2>Les communautés</h2>
+  <div class="cards">
+    <a class="card" href="https://unrealslackers.org/" target="_blank" rel="noopener">
+      <span class="card-tag">Discord</span>
+      <h4>Unreal Source (ex-Unreal Slackers)</h4>
+      <p>Le plus grand serveur Discord communautaire sur Unreal, avec des salons par spécialité (C++, Blueprint, rendu, réseau…).</p>
+    </a>
+    <a class="card" href="https://www.reddit.com/r/unrealengine/" target="_blank" rel="noopener">
+      <span class="card-tag">Reddit</span>
+      <h4>r/unrealengine</h4>
+      <p>Actualités, partages de projets, questions. Utile pour suivre ce qui se fait.</p>
+    </a>
+    <a class="card" href="https://itch.io/jams" target="_blank" rel="noopener">
+      <span class="card-tag">Game jams</span>
+      <h4>itch.io/jams</h4>
+      <p>Le calendrier des game jams, dont l'Epic MegaJam annuelle. Le meilleur moyen de finir des petits jeux.</p>
+    </a>
+    <a class="card" href="https://www.fab.com/" target="_blank" rel="noopener">
+      <span class="card-tag">Assets</span>
+      <h4>Fab</h4>
+      <p>La boutique d'Epic (remplaçante du Marketplace) : modèles, sons, effets, plugins, avec régulièrement du contenu gratuit.</p>
+    </a>
+  </div>
+
+  <h3>Les outils qui accompagnent Unreal</h3>
+  <table>
+    <thead><tr><th>Besoin</th><th>Outils</th></tr></thead>
+    <tbody>
+      <tr><td>IDE C++</td><td>Visual Studio 2022 (gratuit en édition Community), JetBrains Rider (gratuit pour un usage non commercial), Visual Studio Code</td></tr>
+      <tr><td>Contrôle de version</td><td>Git + Git LFS, Perforce (Helix Core, gratuit jusqu'à 5 utilisateurs)</td></tr>
+      <tr><td>Modélisation 3D</td><td>Blender (gratuit), Maya, 3ds Max ; les outils de modélisation intégrés à Unreal pour le prototypage</td></tr>
+      <tr><td>Textures</td><td>Substance 3D Painter, Krita (gratuit), GIMP (gratuit), Quixel Megascans (via Fab)</td></tr>
+      <tr><td>Son</td><td>Audacity (gratuit), Reaper, banques de sons libres comme freesound.org (vérifiez les licences)</td></tr>
+      <tr><td>Animation</td><td>Mixamo (personnages et animations gratuits), Control Rig et Sequencer dans Unreal</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Se débloquer seul</h2>
+  <p>Être bloqué fait partie du métier. Ce qui distingue un développeur expérimenté, c'est sa méthode pour se débloquer :</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TD
+    A["Ça ne marche pas"] --> B["Lire l'Output Log<br>et les erreurs en entier"]
+    B --> C{"Message d'erreur<br>explicite ?"}
+    C -->|"Oui"| D["Chercher le message exact<br>(entre guillemets)"]
+    C -->|"Non"| E["Isoler : Print String,<br>points d'arrêt, Visual Logger"]
+    E --> F["Réduire : reproduire le problème<br>dans un niveau vide, avec le minimum"]
+    F --> G{"Trouvé ?"}
+    D --> G
+    G -->|"Non"| H["Lire la doc et le code source<br>de la fonction en cause"]
+    H --> I{"Trouvé ?"}
+    I -->|"Non"| J["Poser une question précise<br>avec la reproduction minimale"]
+    G -->|"Oui"| K["Corriger et noter la solution"]
+    I -->|"Oui"| K
+</pre>
+    <figcaption>La plupart des problèmes se résolvent avant l'étape « poser une question », souvent pendant la réduction.</figcaption>
+  </figure>
+
+  <p>Une reproduction minimale ressemble à ceci : un niveau vide, un seul Blueprint, trois nœuds qui montrent le comportement inattendu. Si le problème disparaît dans le niveau vide, il vient de ce que vous avez retiré : c'est déjà une piste.</p>
+
+  <script type="application/json" class="bp-graph" data-caption="Une reproduction minimale : isoler une seule question (« le timer se déclenche-t-il ? ») dans un Blueprint vierge, avec des messages explicites.">
+{
+  "nodes": [
+    { "id": "begin", "type": "event", "title": "Event BeginPlay", "x": 0, "y": 0,
+      "out": [ { "type": "exec" } ] },
+    { "id": "p1", "type": "function", "title": "Print String", "x": 220, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "In String", "type": "string", "value": "BeginPlay OK" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "timer", "type": "function", "title": "Set Timer by Event", "x": 470, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Event", "type": "delegate" }, { "name": "Time", "type": "float", "value": "2.0" }, { "name": "Looping", "type": "bool", "value": false } ],
+      "out": [ { "type": "exec" }, { "name": "Return Value", "type": "struct" } ] },
+    { "id": "ev", "type": "custom", "title": "OnTimer", "subtitle": "Custom Event", "x": 220, "y": 150,
+      "out": [ { "type": "delegate" }, { "type": "exec" } ] },
+    { "id": "p2", "type": "function", "title": "Print String", "x": 470, "y": 180,
+      "in": [ { "type": "exec" }, { "name": "In String", "type": "string", "value": "Timer déclenché" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "begin", 0, "p1", 0 ],
+    [ "p1", 0, "timer", 0 ],
+    [ "ev", 0, "timer", 1 ],
+    [ "ev", 1, "p2", 0 ]
+  ]
+}
+  </script>
+
+  <div class="compare">
+    <div class="bad">
+      <h4>Une question qui restera sans réponse</h4>
+      <p>« Mon personnage marche pas, help !!! »</p>
+    </div>
+    <div class="good">
+      <h4>Une question qui obtiendra une réponse</h4>
+      <p>« UE 5.4, C++. Mon <code>ACharacter</code> ne bouge pas : <code>Move()</code> est bien appelé (log), <code>AddMovementInput</code> reçoit (1, 0, 0), mais la vitesse reste à 0. Le Mapping Context est ajouté dans <code>BeginPlay</code>. Code et capture du composant ci-joints. Reproduit dans un projet Third Person vierge. »</p>
+    </div>
+  </div>
+  <p>Indiquez toujours la <strong>version du moteur</strong>, <strong>Blueprint ou C++</strong>, ce que vous <strong>attendiez</strong>, ce qui se <strong>passe</strong>, ce que vous avez <strong>déjà essayé</strong>, et joignez le code (en texte, pas en photo d'écran) ou une capture lisible du graphe.</p>
+
+  <div class="quiz">
+    <p class="q">Un bug n'apparaît que dans votre grand niveau, pas dans un niveau de test vide contenant le même personnage. Qu'en déduisez-vous ?</p>
+    <ul>
+      <li>C'est un bug du moteur, il faut le signaler à Epic</li>
+      <li data-correct>La cause est dans quelque chose que le grand niveau contient et pas le niveau de test : ajoutez-y les éléments un par un pour la trouver</li>
+      <li>Il faut recompiler le moteur depuis les sources</li>
+      <li>Le niveau de test est inutile</li>
+    </ul>
+    <p class="explain">C'est tout l'intérêt de la réduction : la différence entre le cas qui marche et celui qui ne marche pas contient la cause. On procède par dichotomie : ajouter ou retirer la moitié des éléments à chaque essai.</p>
+  </div>
+
+  <h2>Glossaire</h2>
+  <p>Les termes rencontrés dans ce guide, avec leur nom anglais et le chapitre où ils sont expliqués. Astuce : la recherche du site (<kbd>Ctrl</kbd> + <kbd>K</kbd>) trouve aussi les sections de cette page.</p>
+
+  <h3>A – C</h3>
+  <dl class="defs">
+    <dt>Actor</dt><dd>Tout objet qui peut être placé ou créé dans un niveau (<code>AActor</code>). Voir <a href="architecture.html">Architecture</a>.</dd>
+    <dt>Actor Component</dt><dd>Un morceau de comportement réutilisable attaché à un Actor (<code>UActorComponent</code>) ; un <em>Scene Component</em> a en plus une position.</dd>
+    <dt>AIController</dt><dd>Le « cerveau » d'un Pawn contrôlé par l'IA. Voir <a href="ia.html">Intelligence artificielle</a>.</dd>
+    <dt>Anim Notify</dt><dd>Un événement placé sur une frame d'animation (bruit de pas, coup qui touche). Voir <a href="animation.html">Animation</a>.</dd>
+    <dt>Asset</dt><dd>Un fichier de contenu du projet (<code>.uasset</code>) : mesh, texture, son, Blueprint…</dd>
+    <dt>Autorité (Authority)</dt><dd>En réseau, la machine qui fait foi pour un Actor, en général le serveur. Voir <a href="multijoueur.html">Réseau &amp; multijoueur</a>.</dd>
+    <dt>Behavior Tree</dt><dd>Un arbre de décision pour l'IA, lu par un AIController avec un Blackboard.</dd>
+    <dt>BeginPlay</dt><dd>L'événement appelé quand un Actor commence à exister dans la partie.</dd>
+    <dt>Blackboard</dt><dd>La mémoire d'une IA : des clés (cible, position) lues par le Behavior Tree.</dd>
+    <dt>Blend Space</dt><dd>Un asset qui mélange des animations selon des paramètres (vitesse, direction).</dd>
+    <dt>Blueprint</dt><dd>Le système de scripting visuel, et par extension une classe créée avec. Voir <a href="blueprints.html">Blueprints</a>.</dd>
+    <dt>Build.cs</dt><dd>Le fichier qui décrit un module C++ et ses dépendances. Voir <a href="cpp-bases.html">C++ : les bases</a>.</dd>
+    <dt>Cast</dt><dd>La conversion d'une référence vers un type plus précis, qui échoue si l'objet n'est pas de ce type.</dd>
+    <dt>CDO (Class Default Object)</dt><dd>L'objet « modèle » d'une classe, qui contient ses valeurs par défaut.</dd>
+    <dt>Channel (canal de collision)</dt><dd>Une catégorie de collision (Visibility, Camera, Pawn…) à laquelle chaque objet répond Ignore, Overlap ou Block. Voir <a href="collisions.html">Collisions</a>.</dd>
+    <dt>Character Movement Component</dt><dd>Le composant qui gère marche, saut, chute, nage et vol d'un <code>ACharacter</code>.</dd>
+    <dt>Construction Script</dt><dd>Le graphe d'un Blueprint exécuté dans l'éditeur à chaque modification de l'Actor.</dd>
+    <dt>Cook</dt><dd>La conversion des assets dans le format de la plateforme cible avant le packaging. Voir <a href="packaging.html">Packaging</a>.</dd>
+    <dt>CVar (Console Variable)</dt><dd>Un réglage modifiable depuis la console ou les fichiers <code>.ini</code> (<code>r.ScreenPercentage</code>).</dd>
+  </dl>
+
+  <h3>D – H</h3>
+  <dl class="defs">
+    <dt>Data Asset / Data Table</dt><dd>Des assets qui contiennent des données (statistiques d'objets, de niveaux) plutôt que de la logique. Voir <a href="systemes-gameplay.html">Systèmes de gameplay</a>.</dd>
+    <dt>Delegate</dt><dd>Une référence vers une ou plusieurs fonctions à appeler plus tard ; l'Event Dispatcher en est la version Blueprint. Voir <a href="cpp-avance.html">C++ avancé</a>.</dd>
+    <dt>DeltaTime (Delta Seconds)</dt><dd>Le temps écoulé depuis la frame précédente, en secondes. Toute vitesse doit être multipliée par lui.</dd>
+    <dt>Dot product (produit scalaire)</dt><dd>Un nombre qui mesure à quel point deux directions sont alignées. Voir <a href="maths.html">Maths</a>.</dd>
+    <dt>Enhanced Input</dt><dd>Le système d'entrées d'UE5 : Input Actions et Mapping Contexts. Voir <a href="input-personnage.html">Enhanced Input</a>.</dd>
+    <dt>EQS (Environment Query System)</dt><dd>Un système qui note des points ou des Actors pour qu'une IA choisisse le meilleur (couverture, fuite).</dd>
+    <dt>Event Dispatcher</dt><dd>Un événement auquel d'autres Blueprints s'abonnent ; l'émetteur ignore qui l'écoute.</dd>
+    <dt>Frame</dt><dd>Une image calculée et affichée : un tour de la boucle de jeu.</dd>
+    <dt>GameInstance</dt><dd>L'objet qui existe pendant toute la durée du jeu, d'un niveau à l'autre.</dd>
+    <dt>GameMode</dt><dd>Les règles de la partie (classes par défaut, conditions de victoire), uniquement sur le serveur.</dd>
+    <dt>GameState / PlayerState</dt><dd>L'état de la partie et l'état de chaque joueur, répliqués à tous les clients.</dd>
+    <dt>Gameplay Ability System (GAS)</dt><dd>Un framework de capacités, attributs et effets, utilisé par Lyra et Fortnite.</dd>
+    <dt>Gameplay Tag</dt><dd>Une étiquette hiérarchique (<code>State.Stunned</code>) pour décrire et interroger des états.</dd>
+    <dt>Garbage Collector (GC)</dt><dd>Le système qui libère automatiquement les UObjects qui ne sont plus référencés.</dd>
+    <dt>GENERATED_BODY</dt><dd>La macro qui insère le code généré par l'Unreal Header Tool dans une classe C++.</dd>
+    <dt>Gimbal lock (blocage de cardan)</dt><dd>La perte d'un axe de rotation avec les angles d'Euler, évitée par les quaternions.</dd>
+    <dt>HUD</dt><dd>L'affichage tête haute : informations à l'écran pendant le jeu. Voir <a href="ui.html">Interfaces avec UMG</a>.</dd>
+    <dt>Hit / Overlap</dt><dd>Les deux réponses de collision : bloquer (et générer un Hit) ou traverser (et générer un Overlap).</dd>
+  </dl>
+
+  <h3>I – N</h3>
+  <dl class="defs">
+    <dt>Instance</dt><dd>Un objet créé à partir d'une classe ; chaque orbe du niveau est une instance de <code>BP_Orb</code>.</dd>
+    <dt>Interface</dt><dd>Un ensemble de fonctions que plusieurs classes sans lien peuvent implémenter.</dd>
+    <dt>Level / Map</dt><dd>Un niveau : un fichier <code>.umap</code> qui contient des Actors.</dd>
+    <dt>Lerp</dt><dd>L'interpolation linéaire entre deux valeurs selon un Alpha de 0 à 1.</dd>
+    <dt>Live Coding</dt><dd>La recompilation du C++ pendant que l'éditeur tourne (<kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>F11</kbd>).</dd>
+    <dt>LOD (Level of Detail)</dt><dd>Des versions simplifiées d'un mesh affichées de loin.</dd>
+    <dt>Lumen</dt><dd>Le système d'éclairage global et de réflexions dynamiques d'UE5. Voir <a href="graphismes.html">Graphismes</a>.</dd>
+    <dt>Material / Material Instance</dt><dd>Le shader qui décrit l'apparence d'une surface, et sa variante paramétrée sans recompilation.</dd>
+    <dt>MetaSound</dt><dd>Un graphe de génération audio procédurale. Voir <a href="audio.html">Audio</a>.</dd>
+    <dt>Montage</dt><dd>Un asset d'animation joué à la demande (attaque, rechargement), avec sections et notifies.</dd>
+    <dt>NavMesh</dt><dd>Le maillage de navigation qui indique où l'IA peut marcher.</dd>
+    <dt>Nanite</dt><dd>La géométrie virtualisée d'UE5, qui affiche des millions de triangles efficacement.</dd>
+    <dt>Niagara</dt><dd>Le système d'effets visuels et de particules.</dd>
+  </dl>
+
+  <h3>O – R</h3>
+  <dl class="defs">
+    <dt>Outliner</dt><dd>Le panneau qui liste les Actors du niveau. Voir <a href="editeur.html">Prendre en main l'éditeur</a>.</dd>
+    <dt>Packaging</dt><dd>La production d'un exécutable distribuable du jeu.</dd>
+    <dt>Pawn</dt><dd>Un Actor qui peut être possédé par un Controller ; le <em>Character</em> en est la version bipède.</dd>
+    <dt>PIE (Play In Editor)</dt><dd>Lancer le jeu dans l'éditeur, sur une copie du monde.</dd>
+    <dt>PlayerController</dt><dd>La représentation du joueur humain : il reçoit les entrées et possède un Pawn.</dd>
+    <dt>Possession</dt><dd>Le lien entre un Controller (cerveau) et un Pawn (corps).</dd>
+    <dt>Post Process</dt><dd>Les effets appliqués à l'image finale : exposition, bloom, étalonnage, flou.</dd>
+    <dt>Quaternion (FQuat)</dt><dd>Une représentation des rotations sans blocage de cardan, idéale pour interpoler.</dd>
+    <dt>Redirector</dt><dd>Le fichier laissé à l'ancien emplacement d'un asset déplacé ; à nettoyer avec <em>Fix Up Redirectors</em>.</dd>
+    <dt>Reflection (réflexion)</dt><dd>Le système qui rend les classes C++ visibles par l'éditeur, les Blueprints, le GC et le réseau (<code>UCLASS</code>, <code>UPROPERTY</code>…).</dd>
+    <dt>RepNotify</dt><dd>Une fonction appelée sur les clients quand une variable répliquée change.</dd>
+    <dt>Replication (réplication)</dt><dd>La synchronisation d'Actors et de variables du serveur vers les clients.</dd>
+    <dt>Root Motion</dt><dd>Un déplacement piloté par l'animation elle-même plutôt que par le code.</dd>
+    <dt>RPC (Remote Procedure Call)</dt><dd>Une fonction appelée sur une autre machine : Server, Client ou NetMulticast.</dd>
+  </dl>
+
+  <h3>S – Z</h3>
+  <dl class="defs">
+    <dt>SaveGame</dt><dd>Un objet dont les variables sont écrites sur le disque pour sauvegarder la progression.</dd>
+    <dt>Shipping</dt><dd>La configuration de build finale, optimisée et sans outils de débogage.</dd>
+    <dt>Skeletal Mesh / Static Mesh</dt><dd>Un mesh animé par un squelette, et un mesh rigide.</dd>
+    <dt>Socket</dt><dd>Un point d'attache nommé sur un mesh (main, bouche du canon).</dd>
+    <dt>Spring Arm</dt><dd>Le composant « perche » qui place la caméra derrière le personnage et gère les obstacles.</dd>
+    <dt>State Machine</dt><dd>Un ensemble d'états reliés par des transitions, utilisé en animation et pour l'IA (StateTree).</dd>
+    <dt>Subsystem</dt><dd>Un objet singleton géré par le moteur, attaché au jeu, au monde ou au joueur.</dd>
+    <dt>Tick</dt><dd>La mise à jour d'un objet à chaque frame.</dd>
+    <dt>Timeline</dt><dd>Un nœud Blueprint qui fait varier des valeurs selon des courbes, sur une durée.</dd>
+    <dt>Timer</dt><dd>Un appel de fonction programmé après un délai, éventuellement en boucle.</dd>
+    <dt>Trace (line trace, sweep)</dt><dd>Un rayon ou une forme lancés dans le monde pour détecter ce qu'ils touchent.</dd>
+    <dt>Transform</dt><dd>Position, rotation et échelle d'un objet.</dd>
+    <dt>UObject</dt><dd>La classe de base de presque tous les objets du moteur, gérée par le GC.</dd>
+    <dt>UHT (Unreal Header Tool)</dt><dd>L'outil qui lit les macros des en-têtes et génère le code de réflexion.</dd>
+    <dt>UMG (Unreal Motion Graphics)</dt><dd>Le système d'interface utilisateur à base de widgets.</dd>
+    <dt>Viewport</dt><dd>La vue 3D de l'éditeur, ou la zone d'affichage du jeu.</dd>
+    <dt>World Partition</dt><dd>Le découpage automatique d'un grand monde en cellules chargées selon la position du joueur.</dd>
+  </dl>
+
+  <h2>Checklist de progression</h2>
+  <p>Cochez mentalement chaque compétence. Si vous savez tout faire dans une étape, passez à la suivante ; sinon, le chapitre indiqué vous attend.</p>
+  <table>
+    <thead><tr><th>Étape</th><th>Je sais…</th><th>Chapitre</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="3"><span class="badge beginner">Démarrer</span></td><td>Créer un projet C++, le compiler et l'ouvrir dans l'IDE</td><td><a href="installation.html">Installation</a></td></tr>
+      <tr><td>Naviguer dans le viewport, ranger et nommer mes assets</td><td><a href="editeur.html">Éditeur</a></td></tr>
+      <tr><td>Expliquer la différence entre GameMode, PlayerController et Pawn</td><td><a href="architecture.html">Architecture</a></td></tr>
+      <tr><td rowspan="3"><span class="badge beginner">Programmer</span></td><td>Faire communiquer deux Blueprints par cast, interface et dispatcher</td><td><a href="blueprints.html">Blueprints</a></td></tr>
+      <tr><td>Écrire une classe C++ avec <code>UPROPERTY</code> et <code>UFUNCTION</code> et l'étendre en Blueprint</td><td><a href="cpp-bases.html">C++ : les bases</a></td></tr>
+      <tr><td>Utiliser timers et delegates, et expliquer quand un pointeur doit être un <code>UPROPERTY</code></td><td><a href="cpp-avance.html">C++ avancé</a></td></tr>
+      <tr><td rowspan="4"><span class="badge inter">Gameplay</span></td><td>Calculer une direction et tester un cône de vision</td><td><a href="maths.html">Maths</a></td></tr>
+      <tr><td>Configurer Enhanced Input et un personnage à la troisième personne</td><td><a href="input-personnage.html">Enhanced Input</a></td></tr>
+      <tr><td>Choisir entre Hit et Overlap, et faire un line trace</td><td><a href="collisions.html">Collisions</a></td></tr>
+      <tr><td>Créer une IA qui patrouille et poursuit avec un Behavior Tree</td><td><a href="ia.html">IA</a></td></tr>
+      <tr><td rowspan="2"><span class="badge inter">Contenu</span></td><td>Afficher un HUD et un menu, et gérer le mode d'entrée</td><td><a href="ui.html">UI</a></td></tr>
+      <tr><td>Monter un Animation Blueprint avec State Machine et Montage</td><td><a href="animation.html">Animation</a></td></tr>
+      <tr><td rowspan="3"><span class="badge advanced">Avancé</span></td><td>Répliquer une variable et appeler un RPC serveur</td><td><a href="multijoueur.html">Multijoueur</a></td></tr>
+      <tr><td>Mesurer le temps de frame et trouver le goulot (CPU, GPU)</td><td><a href="optimisation.html">Optimisation</a></td></tr>
+      <tr><td>Produire un build Shipping qui démarre sur une autre machine</td><td><a href="packaging.html">Packaging</a></td></tr>
+      <tr><td><span class="badge advanced">Pratique</span></td><td>Terminer un petit jeu complet, du menu au build</td><td><a href="projet.html">Projet guidé : Orb Rush</a></td></tr>
+    </tbody>
+  </table>
+
+  <h3>Et après ?</h3>
+  <ol class="steps">
+    <li><strong>Terminez Orb Rush, puis modifiez-le</strong>Ajoutez une mécanique (un dash, un deuxième type d'ennemi, un niveau) : c'est en sortant du tutoriel qu'on apprend vraiment.</li>
+    <li><strong>Faites une game jam</strong>Un thème, une contrainte de temps, un jeu fini. Rien ne fait progresser plus vite.</li>
+    <li><strong>Choisissez une spécialité</strong>Gameplay, IA, réseau, outils, rendu, animation technique : approfondissez avec la documentation et le code source.</li>
+    <li><strong>Lisez du code</strong>Celui des projets d'exemple et du moteur. Vous y trouverez des solutions élégantes à des problèmes que vous n'aviez pas encore.</li>
+    <li><strong>Montrez votre travail</strong>Publiez vos jeux sur itch.io, partagez vos progrès : les retours des joueurs valent tous les tutoriels.</li>
+  </ol>
+
+  <div class="quiz">
+    <p class="q">La documentation en ligne d'une fonction C++ du moteur est très succincte et ne précise pas un cas particulier. Quelle est la source la plus fiable pour lever le doute ?</p>
+    <ul>
+      <li>Une vidéo YouTube de 2019</li>
+      <li data-correct>Le code source et les commentaires de l'en-tête de la fonction, pour votre version du moteur</li>
+      <li>Une réponse de forum sans version précisée</li>
+      <li>Essayer des valeurs au hasard jusqu'à ce que ça marche</li>
+    </ul>
+    <p class="explain">Le code source correspond exactement à votre version et ne peut pas être « en retard ». Les vidéos et forums restent utiles, mais vérifiez toujours la version du moteur concernée.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Disséquer un projet d'exemple</h4>
+    <p>Ouvrez le template <em>Third Person</em> (ou <em>Stack O Bot</em>) et répondez sans aide extérieure : quelle classe de GameMode est utilisée ? Quel Mapping Context est ajouté, et à quel endroit ? Quelle est la vitesse de marche maximale du personnage ? Quelle animation est jouée quand il saute ?</p>
+    <details>
+      <summary>Voir la méthode</summary>
+      <ol>
+        <li><strong>GameMode</strong> : <em>World Settings → GameMode Override</em>, ou à défaut <em>Project Settings → Maps &amp; Modes → Default GameMode</em>. Ouvrez-le : ses <em>Class Defaults</em> indiquent la classe de Pawn par défaut.</li>
+        <li><strong>Mapping Context</strong> : ouvrez le Blueprint du personnage et cherchez (<kbd>Ctrl</kbd> + <kbd>F</kbd> dans le graphe) « Add Mapping Context ». Selon la version du template, il est ajouté dans le personnage ou dans le PlayerController.</li>
+        <li><strong>Vitesse</strong> : sélectionnez le <em>Character Movement Component</em> du personnage, puis cherchez « Max Walk Speed » dans Details.</li>
+        <li><strong>Animation de saut</strong> : dans le composant Mesh, la propriété <em>Anim Class</em> indique l'Animation Blueprint ; ouvrez sa State Machine et suivez l'état de saut ou de chute. Le <em>Reference Viewer</em> sur l'Animation Blueprint liste aussi toutes les animations utilisées.</li>
+      </ol>
+      <p>Cette démarche (partir de ce qu'on voit, remonter les références) fonctionne sur n'importe quel projet, y compris Lyra.</p>
+    </details>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>La <strong>documentation officielle</strong> est la référence ; sélectionnez toujours votre version du moteur.</li>
+      <li>Le <strong>code source</strong> du moteur répond quand la documentation se tait : <em>Aller à la définition</em> et lisez les en-têtes.</li>
+      <li>Les <strong>projets d'exemple</strong> (Content Examples, Stack O Bot, Cropout, Lyra…) s'étudient un système à la fois.</li>
+      <li>Pour se débloquer : lire l'erreur, isoler, <strong>réduire</strong> à une reproduction minimale, puis poser une question précise (version, attendu, obtenu, essais).</li>
+      <li>Le <strong>glossaire</strong> et la <strong>checklist</strong> de cette page renvoient vers le chapitre qui explique chaque notion.</li>
+      <li>La meilleure ressource reste la pratique : finir de petits jeux, participer à des game jams, lire du code.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>
