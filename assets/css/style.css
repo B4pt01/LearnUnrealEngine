@@ -471,7 +471,7 @@ a.card:hover { border-color: var(--accent); text-decoration: none; transform: tr
 
 /* ---------- Comparaison ---------- */
 .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 1.5rem 0; }
-.compare > div { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px 6px; }
+.compare > div { min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px 6px; }
 .compare > div > h4:first-child { margin-top: 0; }
 .compare .good { border-top: 3px solid var(--green); }
 .compare .bad { border-top: 3px solid var(--red); }
@@ -605,6 +605,7 @@ details > .code-block { margin-left: 14px; margin-right: 14px; }
 
 /* ---------- Divers ---------- */
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+.two-col > * { min-width: 0; }
 .center { text-align: center; }
 .muted { color: var(--muted); }
 .small { font-size: 14px; }
