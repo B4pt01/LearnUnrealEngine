@@ -457,7 +457,7 @@ const FVector Up = GetActorUpVector();
   <h3>InterpTo : suivre une cible qui bouge</h3>
   <p>Quand la cible change en permanence (une caméra qui suit le joueur, une jauge qui rattrape la vraie valeur de vie), on utilise <code>FMath::FInterpTo</code>, <code>VInterpTo</code> (vecteurs) ou <code>RInterpTo</code> (rotations) dans le Tick. À chaque frame, la valeur parcourt une fraction de la distance restante, proportionnelle à <code>DeltaTime × InterpSpeed</code> : rapide quand on est loin, lent à l'approche.</p>
 
-<script type="text/plain" data-lang="cpp" data-file="Turret.cpp (extrait)" data-highlight="10-11">
+<script type="text/plain" data-lang="cpp" data-file="Turret.cpp (extrait)" data-highlight="11-12">
 void ATurret::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
