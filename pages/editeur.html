@@ -240,7 +240,7 @@ protected:
     UPROPERTY(EditAnywhere, Category = "Orb", meta = (ClampMin = "0.0", ClampMax = "720.0", UIMin = "0.0", UIMax = "720.0"))
     float DegreesPerSecond = 90.f;
 
-    // Info-bulle : le commentaire « /** */ » au-dessus d'une UPROPERTY s'affiche au survol
+    /** Sens de rotation. Ce commentaire de documentation s'affiche en info-bulle dans Details. */
     UPROPERTY(EditAnywhere, Category = "Orb")
     bool bSpinClockwise = true;
 };
