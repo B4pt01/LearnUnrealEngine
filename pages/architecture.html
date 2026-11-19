@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Architecture du moteur — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="architecture">
+<article class="doc">
+
+  <h1>Architecture du moteur</h1>
+  <p class="lead">Avant d'écrire la moindre ligne de gameplay, il faut comprendre comment Unreal organise un jeu : qui possède quoi, qui décide des règles, qui contrôle le personnage. Ce chapitre est probablement le plus important du site : tout le reste s'appuie dessus.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Comprendre la hiérarchie <code>UObject</code> → <code>AActor</code> → <code>APawn</code> → <code>ACharacter</code></li>
+      <li>Construire des objets par <strong>composition</strong> avec les Components</li>
+      <li>Maîtriser le <strong>Gameplay Framework</strong> : GameMode, GameState, PlayerController, PlayerState, Pawn, HUD, GameInstance</li>
+      <li>Savoir <strong>où ranger chaque donnée</strong> de votre jeu</li>
+      <li>Découvrir les Subsystems, le World et les Levels</li>
+    </ul>
+  </div>
+
+  <h2>Vue d'ensemble</h2>
+  <p>Quand vous lancez votre jeu, Unreal crée une série d'objets imbriqués. Le <strong>moteur</strong> (<code>UEngine</code>) crée une <strong>GameInstance</strong> qui vit pendant toute la session. Celle-ci charge un <strong>World</strong> (le monde de jeu), qui contient un ou plusieurs <strong>Levels</strong> (niveaux), qui eux-mêmes contiennent des <strong>Actors</strong> (tout ce qui est placé dans le monde). Enfin, chaque Actor est composé de <strong>Components</strong>.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TD
+    E["UEngine<br>le moteur"] --> GI["UGameInstance<br>vit toute la session"]
+    GI --> W["UWorld<br>le monde chargé"]
+    W --> PL["ULevel persistant"]
+    W --> SL["Levels streamés<br>(optionnels)"]
+    PL --> A1["AActor : Sol"]
+    PL --> A2["AActor : Personnage"]
+    PL --> A3["AActor : Lumière"]
+    A2 --> C1["CapsuleComponent"]
+    A2 --> C2["SkeletalMeshComponent"]
+    A2 --> C3["CameraComponent"]
+</pre>
+    <figcaption>Imbrication des principaux objets du moteur, du plus global (le moteur) au plus précis (un composant).</figcaption>
+  </figure>
+
+  <p>Gardez ce schéma en tête : quand une donnée doit survivre à un changement de niveau, elle ne peut pas vivre dans un Actor (qui est détruit avec son niveau). Elle doit remonter plus haut, dans la GameInstance par exemple.</p>
+
+  <h2>UObject : la brique de base</h2>
+  <p>Presque tout ce que vous manipulerez dans Unreal hérite de <code>UObject</code>. C'est la classe racine du système d'objets du moteur. Le simple fait d'hériter de <code>UObject</code> donne gratuitement plusieurs super-pouvoirs :</p>
+  <dl class="defs">
+    <dt>Réflexion</dt><dd>Le moteur « connaît » vos classes, leurs variables et leurs fonctions. C'est ce qui permet de les voir dans l'éditeur et de les utiliser en Blueprint.</dd>
+    <dt>Garbage Collection</dt><dd>La mémoire est libérée automatiquement quand plus personne ne référence l'objet. Pas de <code>delete</code> manuel.</dd>
+    <dt>Sérialisation</dt><dd>Les objets peuvent être sauvegardés sur disque (assets, niveaux) et rechargés.</dd>
+    <dt>Valeurs par défaut (CDO)</dt><dd>Chaque classe possède un objet modèle, le <em>Class Default Object</em>, qui contient ses valeurs par défaut.</dd>
+    <dt>Réplication</dt><dd>Les propriétés peuvent être synchronisées automatiquement en réseau.</dd>
+  </dl>
+
+  <h3>La hiérarchie des classes principales</h3>
+  <p>Voici l'arbre d'héritage simplifié des classes que vous utiliserez le plus. Chaque niveau ajoute des capacités au précédent :</p>
+
+  <ul class="tree">
+    <li><span class="node c-purple">UObject</span><span class="desc">Base de tout : réflexion, GC, sérialisation</span>
+      <ul>
+        <li><span class="node c-blue">AActor</span><span class="desc">Peut être placé ou créé dans un niveau, possède une position</span>
+          <ul>
+            <li><span class="node c-orange">APawn</span><span class="desc">Actor pouvant être <em>possédé</em> par un Controller</span>
+              <ul>
+                <li><span class="node c-orange">ACharacter</span><span class="desc">Pawn humanoïde : capsule, mesh squelettique, déplacements prêts à l'emploi</span></li>
+              </ul>
+            </li>
+            <li><span class="node c-red">AController</span><span class="desc">Le « cerveau » qui contrôle un Pawn</span>
+              <ul>
+                <li><span class="node c-red">APlayerController</span><span class="desc">Contrôlé par un joueur humain</span></li>
+                <li><span class="node c-red">AAIController</span><span class="desc">Contrôlé par l'intelligence artificielle</span></li>
+              </ul>
+            </li>
+            <li><span class="node c-yellow">AGameModeBase</span><span class="desc">Les règles du jeu (serveur uniquement)</span></li>
+            <li><span class="node c-yellow">AGameStateBase</span><span class="desc">L'état de la partie, partagé avec tous</span></li>
+            <li><span class="node c-yellow">APlayerState</span><span class="desc">L'état public d'un joueur (score, pseudo)</span></li>
+            <li><span class="node c-yellow">AHUD</span><span class="desc">Ancienne classe d'affichage 2D</span></li>
+          </ul>
+        </li>
+        <li><span class="node c-green">UActorComponent</span><span class="desc">Comportement réutilisable, sans position</span>
+          <ul>
+            <li><span class="node c-green">USceneComponent</span><span class="desc">Ajoute une transformation et l'attachement</span>
+              <ul>
+                <li><span class="node c-green">UPrimitiveComponent</span><span class="desc">Visible et/ou collisionnable</span>
+                  <ul>
+                    <li><span class="node c-green">UStaticMeshComponent</span></li>
+                    <li><span class="node c-green">USkeletalMeshComponent</span></li>
+                    <li><span class="node c-green">UShapeComponent</span><span class="desc">Box, Sphere, Capsule</span></li>
+                  </ul>
+                </li>
+                <li><span class="node c-green">UCameraComponent</span></li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+        <li><span class="node c-teal">UGameInstance</span><span class="desc">Vit toute la session de jeu</span></li>
+        <li><span class="node c-teal">UUserWidget</span><span class="desc">Éléments d'interface (UMG)</span></li>
+      </ul>
+    </li>
+  </ul>
+
+  <h3>Les préfixes de nommage</h3>
+  <p>Vous avez remarqué les lettres devant les noms de classes ? Ce n'est pas décoratif : Unreal impose ces préfixes en C++, et l'outil de compilation (Unreal Header Tool) refusera de compiler si vous vous trompez.</p>
+  <table>
+    <thead><tr><th>Préfixe</th><th>Signification</th><th>Exemples</th></tr></thead>
+    <tbody>
+      <tr><td><code>U</code></td><td>Hérite de <code>UObject</code> (mais pas d'<code>AActor</code>)</td><td><code>UStaticMeshComponent</code>, <code>UGameInstance</code></td></tr>
+      <tr><td><code>A</code></td><td>Hérite d'<code>AActor</code></td><td><code>ACharacter</code>, <code>APlayerController</code></td></tr>
+      <tr><td><code>F</code></td><td>Structure ou classe simple, hors système UObject</td><td><code>FVector</code>, <code>FString</code>, <code>FHitResult</code></td></tr>
+      <tr><td><code>E</code></td><td>Énumération</td><td><code>ECollisionChannel</code>, <code>EMovementMode</code></td></tr>
+      <tr><td><code>I</code></td><td>Interface</td><td><code>IInteractable</code></td></tr>
+      <tr><td><code>T</code></td><td>Template (modèle générique)</td><td><code>TArray</code>, <code>TMap</code>, <code>TSubclassOf</code></td></tr>
+      <tr><td><code>S</code></td><td>Widget Slate (UI bas niveau)</td><td><code>SButton</code>, <code>SCompoundWidget</code></td></tr>
+      <tr><td><code>b</code></td><td>Variable booléenne (convention, pas une classe)</td><td><code>bIsDead</code>, <code>bCanJump</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Actors : tout ce qui vit dans le monde</h2>
+  <p>Un <strong>Actor</strong> est n'importe quel objet qui peut être placé ou créé (<em>spawné</em>) dans un niveau : un mur, une lumière, une caméra, un ennemi, une pièce à ramasser, une zone de déclenchement invisible… Si ça existe dans le monde, c'est un Actor.</p>
+  <p>Point important : <strong>un Actor seul ne sait presque rien faire</strong>. Il n'a même pas de position à lui ! Sa position, sa rotation et son échelle (sa <em>transform</em>) sont celles de son <strong>Root Component</strong>, le composant racine. Ce sont les Components qui donnent à l'Actor son apparence et ses capacités.</p>
+
+  <div class="callout warn">
+    <p class="callout-title">Piège classique</p>
+    <p>Un Actor créé sans aucun composant n'a pas de transform : <code>GetActorLocation()</code> renverra toujours <code>(0, 0, 0)</code> et vous ne pourrez pas le déplacer. Donnez toujours un <code>RootComponent</code> à vos Actors (au minimum un <code>USceneComponent</code>).</p>
+  </div>
+
+  <h3>Le cycle de vie en bref</h3>
+  <p>Chaque Actor passe par des étapes bien définies. Les deux que vous utiliserez tout le temps sont <code>BeginPlay</code> (le jeu commence pour cet Actor) et <code>Tick</code> (appelé à chaque frame). Le cycle complet est détaillé dans le chapitre <a href="cpp-avance.html">C++ avancé</a>.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    A["Constructeur<br>valeurs par défaut,<br>création des composants"] --> B["BeginPlay<br>le jeu démarre<br>pour cet Actor"]
+    B --> C["Tick(DeltaTime)<br>à chaque frame"]
+    C --> C
+    C --> D["EndPlay<br>destruction ou<br>fin du niveau"]
+</pre>
+    <figcaption>Les grandes étapes de la vie d'un Actor.</figcaption>
+  </figure>
+
+  <h2>Components : la composition avant l'héritage</h2>
+  <p>Plutôt que de créer une classe énorme qui sait tout faire, Unreal encourage la <strong>composition</strong> : on assemble un Actor à partir de petites briques indépendantes. Une torche murale, par exemple, n'est rien d'autre qu'un Actor qui contient :</p>
+  <ul>
+    <li>un <code>UStaticMeshComponent</code> pour le modèle 3D du support ;</li>
+    <li>un <code>UPointLightComponent</code> pour la lumière ;</li>
+    <li>un <code>UNiagaraComponent</code> pour les flammes ;</li>
+    <li>un <code>UAudioComponent</code> pour le crépitement du feu.</li>
+  </ul>
+
+  <h3>Les trois familles de composants</h3>
+  <div class="cards">
+    <div class="card">
+      <span class="card-tag">UActorComponent</span>
+      <h4>Comportement pur</h4>
+      <p>Pas de position dans le monde. Idéal pour de la logique réutilisable : système de santé, inventaire, gestion des munitions.</p>
+    </div>
+    <div class="card">
+      <span class="card-tag">USceneComponent</span>
+      <h4>Possède une transform</h4>
+      <p>A une position et peut être attaché à d'autres composants. Exemples : caméra, Spring Arm, point d'apparition de projectile.</p>
+    </div>
+    <div class="card">
+      <span class="card-tag">UPrimitiveComponent</span>
+      <h4>Visible ou collisionnable</h4>
+      <p>Peut être rendu à l'écran et/ou générer des collisions. Exemples : Static Mesh, Skeletal Mesh, Box, Sphere, Capsule.</p>
+    </div>
+  </div>
+
+  <h3>La hiérarchie d'attachement</h3>
+  <p>Les Scene Components forment un arbre : chaque composant est attaché à un parent et suit ses mouvements. Si la capsule du personnage avance, tout ce qui y est attaché avance avec elle. Voici la structure du personnage du template Third Person :</p>
+
+  <ul class="tree">
+    <li><span class="node c-orange">CapsuleComponent</span><span class="desc">Root Component : gère la collision avec le décor</span>
+      <ul>
+        <li><span class="node c-green">ArrowComponent</span><span class="desc">Indique la direction « avant » (visible uniquement dans l'éditeur)</span></li>
+        <li><span class="node c-green">Mesh</span><span class="desc">SkeletalMeshComponent : le modèle animé</span></li>
+        <li><span class="node c-green">CameraBoom</span><span class="desc">SpringArmComponent : un bras qui recule si un mur gêne</span>
+          <ul>
+            <li><span class="node c-green">FollowCamera</span><span class="desc">CameraComponent, au bout du bras</span></li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+    <li><span class="node">CharacterMovementComponent</span><span class="desc">ActorComponent : pas de transform, donc pas dans l'arbre d'attachement</span></li>
+  </ul>
+
+  <h3>Créer des composants</h3>
+  <p>Voici comment construire un Actor « pièce à ramasser » composé d'une sphère de collision et d'un mesh. En Blueprint, on ajoute les composants avec le bouton <strong>+ Add</strong> du panneau Components. En C++, on les crée dans le constructeur :</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+      <p>Dans un Blueprint de type Actor (<code>BP_Coin</code>), ouvrez le panneau <strong>Components</strong> en haut à gauche :</p>
+      <ol class="steps">
+        <li><strong>Ajouter la collision</strong>Cliquez sur <strong>+ Add</strong> → <em>Sphere Collision</em>. Glissez-la sur <code>DefaultSceneRoot</code> pour qu'elle devienne la racine.</li>
+        <li><strong>Ajouter le mesh</strong><strong>+ Add</strong> → <em>Static Mesh</em>, puis choisissez un mesh dans le panneau Details (par exemple un cylindre aplati).</li>
+        <li><strong>Désactiver la collision du mesh</strong>Dans Details → Collision → <em>Collision Presets</em>, choisissez <code>NoCollision</code> : seule la sphère doit détecter le joueur.</li>
+      </ol>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="Coin.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "Coin.generated.h"
+
+class USphereComponent;
+class UStaticMeshComponent;
+
+UCLASS()
+class MYGAME_API ACoin : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    ACoin();
+
+protected:
+    // Collision : c'est le Root Component
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Coin")
+    TObjectPtr<USphereComponent> Collision;
+
+    // Apparence : attachée à la sphère
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Coin")
+    TObjectPtr<UStaticMeshComponent> Mesh;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Coin.cpp" data-highlight="9-10,13-15">
+#include "Coin.h"
+#include "Components/SphereComponent.h"
+#include "Components/StaticMeshComponent.h"
+
+ACoin::ACoin()
+{
+    PrimaryActorTick.bCanEverTick = false; // pas besoin de Tick ici
+
+    Collision = CreateDefaultSubobject<USphereComponent>(TEXT("Collision"));
+    RootComponent = Collision;
+    Collision->InitSphereRadius(40.f);
+
+    Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
+    Mesh->SetupAttachment(RootComponent);
+    Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+}
+</script>
+    </div>
+  </div>
+
+  <div class="callout info">
+    <p class="callout-title">Pourquoi CreateDefaultSubobject et pas new ?</p>
+    <p><code>CreateDefaultSubobject</code> ne s'utilise que dans le constructeur. Il enregistre le composant auprès du système de réflexion pour qu'il apparaisse dans l'éditeur, soit sauvegardé et soit modifiable dans les Blueprints enfants. Le texte passé en paramètre (<code>TEXT("Mesh")</code>) est le nom interne du composant : il doit être unique dans la classe.</p>
+  </div>
+
+  <h2>Le Gameplay Framework</h2>
+  <p>C'est ici qu'Unreal se distingue des autres moteurs. Plutôt que de vous laisser tout organiser vous-même, il fournit un ensemble de classes avec des <strong>rôles bien précis</strong>. Ce découpage vient de l'histoire du moteur (les jeux multijoueur <em>Unreal Tournament</em>) : il est pensé pour le réseau dès le départ, mais il est tout aussi utile en solo.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TB
+    subgraph SRV["Serveur uniquement"]
+        GM["GameMode<br>les règles du jeu"]
+    end
+    subgraph ALL["Répliqué à tous les joueurs"]
+        GS["GameState<br>état de la partie"]
+        PS1["PlayerState<br>joueur 1"]
+        PS2["PlayerState<br>joueur 2"]
+    end
+    subgraph J1["Propre à chaque joueur"]
+        PC["PlayerController<br>la volonté du joueur"]
+        HUD["HUD / Widgets<br>l'affichage"]
+    end
+    subgraph MONDE["Dans le monde"]
+        P["Pawn / Character<br>le corps"]
+    end
+    GM -- "crée et gère" --> GS
+    GM -- "fait apparaître" --> PC
+    GM -- "fait apparaître" --> P
+    PC -- "possède" --> P
+    PC -- "a un" --> PS1
+    PC -- "affiche" --> HUD
+    GS -- "liste" --> PS1
+    GS -- "liste" --> PS2
+</pre>
+    <figcaption>Les classes du Gameplay Framework et leurs relations. Le GameMode orchestre tout, le PlayerController <b>possède</b> le Pawn.</figcaption>
+  </figure>
+
+  <h3>GameMode : l'arbitre</h3>
+  <p>Le <code>AGameModeBase</code> (ou sa version enrichie <code>AGameMode</code>) définit <strong>les règles</strong> : quelles classes utiliser pour le joueur, comment et où faire apparaître les joueurs, quand la partie est gagnée ou perdue. Il n'existe <strong>que sur le serveur</strong> : en multijoueur, les clients n'y ont jamais accès (c'est une protection contre la triche).</p>
+  <p>Chaque niveau peut avoir son propre GameMode (réglage <em>GameMode Override</em> dans <strong>World Settings</strong>), sinon c'est celui défini dans <strong>Project Settings → Maps &amp; Modes</strong> qui est utilisé. C'est aussi là que l'on définit les classes par défaut :</p>
+  <ul>
+    <li><strong>Default Pawn Class</strong> : le personnage du joueur ;</li>
+    <li><strong>Player Controller Class</strong> : le contrôleur du joueur ;</li>
+    <li><strong>HUD Class</strong>, <strong>Player State Class</strong>, <strong>Game State Class</strong>.</li>
+  </ul>
+
+  <h3>GameState : le tableau d'affichage</h3>
+  <p>Le <code>AGameStateBase</code> contient l'<strong>état global de la partie</strong> que tout le monde doit connaître : temps restant, score des équipes, phase de jeu. Contrairement au GameMode, il est répliqué à tous les clients. Il contient aussi la liste de tous les <code>PlayerState</code> (<code>PlayerArray</code>).</p>
+
+  <h3>PlayerController : la volonté du joueur</h3>
+  <p>Le <code>APlayerController</code> représente <strong>le joueur humain</strong> devant son écran. Il reçoit les entrées (clavier, manette), gère la caméra, la souris, l'interface, et transmet les ordres au Pawn qu'il possède. Il survit à la mort du personnage : quand le Pawn est détruit, le Controller reste et peut en posséder un nouveau.</p>
+
+  <h3>Pawn et Character : le corps</h3>
+  <p>Le <code>APawn</code> est le corps physique dans le monde. Un Pawn peut être n'importe quoi : un humain, une voiture, un vaisseau, une tourelle. <code>ACharacter</code> est un Pawn spécialisé pour les personnages bipèdes : il fournit une capsule de collision, un mesh squelettique et surtout le <code>UCharacterMovementComponent</code>, qui gère marche, saut, chute, nage et vol, avec la prédiction réseau incluse.</p>
+
+  <h3>PlayerState : la fiche du joueur</h3>
+  <p>Le <code>APlayerState</code> contient les informations <strong>publiques</strong> d'un joueur que les autres doivent voir : pseudo, score, équipe, ping. Il est répliqué à tous et survit à la mort du Pawn.</p>
+
+  <h3>GameInstance : la mémoire de la session</h3>
+  <p>La <code>UGameInstance</code> est créée au lancement du jeu et détruite à sa fermeture. C'est le seul objet du framework qui <strong>survit aux changements de niveau</strong>. Elle est idéale pour les données de session : profil chargé, options, progression entre deux niveaux. Elle n'est pas répliquée : chaque machine a la sienne.</p>
+
+  <h3>HUD et widgets : l'affichage</h3>
+  <p>La classe <code>AHUD</code> est historique ; aujourd'hui on construit l'interface avec des <strong>Widgets UMG</strong> (<code>UUserWidget</code>). Le HUD sert encore souvent de point central pour créer et afficher ces widgets. Voir le chapitre <a href="ui.html">Interfaces avec UMG</a>.</p>
+
+  <h2>La possession : séparer le cerveau du corps</h2>
+  <p>La notion de <strong>possession</strong> est fondamentale. Un Controller (joueur ou IA) <em>possède</em> un Pawn pour le piloter. Le même Pawn peut donc être contrôlé par un joueur ou par l'IA sans changer une ligne de son code. Et un joueur peut changer de corps : sortir d'un personnage pour monter dans un véhicule, par exemple.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    participant GM as GameMode
+    participant PC as PlayerController
+    participant P1 as Character
+    participant V as Véhicule
+    GM->>PC: Crée le contrôleur à la connexion
+    GM->>P1: Spawn du Default Pawn
+    GM->>PC: Possess(Character)
+    Note over PC,P1: Les entrées pilotent le personnage
+    PC->>V: Possess(Véhicule)
+    Note over PC,V: Le Character est libéré (UnPossess),<br>les entrées pilotent le véhicule
+    P1-->>P1: Peut être repris par un AIController
+</pre>
+    <figcaption>Le PlayerController change de corps au cours de la partie : c'est la possession.</figcaption>
+  </figure>
+
+  <p>Voici comment récupérer le contrôleur et le personnage du joueur, une opération que vous ferez très souvent :</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="Récupérer le PlayerController au démarrage et le convertir (Cast) vers notre classe.">
+{
+  "nodes": [
+    { "id": "begin", "type": "event", "title": "Event BeginPlay", "x": 0, "y": 0, "out": [ { "type": "exec" } ] },
+    { "id": "getpc", "type": "pure", "title": "Get Player Controller", "x": 0, "y": 90,
+      "in": [ { "name": "Player Index", "type": "int", "value": "0" } ],
+      "out": [ { "name": "Return Value", "type": "object" } ] },
+    { "id": "cast", "type": "cast", "title": "Cast To BP_MyPlayerController", "x": 280, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Object", "type": "object" } ],
+      "out": [ { "type": "exec" }, { "name": "Cast Failed", "type": "exec" }, { "name": "As BP My Player Controller", "type": "object" } ] },
+    { "id": "print", "type": "function", "title": "Print String", "x": 610, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "In String", "type": "string", "value": "Contrôleur trouvé !" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "begin", 0, "cast", 0 ],
+    [ "getpc", 0, "cast", 1 ],
+    [ "cast", 0, "print", 0 ]
+  ]
+}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="MyActor.cpp">
+#include "Kismet/GameplayStatics.h"
+#include "MyPlayerController.h"
+
+void AMyActor::BeginPlay()
+{
+    Super::BeginPlay();
+
+    // Le contrôleur du joueur local numéro 0
+    APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0);
+
+    // Cast : « est-ce bien un AMyPlayerController ? » (nullptr sinon)
+    if (AMyPlayerController* MyPC = Cast<AMyPlayerController>(PC))
+    {
+        UE_LOG(LogTemp, Log, TEXT("Contrôleur trouvé : %s"), *MyPC->GetName());
+    }
+
+    // Le Pawn actuellement possédé par ce contrôleur
+    if (PC)
+    {
+        APawn* PlayerPawn = PC->GetPawn();
+    }
+}
+</script>
+    </div>
+  </div>
+
+  <div class="callout tip">
+    <p class="callout-title">Depuis le Pawn, on remonte facilement</p>
+    <p>Dans un Pawn ou un Character : <code>GetController()</code> renvoie son contrôleur et <code>GetPlayerState()</code> son PlayerState. Depuis n'importe quel Actor : <code>GetWorld()-&gt;GetAuthGameMode()</code> renvoie le GameMode (sur le serveur seulement) et <code>GetWorld()-&gt;GetGameState()</code> le GameState.</p>
+  </div>
+
+  <h2>Où ranger chaque donnée ?</h2>
+  <p>C'est LA question que tout débutant se pose, et une mauvaise réponse crée des bugs difficiles plus tard (score qui disparaît à la mort du joueur, données perdues au changement de niveau…). Voici un guide de décision :</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TD
+    Q1{"La donnée doit-elle survivre<br>à un changement de niveau ?"}
+    Q1 -- Oui --> Q1b{"Et à la fermeture du jeu ?"}
+    Q1b -- Oui --> SG["SaveGame<br>sur le disque"]
+    Q1b -- Non --> GI["GameInstance<br>ou un de ses Subsystems"]
+    Q1 -- Non --> Q2{"Concerne-t-elle toute la partie<br>ou un joueur précis ?"}
+    Q2 -- "Toute la partie" --> Q3{"Les joueurs doivent-ils la voir ?"}
+    Q3 -- "Non, ce sont des règles" --> GM["GameMode"]
+    Q3 -- Oui --> GS["GameState"]
+    Q2 -- "Un joueur" --> Q4{"Doit-elle survivre<br>à la mort du personnage ?"}
+    Q4 -- Non --> PW["Pawn / Character<br>ou un de ses Components"]
+    Q4 -- Oui --> Q5{"Les autres joueurs<br>doivent-ils la voir ?"}
+    Q5 -- Oui --> PS["PlayerState"]
+    Q5 -- Non --> PC["PlayerController"]
+</pre>
+    <figcaption>Arbre de décision pour choisir la classe qui doit porter une donnée.</figcaption>
+  </figure>
+
+  <table>
+    <thead><tr><th>Donnée</th><th>Où la mettre</th><th>Pourquoi</th></tr></thead>
+    <tbody>
+      <tr><td>Points de vie actuels</td><td>Pawn (ou un <code>HealthComponent</code>)</td><td>Ils disparaissent avec le corps, c'est normal</td></tr>
+      <tr><td>Score, nombre de kills</td><td>PlayerState</td><td>Survit à la mort et visible par tous</td></tr>
+      <tr><td>Temps restant de la manche</td><td>GameState</td><td>Global et visible par tous</td></tr>
+      <tr><td>Score nécessaire pour gagner</td><td>GameMode</td><td>Règle du jeu, seul le serveur décide</td></tr>
+      <tr><td>Sensibilité de la souris</td><td>PlayerController (+ SaveGame)</td><td>Propre au joueur local, personne d'autre n'en a besoin</td></tr>
+      <tr><td>Personnage choisi au menu</td><td>GameInstance</td><td>Doit survivre au chargement du niveau de jeu</td></tr>
+      <tr><td>Niveaux débloqués</td><td>SaveGame</td><td>Doit survivre à la fermeture du jeu</td></tr>
+    </tbody>
+  </table>
+
+  <div class="quiz">
+    <p class="q">Dans un jeu de tir multijoueur, où stocker le nombre d'éliminations d'un joueur, affiché dans le tableau des scores ?</p>
+    <ul>
+      <li>Dans le Character du joueur</li>
+      <li>Dans le GameMode</li>
+      <li data-correct>Dans le PlayerState</li>
+      <li>Dans la GameInstance</li>
+    </ul>
+    <p class="explain">Le PlayerState survit à la mort du Character (sinon le score serait perdu à chaque mort) et il est répliqué à tous les joueurs (qui doivent voir le tableau des scores). Le GameMode n'existe que sur le serveur, et la GameInstance n'est pas répliquée.</p>
+  </div>
+
+  <h2>Les Subsystems</h2>
+  <p>Les <strong>Subsystems</strong> sont des objets créés et détruits automatiquement par le moteur, en même temps que l'objet auquel ils sont rattachés. Ils évitent de surcharger la GameInstance ou le GameMode avec des dizaines de responsabilités : chaque système (quêtes, succès, sauvegarde…) peut avoir son propre Subsystem.</p>
+  <table>
+    <thead><tr><th>Classe de base</th><th>Durée de vie</th><th>Exemple d'usage</th></tr></thead>
+    <tbody>
+      <tr><td><code>UEngineSubsystem</code></td><td>Toute l'exécution du moteur</td><td>Outils, services globaux</td></tr>
+      <tr><td><code>UGameInstanceSubsystem</code></td><td>La session de jeu</td><td>Système de sauvegarde, succès, quêtes</td></tr>
+      <tr><td><code>UWorldSubsystem</code></td><td>Un monde (un niveau chargé)</td><td>Gestionnaire d'ennemis, météo du niveau</td></tr>
+      <tr><td><code>ULocalPlayerSubsystem</code></td><td>Un joueur local</td><td>Enhanced Input, préférences du joueur</td></tr>
+    </tbody>
+  </table>
+
+<script type="text/plain" data-lang="cpp" data-file="QuestSubsystem.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Subsystems/GameInstanceSubsystem.h"
+#include "QuestSubsystem.generated.h"
+
+UCLASS()
+class MYGAME_API UQuestSubsystem : public UGameInstanceSubsystem
+{
+    GENERATED_BODY()
+
+public:
+    virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+
+    UFUNCTION(BlueprintCallable, Category = "Quests")
+    void CompleteQuest(FName QuestId);
+
+    UFUNCTION(BlueprintPure, Category = "Quests")
+    bool IsQuestCompleted(FName QuestId) const { return CompletedQuests.Contains(QuestId); }
+
+private:
+    UPROPERTY()
+    TSet<FName> CompletedQuests;
+};
+</script>
+
+<script type="text/plain" data-lang="cpp" data-file="Utilisation depuis n'importe quel Actor">
+if (UQuestSubsystem* Quests = GetGameInstance()->GetSubsystem<UQuestSubsystem>())
+{
+    Quests->CompleteQuest(TEXT("SauverLeVillage"));
+}
+</script>
+
+  <p>En Blueprint, le Subsystem apparaît automatiquement : faites un clic droit dans le graphe et cherchez « Quest Subsystem ». Pas besoin de cast, pas besoin de l'instancier.</p>
+
+  <h2>World, Levels et World Partition</h2>
+  <p>Un <strong>Level</strong> (ou <em>Map</em>, fichier <code>.umap</code>) est un fichier qui contient des Actors placés. Le <strong>World</strong> est l'objet en mémoire qui contient le niveau chargé et tous ses Actors ; on y accède partout avec <code>GetWorld()</code>.</p>
+  <ul>
+    <li><strong>Persistent Level</strong> : le niveau principal, toujours chargé.</li>
+    <li><strong>Level Streaming</strong> : des sous-niveaux chargés et déchargés à la demande (par exemple, l'intérieur d'un bâtiment).</li>
+    <li><strong>World Partition</strong> : le système par défaut des grands mondes en UE5. Le monde est découpé automatiquement en cellules d'une grille, chargées selon la distance au joueur. Avec <em>One File Per Actor</em>, chaque Actor est sauvegardé dans son propre fichier, ce qui permet à plusieurs personnes de travailler sur la même carte sans conflit.</li>
+    <li><strong>Changer de niveau</strong> : <code>UGameplayStatics::OpenLevel(this, TEXT("NomDuNiveau"))</code> ou le nœud <em>Open Level (by Name)</em>. Tout le World est détruit, sauf la GameInstance.</li>
+  </ul>
+
+  <div class="callout ue">
+    <p class="callout-title">Pour aller plus loin</p>
+    <p>Dans la documentation d'Epic, cherchez « Gameplay Framework » et « Programming Subsystems ». Le projet d'exemple gratuit <strong>Lyra</strong> montre une utilisation professionnelle de toutes ces classes.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Identifier les classes d'un jeu connu</h4>
+    <p>Prenez un jeu que vous connaissez bien, par exemple <em>Fortnite</em> ou <em>Rocket League</em>. Pour chacune des informations suivantes, indiquez la classe du Gameplay Framework qui devrait la contenir : la voiture/le personnage, la vitesse actuelle, le score des équipes, le pseudo d'un joueur, le temps restant, la règle « le premier à 3 buts gagne », le réglage de la caméra choisi par le joueur.</p>
+    <details>
+      <summary>Voir une solution (Rocket League)</summary>
+      <ul>
+        <li><strong>La voiture</strong> : un Pawn (sans doute une classe dérivée d'<code>APawn</code> avec un composant de mouvement de véhicule).</li>
+        <li><strong>La vitesse actuelle</strong> : le Pawn (son composant de mouvement).</li>
+        <li><strong>Le score des équipes et le temps restant</strong> : le GameState.</li>
+        <li><strong>Le pseudo, les buts marqués par un joueur</strong> : le PlayerState.</li>
+        <li><strong>La règle de victoire</strong> : le GameMode.</li>
+        <li><strong>Le réglage de caméra</strong> : le PlayerController, sauvegardé dans un SaveGame.</li>
+      </ul>
+    </details>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Quel objet est le seul du Gameplay Framework à survivre à un changement de niveau ?</p>
+    <ul>
+      <li>Le PlayerController</li>
+      <li>Le GameState</li>
+      <li data-correct>La GameInstance</li>
+      <li>Le PlayerState</li>
+    </ul>
+    <p class="explain">À l'appel d'<code>OpenLevel</code>, tout le World est détruit avec ses Actors (Controllers, GameState, PlayerStates, Pawns). Seule la GameInstance, et ses Subsystems, persistent pendant toute la session.</p>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Tout hérite de <code>UObject</code> ; tout ce qui est dans le monde est un <code>AActor</code>.</li>
+      <li>Un Actor tire sa position de son <strong>Root Component</strong> et ses capacités de ses <strong>Components</strong>.</li>
+      <li>Le <strong>GameMode</strong> fixe les règles (serveur), le <strong>GameState</strong> partage l'état de la partie, le <strong>PlayerState</strong> l'état d'un joueur.</li>
+      <li>Le <strong>PlayerController</strong> possède un <strong>Pawn</strong> : on sépare la volonté du joueur de son corps.</li>
+      <li>La <strong>GameInstance</strong> survit aux changements de niveau ; le <strong>SaveGame</strong> survit à la fermeture du jeu.</li>
+      <li>Les <strong>Subsystems</strong> permettent d'organiser proprement les systèmes globaux.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Débogage &amp; optimisation — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="optimisation">
+<article class="doc">
+
+  <h1>Débogage &amp; optimisation</h1>
+  <p class="lead">Un jeu qui plante ou qui saccade ne sera jamais agréable, quelle que soit la qualité de son gameplay. Ce chapitre vous apprend d'abord à trouver les bugs (débogueur, crashs, logs, outils visuels), puis à rendre le jeu fluide avec méthode. La règle d'or de l'optimisation tient en deux mots : <strong>on mesure</strong>, on ne devine pas.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Déboguer le C++ pas à pas et comprendre un crash</li>
+      <li>Utiliser les logs, les variables console et les outils de débogage visuel</li>
+      <li>Raisonner en <strong>budget de frame</strong> et trouver le goulot d'étranglement avec <code>stat unit</code></li>
+      <li>Profiler avec les commandes <code>stat</code> et <strong>Unreal Insights</strong></li>
+      <li>Appliquer les optimisations CPU, GPU, mémoire et chargement qui comptent vraiment</li>
+    </ul>
+  </div>
+
+  <h2>Déboguer le C++ avec l'IDE</h2>
+  <p>Un <strong>débogueur</strong> permet de mettre le programme en pause sur une ligne précise, puis d'inspecter les variables et d'avancer instruction par instruction. C'est infiniment plus efficace que d'ajouter des logs au hasard. Dans Visual Studio ou Rider, choisissez votre projet de jeu comme projet de démarrage, puis lancez avec <kbd>F5</kbd> : l'éditeur démarre avec le débogueur attaché. Pour un éditeur déjà ouvert, utilisez <em>Debug → Attach to Process</em> (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> dans Visual Studio) et choisissez <code>UnrealEditor.exe</code>.</p>
+
+  <h3>Choisir la bonne configuration</h3>
+  <table>
+    <thead><tr><th>Configuration</th><th>Votre code</th><th>Moteur</th><th>Quand l'utiliser</th></tr></thead>
+    <tbody>
+      <tr><td><code>Development Editor</code></td><td>Optimisé</td><td>Optimisé</td><td>Travail quotidien. Le débogueur fonctionne, mais certaines variables sont illisibles et le pas à pas « saute »</td></tr>
+      <tr><td><code>DebugGame Editor</code></td><td>Non optimisé</td><td>Optimisé</td><td>Déboguer <strong>votre</strong> code : toutes vos variables sont lisibles et le moteur reste rapide</td></tr>
+      <tr><td><code>Debug Editor</code></td><td>Non optimisé</td><td>Non optimisé</td><td>Uniquement avec un moteur compilé depuis les sources ; très lent, pour déboguer le moteur lui-même</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Points d'arrêt, espions et pile d'appels</h3>
+  <dl class="defs">
+    <dt>Point d'arrêt (<kbd>F9</kbd>)</dt><dd>L'exécution s'arrête quand elle atteint la ligne. Tout l'éditeur se fige : c'est normal, il attend que vous repreniez avec <kbd>F5</kbd>.</dd>
+    <dt>Point d'arrêt conditionnel</dt><dd>Clic droit sur le point d'arrêt → <em>Conditions</em> : par exemple <code>Health &lt;= 0.f</code> ou un nombre de passages. Indispensable quand le code s'exécute 60 fois par seconde pour 200 ennemis. Préférez des conditions sur des nombres ou des pointeurs : les <code>FString</code> se comparent mal dans le débogueur.</dd>
+    <dt>Pas à pas</dt><dd><kbd>F10</kbd> exécute la ligne (<em>step over</em>), <kbd>F11</kbd> entre dans la fonction appelée (<em>step into</em>), <kbd>Shift</kbd>+<kbd>F11</kbd> en ressort (<em>step out</em>). Raccourcis de Visual Studio ; Rider propose les mêmes commandes selon le schéma clavier choisi.</dd>
+    <dt>Espions (Watch, Locals, Autos)</dt><dd>Fenêtres qui affichent la valeur des variables. Unreal fournit un fichier <em>natvis</em> pour que <code>FString</code>, <code>TArray</code> ou <code>FName</code> s'affichent lisiblement.</dd>
+    <dt>Pile d'appels (Call Stack)</dt><dd>La chaîne de fonctions qui a mené jusqu'ici : « qui m'a appelé ? ». Double-cliquez sur une ligne pour voir le code et les variables de ce niveau.</dd>
+  </dl>
+
+  <h3>Symboles et variables « optimisées »</h3>
+  <p>Pour voir les noms de fonctions du moteur dans la pile d'appels et entrer dans son code, installez les <strong>Editor symbols for debugging</strong> : dans l'Epic Games Launcher, bibliothèque → flèche à côté de la version du moteur → <em>Options</em>. Le téléchargement pèse plusieurs dizaines de Go, mais il transforme les piles d'appels illisibles en noms de fonctions.</p>
+  <p>En <em>Development</em>, le compilateur réorganise le code : le débogueur affiche « variable optimisée » ou des valeurs fausses. Passez en <em>DebugGame Editor</em>, ou désactivez temporairement l'optimisation d'une portion de fichier :</p>
+<script type="text/plain" data-lang="cpp" data-file="EnemyAI.cpp">
+// UE 5.2+ (avant : PRAGMA_DISABLE_OPTIMIZATION / PRAGMA_ENABLE_OPTIMIZATION)
+UE_DISABLE_OPTIMIZATION
+
+void AEnemyAI::ChooseTarget()
+{
+    // Ici, toutes les variables locales sont lisibles dans le débogueur
+}
+
+UE_ENABLE_OPTIMIZATION
+</script>
+  <p>C'est un outil <strong>temporaire</strong> : retirez ces macros avant de committer, sinon cette partie du code reste non optimisée pour toute l'équipe, jusque dans les builds de test.</p>
+
+  <h2>Comprendre un crash</h2>
+  <p>Quand l'éditeur ou le jeu plante, la fenêtre du <strong>Crash Reporter</strong> affiche la pile d'appels. Lisez-la de haut en bas et cherchez la première ligne qui appartient à votre module (par exemple <code>UnrealEditor-MyGame.dll!AEnemy::Attack() [Enemy.cpp:87]</code>) : c'est presque toujours là que se trouve le bug. Tous les fichiers utiles sont dans le dossier <code>Saved</code> du projet (pour un jeu packagé, dans son propre dossier <code>Saved</code> ou dans <code>%LOCALAPPDATA%</code>, selon la configuration) :</p>
+  <ul class="tree">
+    <li><span class="node c-blue">Saved/</span><span class="desc">à la racine du projet</span>
+      <ul>
+        <li><span class="node c-teal">Logs/</span><span class="desc"><code>MyGame.log</code> (session en cours) et les <code>MyGame-backup-….log</code> des sessions précédentes</span></li>
+        <li><span class="node c-red">Crashes/</span><span class="desc">un sous-dossier par crash</span>
+          <ul>
+            <li><span class="node">UECC-Windows-…/</span>
+              <ul>
+                <li><span class="node c-orange">CrashContext.runtime-xml</span><span class="desc">pile d'appels, machine, version du moteur</span></li>
+                <li><span class="node c-orange">MyGame.log</span><span class="desc">le log jusqu'à l'instant du crash</span></li>
+                <li><span class="node c-orange">UEMinidump.dmp</span><span class="desc">s'ouvre dans Visual Studio ; avec les fichiers <code>.pdb</code> du build, on retrouve la pile et les variables</span></li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+  </ul>
+  <div class="callout danger">
+    <p class="callout-title">Les trois crashs les plus fréquents</p>
+    <p><strong>Pointeur nul</strong> (« Access violation reading location 0x0000000000000000 ») : testez vos pointeurs avec <code>IsValid()</code>. <strong>Index hors limites</strong> (« Array index out of bounds ») : vérifiez avec <code>IsValidIndex()</code>. <strong>Objet détruit par le garbage collector</strong> : un pointeur vers un <code>UObject</code> stocké sans <code>UPROPERTY()</code> n'empêche pas sa destruction (voir <a href="cpp-avance.html">C++ avancé</a>). Et conservez toujours les <code>.pdb</code> des builds que vous distribuez : sans eux, les rapports de crash des joueurs sont illisibles.</p>
+  </div>
+
+  <h3>check, ensure et verify</h3>
+  <p>Les <strong>assertions</strong> vérifient qu'une condition qui devrait toujours être vraie l'est bien. Elles transforment un bug silencieux en arrêt immédiat, à l'endroit exact du problème :</p>
+  <table>
+    <thead><tr><th>Macro</th><th>Si la condition est fausse</th><th>En Shipping</th><th>Usage</th></tr></thead>
+    <tbody>
+      <tr><td><code>check(x)</code>, <code>checkf(x, fmt, …)</code></td><td>Crash immédiat avec message et pile d'appels</td><td>Supprimé : l'expression n'est même pas évaluée</td><td>Invariants absolus, bugs de programmation</td></tr>
+      <tr><td><code>verify(x)</code></td><td>Crash, comme <code>check</code></td><td>L'expression est évaluée mais pas testée</td><td>Quand l'expression a un effet nécessaire (un appel de fonction)</td></tr>
+      <tr><td><code>ensure(x)</code>, <code>ensureMsgf(x, fmt, …)</code></td><td>Erreur + pile d'appels dans le log (une fois par emplacement), le jeu continue ; renvoie le résultat</td><td>Plus de rapport, mais l'expression est évaluée et renvoyée</td><td>Situations anormales mais récupérables</td></tr>
+      <tr><td><code>checkNoEntry()</code></td><td>Crash si cette ligne est atteinte</td><td>Supprimé</td><td>Branche impossible (le <code>default</code> d'un <code>switch</code>)</td></tr>
+    </tbody>
+  </table>
+<script type="text/plain" data-lang="cpp" data-file="Exemples d'assertions">
+void UInventoryComponent::RemoveItem(int32 Index)
+{
+    // Un index faux est un bug de programmation : on veut le savoir tout de suite
+    checkf(Items.IsValidIndex(Index), TEXT("Index %d invalide (taille %d)"), Index, Items.Num());
+    Items.RemoveAt(Index);
+}
+
+void AWeapon::Fire()
+{
+    // Anormal mais pas fatal : on signale (une fois) et on sort proprement
+    if (!ensureMsgf(MuzzleFX != nullptr, TEXT("%s n'a pas d'effet de tir"), *GetName()))
+    {
+        return;
+    }
+    // ...
+}
+</script>
+  <p>Avec le débogueur attaché, un <code>ensure</code> qui échoue s'arrête comme un point d'arrêt : vous inspectez la situation, puis vous continuez. Ne mettez jamais dans un <code>check</code> une expression qui doit s'exécuter en Shipping (<code>check(Init())</code> disparaîtrait, appel compris) : utilisez <code>verify</code>.</p>
+
+  <h2>Déboguer les Blueprints</h2>
+  <p>Les Blueprints ont leur propre débogueur, présenté dans le chapitre <a href="blueprints.html">Blueprints</a> : point d'arrêt sur un nœud (<kbd>F9</kbd>), choix de l'instance à observer dans la liste <em>Debug Object</em> de la barre d'outils, valeur des pins au survol, <em>Watch this value</em> par clic droit sur un pin, pas à pas, et la fenêtre <strong>Blueprint Debugger</strong> (menu <em>Tools → Debug</em>) avec la pile d'appels Blueprint.</p>
+
+  <h2>Logs et outils de diagnostic</h2>
+  <h3>Catégories et verbosité</h3>
+  <p>Plutôt que de tout écrire dans <code>LogTemp</code>, créez vos propres <strong>catégories</strong> : vous pourrez filtrer leurs messages dans l'Output Log (menu <em>Filters</em> et champ de recherche) et régler leur niveau de détail séparément.</p>
+<script type="text/plain" data-lang="cpp" data-file="MyGame.h, MyGame.cpp et utilisation">
+// MyGame.h (en-tête du module, après #include "CoreMinimal.h")
+DECLARE_LOG_CATEGORY_EXTERN(LogMyGame, Log, All);
+
+// MyGame.cpp, à côté de IMPLEMENT_PRIMARY_GAME_MODULE
+DEFINE_LOG_CATEGORY(LogMyGame);
+
+// Dans n'importe quel .cpp qui inclut MyGame.h :
+UE_LOG(LogMyGame, Warning, TEXT("%s a reçu %.1f dégâts"), *GetName(), Damage);
+UE_LOG(LogMyGame, Verbose, TEXT("Position : %s"), *GetActorLocation().ToString());
+
+// UE 5.2+ : logs structurés, avec #include "Logging/StructuredLog.h"
+UE_LOGFMT(LogMyGame, Log, "Arme {Weapon} prise par {Player}", WeaponName, GetName());
+</script>
+  <table>
+    <thead><tr><th>Verbosité</th><th>Effet</th></tr></thead>
+    <tbody>
+      <tr><td><code>Fatal</code></td><td>Écrit le message puis fait planter le programme</td></tr>
+      <tr><td><code>Error</code> / <code>Warning</code></td><td>En rouge / en jaune ; comptés et listés à la fin d'un cook ou d'une compilation</td></tr>
+      <tr><td><code>Display</code></td><td>Comme <code>Log</code>, mais affiché aussi dans la console (fenêtre de commande)</td></tr>
+      <tr><td><code>Log</code></td><td>Fichier de log et Output Log : le niveau normal</td></tr>
+      <tr><td><code>Verbose</code> / <code>VeryVerbose</code></td><td>Masqués par défaut ; à activer pour un diagnostic précis</td></tr>
+    </tbody>
+  </table>
+  <p>Pour changer la verbosité d'une catégorie : commande console <code>Log LogMyGame Verbose</code>, ou section <code>[Core.Log]</code> de <code>DefaultEngine.ini</code> avec la ligne <code>LogMyGame=Verbose</code>.</p>
+
+  <h3>Messages, dessins et variables console</h3>
+  <p>Un log se lit après coup ; pour un comportement spatial (portée de vision, trajectoire, zone de détection), il vaut mieux <strong>voir</strong>. Les fonctions <code>DrawDebug*</code> dessinent dans le monde (elles disparaissent automatiquement des builds Shipping), <code>AddOnScreenDebugMessage</code> écrit à l'écran (comme <em>Print String</em>), et une <strong>variable console</strong> permet d'activer tout cela à la demande, sans recompiler :</p>
+<script type="text/plain" data-lang="cpp" data-file="Enemy.cpp (débogage visuel)">
+#include "Enemy.h"
+#include "Engine/Engine.h"
+#include "DrawDebugHelpers.h"
+#include "HAL/IConsoleManager.h"
+
+static TAutoConsoleVariable<int32> CVarDebugEnemies(
+    TEXT("MyGame.Debug.Enemies"),
+    0,
+    TEXT("0 : rien, 1 : zones de détection, 2 : zones + état de l'IA"),
+    ECVF_Cheat);
+
+void AEnemy::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    const int32 DebugLevel = CVarDebugEnemies.GetValueOnGameThread();
+    if (DebugLevel >= 1)
+    {
+        const FVector Eye = GetActorLocation() + FVector(0.f, 0.f, 60.f);
+        DrawDebugLine(GetWorld(), Eye, Eye + GetActorForwardVector() * 500.f, FColor::Red);   // une frame
+        DrawDebugSphere(GetWorld(), GetActorLocation(), DetectionRadius, 16, FColor::Green);
+        DrawDebugBox(GetWorld(), PatrolCenter, FVector(200.f), FColor::Cyan);
+    }
+    if (DebugLevel >= 2)
+    {
+        DrawDebugString(GetWorld(), FVector(0.f, 0.f, 120.f), StateName, this, FColor::White, 0.f);
+        if (GEngine) // clé fixe (1) : le message est remplacé au lieu de s'empiler ; -1 = nouvelle ligne
+        {
+            GEngine->AddOnScreenDebugMessage(1, 0.f, FColor::Yellow, FString::Printf(TEXT("Vitesse : %.0f"), GetVelocity().Size()));
+        }
+    }
+}
+</script>
+  <p>Tapez <code>MyGame.Debug.Enemies 2</code> dans la console (<kbd>²</kbd> sur un clavier AZERTY, <kbd>`</kbd> en QWERTY) pour tout afficher. Pour des commandes qui <em>agissent</em> (se donner des munitions, tuer tous les ennemis), utilisez des <strong>fonctions Exec</strong> : <code>UFUNCTION(Exec)</code> rend une fonction appelable par son nom dans la console. Elles ne fonctionnent que dans certaines classes : PlayerController, Pawn possédé, HUD, GameMode, GameInstance et surtout <strong>CheatManager</strong>, la place naturelle des triches de développement.</p>
+<script type="text/plain" data-lang="cpp" data-file="MyCheatManager.h (extrait)">
+#include "GameFramework/CheatManager.h"
+
+UCLASS()
+class MYGAME_API UMyCheatManager : public UCheatManager
+{
+    GENERATED_BODY()
+
+public:
+    UFUNCTION(Exec)
+    void GiveAmmo(int32 Amount);   // dans la console : GiveAmmo 50
+};
+// Dans le constructeur de votre PlayerController : CheatClass = UMyCheatManager::StaticClass();
+</script>
+
+  <h3>Visual Logger et Gameplay Debugger</h3>
+  <p>Le <strong>Visual Logger</strong> (menu <em>Tools → Debug → Visual Logger</em> selon la version, ou commande <code>VisLog</code>) enregistre, frame par frame, des messages <em>et</em> des formes associés à chaque Actor. On rejoue ensuite la session sur une ligne de temps : idéal pour comprendre pourquoi une IA a pris une décision trois secondes avant le bug. Les IA d'Unreal y écrivent déjà beaucoup d'informations, et vous pouvez ajouter les vôtres :</p>
+<script type="text/plain" data-lang="cpp" data-file="EnemyAIController.cpp">
+#include "VisualLogger/VisualLogger.h"
+
+UE_VLOG(this, LogMyGame, Log, TEXT("Nouvelle cible : %s"), *GetNameSafe(Target));
+UE_VLOG_LOCATION(this, LogMyGame, Log, TargetLocation, 30.f, FColor::Red, TEXT("Destination"));
+</script>
+  <p>Le <strong>Gameplay Debugger</strong> s'ouvre en jeu avec la touche apostrophe (<kbd>'</kbd>) et affiche l'état de l'Actor visé : arbre de comportement, Blackboard, perception, requêtes EQS, NavMesh. Les catégories s'activent avec le pavé numérique. Sur un clavier AZERTY, changez la touche dans les Project Settings (section <em>Gameplay Debugger</em>, selon votre version). Voir aussi le chapitre <a href="ia.html">Intelligence artificielle</a>.</p>
+
+  <h2>Le budget de frame</h2>
+  <p>On parle souvent en images par seconde (fps), mais les développeurs raisonnent en <strong>millisecondes par frame</strong>. À 60 fps, tout le travail d'une image (gameplay, physique, animation, rendu) doit tenir en 16,7 ms : c'est le <strong>budget de frame</strong>.</p>
+  <table>
+    <thead><tr><th>Cible</th><th>Budget par frame</th><th>Contexte typique</th></tr></thead>
+    <tbody>
+      <tr><td>30 fps</td><td>33,3 ms</td><td>Mode « qualité » sur console, jeux lents</td></tr>
+      <tr><td>60 fps</td><td>16,7 ms</td><td>Standard pour l'action sur PC et console</td></tr>
+      <tr><td>120 fps</td><td>8,3 ms</td><td>Modes performance, jeux compétitifs</td></tr>
+      <tr><td>144 fps</td><td>6,9 ms</td><td>Écrans haute fréquence, e-sport</td></tr>
+    </tbody>
+  </table>
+  <p>Pourquoi les millisecondes ? Parce que les fps trompent : passer de 60 à 50 fps coûte 3,3 ms, alors que passer de 30 à 20 fps en coûte 16,7. Un gain de « 10 fps » ne veut rien dire ; un gain de 2 ms, si.</p>
+
+  <h3>Les threads d'une frame</h3>
+  <p>Unreal répartit le travail sur plusieurs threads qui fonctionnent <strong>en parallèle, décalés d'une frame</strong> (un pipeline) : pendant que le GPU dessine une image, le render thread prépare la suivante et le game thread simule déjà celle d'après. Conséquence majeure : <strong>la durée d'une frame est fixée par l'étage le plus lent</strong>, pas par la somme. Optimiser un étage qui n'est pas le plus lent ne fait gagner <em>aucune</em> image par seconde.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    GT["Game thread<br>Tick, Blueprints, physique,<br>IA, animation"] -- "état du monde" --> RT["Render thread<br>visibilité, culling,<br>commandes de dessin"]
+    RT -- "commandes" --> RHI["RHI thread<br>appels DirectX 12,<br>Vulkan ou Metal"]
+    RHI -- "listes de commandes" --> GPU["GPU<br>géométrie, ombres,<br>éclairage, post-process"]
+    WK["Worker threads<br>tâches parallèles"] -.-> GT
+    WK -.-> RT
+</pre>
+    <figcaption>Les étages d'une frame. Des worker threads aident le game thread et le render thread (animation, physique, particules).</figcaption>
+  </figure>
+  <figure class="figure">
+    <svg viewBox="0 0 760 205" width="760" role="img" aria-label="Chronologie : quatre étages travaillent en parallèle sur des frames différentes">
+      <defs><marker id="optTimeArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+      <g font-size="13" fill="currentColor">
+        <text x="0" y="32">Game thread</text><text x="0" y="74">Render thread</text><text x="0" y="116">RHI thread</text><text x="0" y="158">GPU</text>
+      </g>
+      <g stroke-width="1.5">
+        <rect x="120" y="15" width="120" height="26" rx="4" fill="#5aa9ff" fill-opacity=".25" stroke="#5aa9ff"/><rect x="260" y="15" width="120" height="26" rx="4" fill="#ffb15c" fill-opacity=".25" stroke="#ffb15c"/>
+        <rect x="400" y="15" width="120" height="26" rx="4" fill="#4ade80" fill-opacity=".25" stroke="#4ade80"/><rect x="540" y="15" width="120" height="26" rx="4" fill="#b195ff" fill-opacity=".25" stroke="#b195ff"/>
+        <rect x="260" y="57" width="85" height="26" rx="4" fill="#5aa9ff" fill-opacity=".25" stroke="#5aa9ff"/><rect x="400" y="57" width="85" height="26" rx="4" fill="#ffb15c" fill-opacity=".25" stroke="#ffb15c"/><rect x="540" y="57" width="85" height="26" rx="4" fill="#4ade80" fill-opacity=".25" stroke="#4ade80"/>
+        <rect x="290" y="99" width="80" height="26" rx="4" fill="#5aa9ff" fill-opacity=".25" stroke="#5aa9ff"/><rect x="430" y="99" width="80" height="26" rx="4" fill="#ffb15c" fill-opacity=".25" stroke="#ffb15c"/><rect x="570" y="99" width="80" height="26" rx="4" fill="#4ade80" fill-opacity=".25" stroke="#4ade80"/>
+        <rect x="330" y="141" width="120" height="26" rx="4" fill="#5aa9ff" fill-opacity=".25" stroke="#5aa9ff"/><rect x="470" y="141" width="120" height="26" rx="4" fill="#ffb15c" fill-opacity=".25" stroke="#ffb15c"/><rect x="610" y="141" width="120" height="26" rx="4" fill="#4ade80" fill-opacity=".25" stroke="#4ade80"/>
+      </g>
+      <g font-size="12" fill="currentColor" text-anchor="middle">
+        <text x="180" y="32">F1</text><text x="320" y="32">F2</text><text x="460" y="32">F3</text><text x="600" y="32">F4</text>
+        <text x="302" y="74">F1</text><text x="442" y="74">F2</text><text x="582" y="74">F3</text>
+        <text x="330" y="116">F1</text><text x="470" y="116">F2</text><text x="610" y="116">F3</text>
+        <text x="390" y="158">F1</text><text x="530" y="158">F2</text><text x="670" y="158">F3</text>
+      </g>
+      <line x1="120" y1="185" x2="748" y2="185" stroke="currentColor" stroke-width="1.5" marker-end="url(#optTimeArrow)"/>
+      <text x="748" y="202" font-size="12" fill="currentColor" text-anchor="end">temps</text>
+    </svg>
+    <figcaption>Le pipeline : pendant que le GPU dessine la frame F1, le game thread simule déjà F3. La cadence finale est imposée par l'étage le plus lent.</figcaption>
+  </figure>
+
+  <h3>Lire stat unit</h3>
+  <p>Tapez <code>stat unit</code> dans la console : quelques lignes apparaissent en haut à droite de l'écran, en millisecondes.</p>
+  <dl class="defs">
+    <dt>Frame</dt><dd>Durée totale d'une image : ce que le joueur ressent.</dd>
+    <dt>Game</dt><dd>Temps du game thread (gameplay, Tick, Blueprints, physique, animation, IA).</dd>
+    <dt>Draw</dt><dd>Temps du render thread (visibilité, préparation des commandes de dessin).</dd>
+    <dt>RHIT</dt><dd>Temps du RHI thread (soumission des commandes à l'API graphique).</dd>
+    <dt>GPU</dt><dd>Temps de travail de la carte graphique pour cette image. Selon la version, d'autres lignes s'ajoutent (résolution dynamique, nombre de draw calls et de primitives, mémoire).</dd>
+  </dl>
+  <p>La règle : <strong>la valeur la plus proche de Frame désigne le goulot d'étranglement</strong>. Si Frame est nettement au-dessus de toutes les autres, quelque chose attend : synchronisation verticale (<code>r.VSync</code>), limite d'images (<code>t.MaxFPS</code>), ou éditeur ralenti parce qu'il n'a pas le focus (option <em>Use Less CPU when in Background</em> des Editor Preferences).</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TD
+    A["stat unit, en build packagé<br>ou en Standalone"] --> Q{"Quelle valeur est<br>la plus proche de Frame ?"}
+    Q -- "Game" --> G["Game thread<br>Tick, Blueprints, physique,<br>animation, IA, spawns"]
+    Q -- "Draw" --> D["Render thread<br>trop d'objets visibles,<br>trop de draw calls"]
+    Q -- "RHIT" --> R["RHI thread<br>soumission des draw calls,<br>création de PSO"]
+    Q -- "GPU" --> P{"r.ScreenPercentage 50 :<br>le temps GPU chute-t-il ?"}
+    P -- "Oui" --> PX["Limité par les pixels<br>résolution, post-process,<br>Lumen, overdraw"]
+    P -- "Non" --> GE["Limité par la géométrie<br>ou les passes fixes<br>triangles, ombres, LOD"]
+    G --> I1["Unreal Insights,<br>stat game, stat anim"]
+    D --> I2["stat scenerendering,<br>instancing, HLOD, culling"]
+    R --> I2
+    PX --> I3["profilegpu et stat gpu<br>pour trouver la passe chère"]
+    GE --> I3
+</pre>
+    <figcaption>Arbre de décision : identifier l'étage le plus lent, puis l'outil et le type d'optimisation qui lui correspondent.</figcaption>
+  </figure>
+  <div class="quiz">
+    <p class="q"><code>stat unit</code> affiche Frame 33 ms, Game 9 ms, Draw 7 ms, GPU 32 ms. Avec <code>r.ScreenPercentage 50</code>, le temps GPU tombe à 14 ms. Quelle piste suivre ?</p>
+    <ul>
+      <li>Réduire le nombre d'Actors qui utilisent Tick</li>
+      <li>Fusionner des Actors pour réduire les draw calls</li>
+      <li data-correct>Réduire le coût par pixel : résolution interne et upscaling, post-process, Lumen, ombres, translucidité</li>
+      <li>Convertir les Blueprints en C++</li>
+    </ul>
+    <p class="explain">GPU est la valeur la plus proche de Frame : le GPU est le goulot. Diviser le nombre de pixels par quatre divise presque son temps par deux : le coût dépend surtout du nombre de pixels. Le game thread (9 ms) n'est pas en cause, l'optimiser ne changerait rien.</p>
+  </div>
+
+  <h2>Les commandes stat</h2>
+  <table>
+    <thead><tr><th>Commande</th><th>Ce qu'elle montre</th></tr></thead>
+    <tbody>
+      <tr><td><code>stat fps</code></td><td>Images par seconde et durée de frame</td></tr>
+      <tr><td><code>stat unit</code></td><td>Frame, Game, Draw, RHIT, GPU (voir ci-dessus)</td></tr>
+      <tr><td><code>stat unitgraph</code></td><td>Les mêmes valeurs sous forme de courbes : parfait pour repérer les pics isolés (<em>hitches</em>)</td></tr>
+      <tr><td><code>stat game</code></td><td>Détail du game thread : temps de Tick du monde, des Actors, des composants…</td></tr>
+      <tr><td><code>stat gpu</code></td><td>Temps GPU par passe : ombres, Lumen, base pass, translucidité, post-process</td></tr>
+      <tr><td><code>stat scenerendering</code></td><td>Render thread : nombre de draw calls, primitives visibles, coût de la visibilité</td></tr>
+      <tr><td><code>stat rhi</code></td><td>Draw calls et triangles réellement soumis, mémoire des textures et render targets</td></tr>
+      <tr><td><code>stat memory</code></td><td>Mémoire utilisée, par grande catégorie</td></tr>
+      <tr><td><code>stat streaming</code></td><td>Texture streaming : taille du pool, budget, dépassements</td></tr>
+      <tr><td><code>stat anim</code></td><td>Coût de l'animation (Anim Blueprints, évaluation des poses)</td></tr>
+      <tr><td><code>stat niagara</code></td><td>Coût des systèmes de particules Niagara</td></tr>
+      <tr><td><code>profilegpu</code></td><td>Capture détaillée d'une frame GPU (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>,</kbd>) ; dans l'éditeur, elle s'ouvre dans le GPU Visualizer</td></tr>
+    </tbody>
+  </table>
+<script type="text/plain" data-lang="console" data-file="Console">
+stat unit
+stat unitgraph
+stat gpu
+stat none                 # masque toutes les stats
+profilegpu
+r.ScreenPercentage 50     # test : rendre à 50 % de la résolution (4 fois moins de pixels)
+r.ScreenPercentage 100
+t.MaxFPS 0                # retire la limite d'images par seconde pendant les mesures
+r.VSync 0
+</script>
+  <p>Le test de <code>r.ScreenPercentage</code> est le plus utile de tous quand le GPU est en cause. Si le temps GPU chute fortement, le jeu est <strong>limité par les pixels</strong> : le coût vient de ce qui est calculé pour chaque pixel (post-process, éclairage, ombres filtrées, translucidité, matériaux complexes). S'il bouge à peine, le coût vient de la <strong>géométrie</strong> ou de passes fixes : trop de triangles sans Nanite, trop d'objets dans les ombres, trop de draw calls.</p>
+
+  <h2>Unreal Insights</h2>
+  <p><strong>Unreal Insights</strong> est le profileur principal d'Unreal. Le jeu enregistre une <em>trace</em> (fichier <code>.utrace</code>) de tout ce qui se passe, et l'application Insights permet ensuite de l'explorer : durée de chaque fonction sur chaque thread, frame par frame.</p>
+  <ol class="steps">
+    <li><strong>Lancer Unreal Insights</strong>L'exécutable se trouve dans <code>Engine/Binaries/Win64/UnrealInsights.exe</code> (selon la version, il est aussi accessible depuis l'éditeur). Il démarre un serveur local qui collecte les traces.</li>
+    <li><strong>Lancer le jeu avec la trace</strong>Ajoutez les canaux voulus en ligne de commande, comme ci-dessous. Dans l'éditeur, le menu <strong>Trace</strong> en bas à droite de la barre d'état permet aussi de choisir les canaux et de démarrer un enregistrement (son contenu varie selon la version).</li>
+    <li><strong>Reproduire le problème</strong>Jouez le passage qui saccade. Ajoutez au besoin des repères dans le code avec <code>TRACE_BOOKMARK(TEXT("Boss apparu"))</code>.</li>
+    <li><strong>Analyser</strong>Dans Insights, double-cliquez sur la session pour ouvrir Timing Insights, sélectionnez une frame lente dans le graphique et lisez les blocs les plus longs du thread en cause.</li>
+  </ol>
+<script type="text/plain" data-lang="console" data-file="Ligne de commande">
+MyGame.exe -trace=cpu,gpu,frame,bookmark,loadtime -tracehost=127.0.0.1
+UnrealEditor.exe MyGame.uproject -game -trace=cpu,gpu,frame,bookmark,loadtime -tracehost=127.0.0.1
+</script>
+  <dl class="defs">
+    <dt>Timing Insights</dt><dd>La vue principale : graphique des frames, une piste par thread (GameThread, RenderThread, RHIThread, GPU), et un tableau des timers triable par temps inclusif ou exclusif.</dd>
+    <dt>Memory Insights</dt><dd>Allocations mémoire par catégorie et par pile d'appels, pour trouver fuites et pics. Demande les canaux mémoire (par exemple <code>-trace=default,memory</code>, selon la version).</dd>
+    <dt>Networking Insights</dt><dd>Paquets, bande passante par Actor et par propriété répliquée (voir <a href="multijoueur.html">Réseau &amp; multijoueur</a>). Demande le canal <code>net</code> et, selon la version, l'option <code>-NetTrace=1</code>.</dd>
+  </dl>
+
+  <h3>Instrumenter votre code</h3>
+  <p>Par défaut, Insights montre les grandes fonctions du moteur. Pour voir le détail de <em>votre</em> code, entourez les portions intéressantes de <strong>scopes</strong> nommés :</p>
+<script type="text/plain" data-lang="cpp" data-file="EnemyManager.cpp" data-highlight="4-5,10,14">
+#include "EnemyManager.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
+
+DECLARE_STATS_GROUP(TEXT("MyGame"), STATGROUP_MyGame, STATCAT_Advanced);
+DECLARE_CYCLE_STAT(TEXT("Enemy Manager Update"), STAT_EnemyManagerUpdate, STATGROUP_MyGame);
+
+void AEnemyManager::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+    SCOPE_CYCLE_COUNTER(STAT_EnemyManagerUpdate);   // visible avec « stat MyGame » et dans Insights
+
+    for (AEnemy* Enemy : Enemies)
+    {
+        TRACE_CPUPROFILER_EVENT_SCOPE(AEnemyManager::UpdateEnemy);   // un bloc par ennemi dans Insights
+        Enemy->UpdateBehavior(DeltaSeconds);
+    }
+}
+</script>
+
+  <h2>Optimiser le CPU</h2>
+  <h3>Tick : le premier suspect</h3>
+  <p>Chaque Actor qui « tick » coûte quelque chose à chaque frame, même s'il ne fait presque rien. Trois cents Blueprints qui vérifient une condition dans <em>Event Tick</em>, c'est souvent plusieurs millisecondes perdues. Les remèdes, du plus simple au plus avancé : <strong>désactiver</strong> le Tick quand il ne sert pas (<code>bCanEverTick = false</code>, ou décocher <em>Start with Tick Enabled</em> dans les Class Defaults) et ne l'activer que pendant une animation (<code>SetActorTickEnabled</code>) ; l'<strong>espacer</strong> avec <code>TickInterval</code> (ou <code>SetActorTickInterval</code>), 0,2 s suffisant pour une tourelle qui cherche une cible ; le <strong>remplacer</strong> par un timer ou un événement (overlap, delegate) ; enfin le <strong>moduler</strong> selon l'importance, avec le plugin <strong>Significance Manager</strong> qui calcule l'importance de chaque objet (distance, visibilité) pour ralentir la mise à jour des objets lointains.</p>
+<script type="text/plain" data-lang="cpp" data-file="EnemySpawner.cpp">
+AEnemySpawner::AEnemySpawner()
+{
+    PrimaryActorTick.bCanEverTick = true;
+    PrimaryActorTick.bStartWithTickEnabled = false; // activé seulement quand c'est utile
+    PrimaryActorTick.TickInterval = 0.25f;          // et alors 4 fois par seconde suffisent
+}
+
+void AEnemySpawner::BeginPlay()
+{
+    Super::BeginPlay();
+    // Encore mieux : pas de Tick du tout, un timer toutes les 2 secondes
+    GetWorldTimerManager().SetTimer(SpawnTimer, this, &AEnemySpawner::TrySpawn, 2.f, true);
+}
+</script>
+
+  <h3>Réagir plutôt que surveiller</h3>
+  <p>Le pire motif, très courant en Blueprint : chercher tous les ennemis du niveau avec <strong>Get All Actors Of Class</strong> à chaque frame. Ce nœud parcourt les Actors du monde : appelé 60 fois par seconde, il coûte cher pour rien. La bonne approche : <strong>mettre en cache</strong> (chaque ennemi s'enregistre auprès d'un gestionnaire ou d'un Subsystem dans son <code>BeginPlay</code> et se retire dans son <code>EndPlay</code>) et <strong>espacer</strong> le traitement avec un timer.</p>
+  <div class="tabs">
+    <div class="tab" data-label="À éviter">
+<script type="application/json" class="bp-graph" data-caption="À éviter : chaque frame, parcourir tous les Actors du niveau pour retrouver les ennemis.">
+{"nodes": [
+  {"id": "tick", "type": "event", "title": "Event Tick", "x": 0, "y": 0, "out": [{"type": "exec"}, {"name": "Delta Seconds", "type": "float"}]},
+  {"id": "all", "type": "function", "title": "Get All Actors Of Class", "x": 215, "y": 0, "in": [{"type": "exec"}, {"name": "Actor Class", "type": "class", "value": "BP_Enemy"}], "out": [{"type": "exec"}, {"name": "Out Actors", "type": "object", "array": true}]},
+  {"id": "loop", "type": "flow", "title": "For Each Loop", "x": 550, "y": 0, "in": [{"type": "exec"}, {"name": "Array", "type": "wildcard", "array": true}], "out": [{"name": "Loop Body", "type": "exec"}, {"name": "Array Element", "type": "object"}, {"name": "Array Index", "type": "int"}, {"name": "Completed", "type": "exec"}]}
+ ],
+ "links": [["tick", 0, "all", 0], ["all", 0, "loop", 0], ["all", 1, "loop", 1]],
+ "comments": [{"x": -20, "y": -46, "w": 770, "h": 220, "text": "60 fois par seconde : recherche dans tout le niveau", "color": "#b05a5a"}]}
+</script>
+    </div>
+    <div class="tab" data-label="Recommandé">
+<script type="application/json" class="bp-graph" data-caption="Recommandé : un timer à 0,5 s qui travaille sur une liste tenue à jour par les ennemis eux-mêmes.">
+{"nodes": [
+  {"id": "begin", "type": "event", "title": "Event BeginPlay", "x": 0, "y": 0, "out": [{"type": "exec"}]},
+  {"id": "timer", "type": "function", "title": "Set Timer by Event", "x": 300, "y": 0, "in": [{"type": "exec"}, {"name": "Event", "type": "delegate"}, {"name": "Time", "type": "float", "value": "0.5"}, {"name": "Looping", "type": "bool", "value": true}], "out": [{"type": "exec"}, {"name": "Return Value", "type": "struct"}]},
+  {"id": "ev", "type": "custom", "title": "Check Enemies", "x": 0, "y": 120, "out": [{"type": "delegate"}, {"type": "exec"}]},
+  {"id": "upd", "type": "function", "title": "Update Enemy Markers", "x": 300, "y": 190, "in": [{"type": "exec"}, {"name": "Enemies", "type": "object", "array": true}], "out": [{"type": "exec"}]},
+  {"id": "list", "type": "var", "title": "Enemies", "x": 160, "y": 262, "out": [{"type": "object", "array": true}]}
+ ],
+ "links": [["begin", 0, "timer", 0], ["ev", 0, "timer", 1], ["ev", 1, "upd", 0], ["list", 0, "upd", 1]],
+ "comments": [{"x": -20, "y": -46, "w": 560, "h": 370, "text": "2 fois par seconde, sur une liste déjà connue", "color": "#5ab07a"}]}
+</script>
+    </div>
+  </div>
+
+  <h3>Object pooling</h3>
+  <p>Créer un Actor (<code>SpawnActor</code>) est coûteux : allocation, enregistrement des composants, <code>BeginPlay</code>… puis, à sa destruction, du travail pour le garbage collector. Une mitrailleuse qui crée et détruit 20 projectiles par seconde provoque des micro-saccades. Le <strong>pooling</strong> consiste à créer les objets une fois pour toutes au chargement, puis à les <em>recycler</em> : on les cache au lieu de les détruire, et on les réutilise au tir suivant.</p>
+<script type="text/plain" data-lang="cpp" data-file="PooledProjectile.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "PooledProjectile.generated.h"
+
+class USphereComponent;
+class UProjectileMovementComponent;
+
+UCLASS()
+class MYGAME_API APooledProjectile : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    APooledProjectile();
+    void Launch(const FVector& Location, const FRotator& Rotation);  // sort du pool
+    void ReturnToPool();                                              // y retourne
+    bool IsInUse() const { return bInUse; }
+
+protected:
+    virtual void BeginPlay() override;
+
+    UFUNCTION()
+    void OnProjectileHit(UPrimitiveComponent* HitComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit);
+
+    UPROPERTY(VisibleAnywhere, Category = "Projectile")
+    TObjectPtr<USphereComponent> Collision;
+    UPROPERTY(VisibleAnywhere, Category = "Projectile")
+    TObjectPtr<UProjectileMovementComponent> Movement;
+    UPROPERTY(EditDefaultsOnly, Category = "Projectile")
+    float MaxLifetime = 3.f;
+
+private:
+    FTimerHandle LifetimeTimer;
+    bool bInUse = false;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="PooledProjectile.cpp">
+#include "PooledProjectile.h"
+#include "Components/SphereComponent.h"
+#include "GameFramework/ProjectileMovementComponent.h"
+#include "TimerManager.h"
+
+APooledProjectile::APooledProjectile()
+{
+    PrimaryActorTick.bCanEverTick = false;
+    Collision = CreateDefaultSubobject<USphereComponent>(TEXT("Collision"));
+    Collision->InitSphereRadius(8.f);
+    Collision->SetCollisionProfileName(TEXT("BlockAllDynamic"));
+    RootComponent = Collision;
+
+    Movement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("Movement"));
+    Movement->SetUpdatedComponent(Collision);
+    Movement->InitialSpeed = 3000.f;
+    Movement->SetAutoActivate(false);
+}
+
+void APooledProjectile::BeginPlay()
+{
+    Super::BeginPlay();
+    Collision->OnComponentHit.AddDynamic(this, &APooledProjectile::OnProjectileHit);
+    if (GetOwner())
+    {
+        Collision->IgnoreActorWhenMoving(GetOwner(), true); // ne pas toucher le tireur
+    }
+}
+
+void APooledProjectile::Launch(const FVector& Location, const FRotator& Rotation)
+{
+    bInUse = true;
+    SetActorLocationAndRotation(Location, Rotation, false, nullptr, ETeleportType::TeleportPhysics);
+    SetActorHiddenInGame(false);
+    SetActorEnableCollision(true);
+    Movement->SetUpdatedComponent(Collision); // détaché à chaque arrêt : on le rebranche
+    Movement->Velocity = Rotation.Vector() * Movement->InitialSpeed;
+    Movement->Activate(true);
+    GetWorldTimerManager().SetTimer(LifetimeTimer, this, &APooledProjectile::ReturnToPool, MaxLifetime, false);
+}
+
+void APooledProjectile::ReturnToPool()
+{
+    bInUse = false;
+    GetWorldTimerManager().ClearTimer(LifetimeTimer);
+    Movement->StopMovementImmediately();
+    Movement->Deactivate();
+    SetActorEnableCollision(false);
+    SetActorHiddenInGame(true);
+}
+
+void APooledProjectile::OnProjectileHit(UPrimitiveComponent* HitComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
+{
+    // Dégâts, effet d'impact... puis retour au pool au lieu de Destroy()
+    ReturnToPool();
+}
+</script>
+<script type="text/plain" data-lang="cpp" data-file="ProjectilePoolComponent.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Components/ActorComponent.h"
+#include "ProjectilePoolComponent.generated.h"
+
+class APooledProjectile;
+
+UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
+class MYGAME_API UProjectilePoolComponent : public UActorComponent
+{
+    GENERATED_BODY()
+
+public:
+    UProjectilePoolComponent();
+
+    UFUNCTION(BlueprintCallable, Category = "Pool")
+    APooledProjectile* FireProjectile(const FVector& Location, const FRotator& Rotation);
+
+protected:
+    virtual void BeginPlay() override;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Pool")
+    TSubclassOf<APooledProjectile> ProjectileClass;
+    UPROPERTY(EditDefaultsOnly, Category = "Pool", meta = (ClampMin = "1"))
+    int32 InitialSize = 20;
+
+private:
+    APooledProjectile* SpawnPooledProjectile();
+
+    UPROPERTY()
+    TArray<TObjectPtr<APooledProjectile>> Pool;   // UPROPERTY : protège du garbage collector
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="ProjectilePoolComponent.cpp">
+#include "ProjectilePoolComponent.h"
+#include "PooledProjectile.h"
+#include "Engine/World.h"
+
+UProjectilePoolComponent::UProjectilePoolComponent()
+{
+    PrimaryComponentTick.bCanEverTick = false;
+}
+
+void UProjectilePoolComponent::BeginPlay()
+{
+    Super::BeginPlay();
+    for (int32 i = 0; i < InitialSize; ++i)   // tout le coût de création est payé au chargement
+    {
+        SpawnPooledProjectile();
+    }
+}
+
+APooledProjectile* UProjectilePoolComponent::FireProjectile(const FVector& Location, const FRotator& Rotation)
+{
+    APooledProjectile* Projectile = nullptr;
+    for (APooledProjectile* Candidate : Pool)
+    {
+        if (IsValid(Candidate) && !Candidate->IsInUse())
+        {
+            Projectile = Candidate;
+            break;
+        }
+    }
+    if (!Projectile)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Pool épuisé : augmentez InitialSize"));
+        Projectile = SpawnPooledProjectile();   // on agrandit le pool plutôt que d'échouer
+    }
+    if (Projectile)
+    {
+        Projectile->Launch(Location, Rotation);
+    }
+    return Projectile;
+}
+
+APooledProjectile* UProjectilePoolComponent::SpawnPooledProjectile()
+{
+    if (!ProjectileClass)
+    {
+        return nullptr;
+    }
+    FActorSpawnParameters Params;
+    Params.Owner = GetOwner();
+    Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    APooledProjectile* Projectile = GetWorld()->SpawnActor<APooledProjectile>(
+        ProjectileClass, FVector::ZeroVector, FRotator::ZeroRotator, Params);
+    if (Projectile)
+    {
+        Projectile->ReturnToPool();   // commence « rangé » : caché, sans collision
+        Pool.Add(Projectile);
+    }
+    return Projectile;
+}
+</script>
+  <p>Le personnage ou l'arme possède un <code>UProjectilePoolComponent</code> et appelle <code>FireProjectile</code> au lieu de <code>SpawnActor</code>. Le même principe s'applique aux effets d'impact, aux douilles, aux ennemis d'une vague ou aux nombres de dégâts flottants. En multijoueur, recycler des Actors répliqués est plus délicat : réservez d'abord le pooling aux objets locaux ou cosmétiques.</p>
+
+  <h3>Blueprint ou C++ ?</h3>
+  <p>Chaque nœud Blueprint passe par une machine virtuelle : pour de la logique événementielle (un bouton, une porte, une quête), le surcoût est négligeable. Il devient visible dans les <strong>boucles lourdes</strong> : des milliers d'itérations par frame, des calculs mathématiques en masse, du tri. Déplacez alors ce cœur de calcul dans une fonction C++ <code>BlueprintCallable</code> que le Blueprint appelle, et gardez le reste en Blueprint. Mesurez avant : Insights montre les fonctions Blueprint coûteuses.</p>
+
+  <h3>Chargement asynchrone</h3>
+  <p>Charger un gros asset de manière synchrone (le Blueprint attend le disque) fige le jeu. Avec une <strong>référence souple</strong> (<code>TSoftObjectPtr</code>, voir plus bas), on lance le chargement en arrière-plan et on est prévenu quand il est terminé. En Blueprint, c'est le nœud <em>Async Load Asset</em>.</p>
+<script type="text/plain" data-lang="cpp" data-file="BossArena.cpp">
+#include "Engine/AssetManager.h"
+#include "Engine/StreamableManager.h"
+
+void ABossArena::PrepareBoss() // BossMesh : TSoftObjectPtr<USkeletalMesh> ; BossHandle : TSharedPtr<FStreamableHandle>
+{
+    BossHandle = UAssetManager::GetStreamableManager().RequestAsyncLoad(
+        BossMesh.ToSoftObjectPath(),
+        FStreamableDelegate::CreateUObject(this, &ABossArena::OnBossMeshLoaded));
+}
+
+void ABossArena::OnBossMeshLoaded()
+{
+    if (USkeletalMesh* Mesh = BossMesh.Get())
+    {
+        BossComponent->SetSkeletalMesh(Mesh); // chargé sans bloquer le jeu
+    }
+}
+</script>
+
+  <h3>Physique, animation et IA</h3>
+  <dl class="defs">
+    <dt>Physique</dt><dd>Limitez le nombre de corps simulés en même temps, utilisez des collisions simples (boîtes, capsules) plutôt que des meshes complexes, et laissez les objets immobiles s'endormir.</dd>
+    <dt>Animation</dt><dd>Les personnages lointains n'ont pas besoin d'une animation à pleine fréquence : activez les <strong>Update Rate Optimizations</strong> (URO) du Skeletal Mesh, et réglez <code>VisibilityBasedAnimTickOption</code> pour ne pas animer ce qui est hors écran. Gardez la logique des Anim Blueprints compatible avec la mise à jour multithread (fonctions <em>thread safe</em>, voir <a href="animation.html">Animation</a>).</dd>
+    <dt>IA</dt><dd>Espacez les services des Behavior Trees, réduisez la fréquence de la perception, et ne faites réfléchir à pleine vitesse que les ennemis proches du joueur.</dd>
+  </dl>
+
+  <h2>Optimiser le GPU</h2>
+  <dl class="defs">
+    <dt>Draw calls et instancing</dt><dd>Chaque mesh visible, multiplié par chacun de ses matériaux, coûte au moins un <strong>draw call</strong> (un ordre de dessin) par passe. Des milliers de draw calls chargent le render thread et le RHI thread. Pour des objets identiques répétés (arbres, rochers, caisses), utilisez un <strong>Instanced Static Mesh</strong> (ISM : N copies en un seul ordre) ou un <strong>Hierarchical ISM</strong> (HISM : ajoute culling et LOD par groupe, c'est ce qu'utilise le Foliage). L'outil <em>Merge Actors</em> fusionne aussi plusieurs meshes statiques en un seul.</dd>
+    <dt>Nanite</dt><dd>La géométrie virtualisée d'UE5 : des meshes de millions de triangles, un LOD automatique et très peu de draw calls. À activer par Static Mesh. Elle ne prend pas en charge les matériaux translucides, et certains cas (matériaux masqués, World Position Offset, meshes animés) ont un coût ou un statut qui dépend de la version : vérifiez la documentation de la vôtre.</dd>
+    <dt>Overdraw et translucidité</dt><dd>Chaque couche translucide (fumée, verre, particules) recalcule les pixels qu'elle recouvre. Quelques grosses particules plein écran suffisent à faire exploser le temps GPU. Le mode de vue <em>Optimization Viewmodes → Shader Complexity</em> (<kbd>Alt</kbd>+<kbd>8</kbd>) colore le coût par pixel : du vert (bon) au rouge puis au blanc (très cher).</dd>
+    <dt>Ombres</dt><dd>UE5 utilise par défaut les <strong>Virtual Shadow Maps</strong>. Leur coût grandit avec le nombre de lumières qui projettent des ombres et avec les objets qui bougent (le cache doit être recalculé). Décochez <em>Cast Shadows</em> sur les petites lumières décoratives et réduisez leur rayon d'atténuation.</dd>
+    <dt>Lumen</dt><dd>L'illumination globale et les réflexions dynamiques ont un coût élevé, réglable par les niveaux de qualité (<em>Scalability</em> : <code>sg.GlobalIlluminationQuality</code>, <code>sg.ReflectionQuality</code>). Selon la version, Lumen n'est actif qu'aux niveaux élevés : proposez des réglages graphiques aux joueurs.</dd>
+    <dt>Résolution et TSR</dt><dd>Le <strong>Temporal Super Resolution</strong> calcule l'image à une résolution interne plus basse puis la reconstruit : c'est le levier le plus puissant quand le jeu est limité par les pixels. La résolution dynamique ajuste ce pourcentage automatiquement pour tenir le budget.</dd>
+    <dt>Post-process</dt><dd>Bloom, profondeur de champ, flou de mouvement, occlusion ambiante : chacun coûte quelques dixièmes de milliseconde à plusieurs millisecondes en 4K. <code>stat gpu</code> les liste individuellement.</dd>
+    <dt>Textures et streaming</dt><dd>Les textures sont chargées à la résolution utile dans un <strong>pool de streaming</strong> de taille fixe. Le message « Texture streaming pool over budget » signale qu'il est plein : textures floues, puis saccades. Vérifiez avec <code>stat streaming</code>, réduisez la taille maximale des textures secondaires ou augmentez <code>r.Streaming.PoolSize</code> si la mémoire vidéo le permet.</dd>
+    <dt>LOD, culling et HLOD</dt><dd>Pour les meshes sans Nanite, générez des <strong>LOD</strong> (versions simplifiées affichées de loin) dans l'éditeur de Static Mesh. Le moteur élimine déjà ce qui est hors de la caméra ou caché (<em>frustum</em> et <em>occlusion culling</em>) ; un <strong>Cull Distance Volume</strong> ou la <em>Max Draw Distance</em> d'un composant font disparaître les petits objets lointains. Les <strong>HLOD</strong> remplacent de grands groupes d'objets lointains par un mesh fusionné simplifié (avec World Partition, via des HLOD Layers).</dd>
+  </dl>
+
+  <h2>Mémoire et chargement</h2>
+  <h3>Références dures et souples</h3>
+  <p>Une <strong>référence dure</strong> (un <code>UPROPERTY</code> de type <code>TObjectPtr</code> ou <code>TSubclassOf</code>, une variable Blueprint de type objet ou classe, et même un simple nœud <strong>Cast To</strong>) oblige le moteur à charger l'asset référencé <em>en même temps</em> que celui qui le référence. Ces chaînes se propagent : charger le joueur peut charger, de cast en cast, la moitié du jeu.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    PL["BP_Player"] -- "Cast To BP_Boss" --> BO["BP_Boss"]
+    BO --> M1["SK_Boss<br>mesh et textures 4K"]
+    BO --> AB["ABP_Boss<br>et toutes ses animations"]
+    BO -- "Cast To BP_FinalCinematic" --> CI["BP_FinalCinematic"]
+    CI --> SQ["Séquence, musique<br>et voix du final"]
+    PL -- "variable de type BP_Weapon" --> WE["BP_Weapon<br>et tous ses assets"]
+</pre>
+    <figcaption>Une chaîne de références dures : charger BP_Player charge aussi le boss et la cinématique de fin, même dans le premier niveau.</figcaption>
+  </figure>
+  <p>Une <strong>référence souple</strong> (<code>TSoftObjectPtr</code>, <code>TSoftClassPtr</code>, ou les types <em>Soft Object Reference</em> en Blueprint) ne stocke qu'un chemin : l'asset n'est chargé que lorsque vous le demandez. Pour casser les chaînes de casts, communiquez par <strong>interfaces</strong> ou par une classe de base C++ légère (sans assets), et chargez le contenu lourd à la demande.</p>
+  <p>Pour mesurer, faites un clic droit sur un asset dans le Content Browser : <strong>Size Map</strong> affiche la mémoire et la taille sur disque de l'asset <em>avec tout ce qu'il entraîne</em>, et le <strong>Reference Viewer</strong> dessine le graphe de ses dépendances. Un personnage dont la Size Map dépasse le gigaoctet a presque toujours une chaîne de références dures à casser.</p>
+
+  <h3>Asset Manager et garbage collector</h3>
+  <p>L'<strong>Asset Manager</strong> organise le chargement des contenus importants (niveaux, personnages, objets) sous forme de <em>Primary Assets</em> (par exemple des <code>UPrimaryDataAsset</code>), déclarés dans Project Settings → Asset Manager. Il permet de les charger et décharger explicitement, et sert aussi à découper le jeu packagé en morceaux (<em>chunks</em>).</p>
+  <p>Le <strong>garbage collector</strong> parcourt régulièrement les objets pour libérer ceux qui ne sont plus référencés. Avec des centaines de milliers d'objets, ce passage peut provoquer un pic visible dans <code>stat unitgraph</code>. Pour le limiter : créer moins d'objets temporaires (d'où le pooling), et déclencher un nettoyage pendant les écrans de chargement plutôt qu'en plein combat (<code>GEngine-&gt;ForceGarbageCollection(true)</code>).</p>
+
+  <div class="quiz">
+    <p class="q">Le premier niveau de votre jeu met longtemps à charger, alors que le boss final n'y apparaît pas. Le Reference Viewer montre que <code>BP_Player</code> référence <code>BP_Boss</code>. Quelle est la cause la plus probable ?</p>
+    <ul>
+      <li>Le boss est caché dans le niveau</li>
+      <li data-correct>Un nœud Cast To BP_Boss (ou une variable de ce type) dans BP_Player crée une référence dure qui charge le boss et ses assets</li>
+      <li>Les textures du boss sont trop grandes pour le pool de streaming</li>
+      <li>Le garbage collector n'a pas encore libéré le boss</li>
+    </ul>
+    <p class="explain">Un Cast To ou une variable typée sur une classe Blueprint est une référence dure : charger BP_Player charge BP_Boss, son mesh, ses animations et tout ce qu'il référence lui-même. Remplacez le cast par une interface ou une classe de base légère, et utilisez des références souples pour le contenu lourd.</p>
+  </div>
+
+  <h2>Saccades de compilation de shaders</h2>
+  <p>Sur DirectX 12, Vulkan et Metal, le GPU a besoin d'un <strong>PSO</strong> (<em>Pipeline State Object</em>) pour chaque combinaison de shader et d'états de rendu. S'il est créé au moment où un matériau ou un effet apparaît pour la première fois, le jeu se fige quelques dizaines de millisecondes : c'est la saccade typique « la première fois que j'utilise cette arme ». Deux remèdes complémentaires existent : le <strong>PSO precaching</strong>, introduit avec UE 5.1 et activé par défaut dans les versions plus récentes, qui prépare les PSO pendant le chargement des assets ; et le <strong>cache de PSO empaqueté</strong> (<em>bundled PSO cache</em>), enregistré pendant des sessions de test puis livré avec le jeu. Leur configuration exacte dépend de votre version et de la plateforme : consultez la page « PSO Caching » de la documentation.</p>
+  <p>À ne pas confondre avec le message « Compiling Shaders » de l'éditeur (au premier lancement ou après une modification de matériau) : c'est la compilation des shaders eux-mêmes, mise en cache dans le Derived Data Cache. Elle ralentit le travail dans l'éditeur, pas le jeu packagé.</p>
+
+  <h2>Profiler au bon endroit</h2>
+  <p>L'éditeur fausse les mesures : son interface, ses autres viewports, les assets non « cookés » et l'exécution en PIE dans le même processus ajoutent du travail qui n'existera pas chez le joueur. Pour un premier tri, lancez le mode <em>Standalone Game</em> (menu Play) ou <code>-game</code> en ligne de commande. Pour des chiffres fiables, profilez un <strong>build packagé</strong> en configuration <strong>Development</strong> (stats et console disponibles) ou <strong>Test</strong> (proche du Shipping, avec les outils de profilage), sur la machine la plus faible que vous visez. Le Shipping, lui, n'a ni console ni stats. Voir <a href="packaging.html">Packaging &amp; publication</a>.</p>
+
+  <h2>Checklist d'optimisation</h2>
+  <table>
+    <thead><tr><th>Domaine</th><th>À vérifier</th><th>Outil</th></tr></thead>
+    <tbody>
+      <tr><td>Méthode</td><td>Mesurer en build packagé, sur le matériel cible, avant et après chaque changement</td><td><code>stat unit</code>, Insights</td></tr>
+      <tr><td>Tick</td><td>Tick désactivés ou espacés, timers et événements à la place</td><td><code>stat game</code>, Insights</td></tr>
+      <tr><td>Blueprints</td><td>Pas de Get All Actors Of Class en Tick, boucles lourdes en C++</td><td>Insights</td></tr>
+      <tr><td>Spawn</td><td>Pooling pour les objets créés en masse</td><td>Insights, <code>stat unitgraph</code></td></tr>
+      <tr><td>Animation</td><td>URO, pas d'animation hors écran, Anim BP thread safe</td><td><code>stat anim</code></td></tr>
+      <tr><td>Draw calls</td><td>Instancing, Merge Actors, HLOD, Nanite</td><td><code>stat scenerendering</code>, <code>stat rhi</code></td></tr>
+      <tr><td>Pixels</td><td>Résolution interne et TSR, post-process, translucidité</td><td><code>r.ScreenPercentage</code>, Shader Complexity, <code>profilegpu</code></td></tr>
+      <tr><td>Éclairage</td><td>Lumières qui projettent des ombres, réglages Lumen</td><td><code>stat gpu</code></td></tr>
+      <tr><td>Textures</td><td>Pool de streaming dans le budget</td><td><code>stat streaming</code></td></tr>
+      <tr><td>Mémoire</td><td>Références souples, chaînes de casts cassées</td><td>Size Map, Reference Viewer, Memory Insights</td></tr>
+      <tr><td>Saccades</td><td>PSO precaching et cache, pics du garbage collector</td><td>Insights, <code>stat unitgraph</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="compare">
+    <div class="good">
+      <h4>Bonnes pratiques</h4>
+      <ul>
+        <li>Mesurer d'abord, identifier l'étage le plus lent, puis agir sur lui seul</li>
+        <li>Timers, delegates et événements plutôt que du polling en Tick</li>
+        <li>Listes tenues à jour (enregistrement à <code>BeginPlay</code>) et références mises en cache</li>
+        <li>Pool pour les objets créés en grand nombre</li>
+        <li>Références souples et chargement asynchrone pour le contenu lourd</li>
+      </ul>
+    </div>
+    <div class="bad">
+      <h4>Pièges</h4>
+      <ul>
+        <li>Optimiser « au feeling », ou uniquement dans l'éditeur</li>
+        <li>Baisser la résolution alors que c'est le game thread qui limite</li>
+        <li>Event Tick partout, Get All Actors Of Class à chaque frame</li>
+        <li>Spawn et Destroy de centaines de projectiles par seconde</li>
+        <li>Des Cast To vers des Blueprints lourds dans tous les sens</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="exercise">
+    <h4>Diagnostiquer un profil</h4>
+    <p>Votre jeu d'action doit tenir 60 fps. Dans un build Development packagé, pendant une grosse bataille, <code>stat unit</code> affiche : <strong>Game 25 ms</strong>, <strong>Draw 8 ms</strong>, <strong>GPU 12 ms</strong>. Quel est le goulot d'étranglement ? Que faites-vous, et dans quel ordre ? Que se passera-t-il une fois ce problème réglé ?</p>
+    <details>
+      <summary>Voir la solution</summary>
+      <p><strong>Diagnostic.</strong> Frame vaut environ 25 ms (40 fps) : c'est la valeur de <strong>Game</strong>. Le game thread est le goulot ; le GPU (12 ms) et le render thread (8 ms) attendent. Baisser la résolution ou les ombres ne ferait gagner <em>aucune</em> image par seconde. Objectif : passer le game thread sous 16,7 ms, donc gagner au moins 9 ms.</p>
+      <ol class="steps">
+        <li><strong>Confirmer et localiser</strong><code>stat game</code> pour une première répartition (Tick des Actors, des composants…), puis une trace <code>-trace=cpu,frame,bookmark</code> dans Unreal Insights. Sur la piste GameThread d'une frame lente, triez les timers par temps inclusif.</li>
+        <li><strong>Traiter les gros postes</strong>Selon ce que montre la trace : Tick de nombreux ennemis (intervalles, Significance Manager, timers) ; Blueprints coûteux (Get All Actors Of Class, boucles lourdes à passer en C++) ; animation (URO, pas d'animation hors écran, mise à jour multithread : vérifier avec <code>stat anim</code>) ; IA (services et perception moins fréquents) ; physique (moins de corps simulés) ; spawns en rafale (pooling).</li>
+        <li><strong>Mesurer après chaque changement</strong>Un changement à la fois, toujours dans le même passage de jeu, pour savoir ce qui a réellement fait gagner du temps.</li>
+      </ol>
+      <p><strong>Ensuite.</strong> Une fois le game thread sous 12 ms, c'est le GPU (12 ms) qui deviendra l'étage le plus lent : le jeu plafonnera vers 80 fps. C'est largement suffisant pour 60 fps ; pour viser 120 fps (8,3 ms), il faudrait alors optimiser aussi le GPU, en commençant par le test de <code>r.ScreenPercentage</code>.</p>
+    </details>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Un testeur rapporte qu'un pointeur vers l'effet de tir est parfois nul. Vous voulez être prévenu avec la pile d'appels, sans faire planter le jeu. Quelle macro utiliser ?</p>
+    <ul>
+      <li><code>check(MuzzleFX)</code></li>
+      <li><code>verify(MuzzleFX)</code></li>
+      <li data-correct><code>if (!ensure(MuzzleFX)) return;</code></li>
+      <li><code>checkNoEntry()</code></li>
+    </ul>
+    <p class="explain"><code>ensure</code> écrit une erreur avec la pile d'appels (une fois par emplacement) mais laisse le jeu continuer, et renvoie le résultat du test, ce qui permet de sortir proprement de la fonction. <code>check</code> et <code>verify</code> font planter le programme si la condition est fausse.</p>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Déboguez votre code en <strong>DebugGame Editor</strong> avec points d'arrêt, conditions, espions et pile d'appels ; lisez les crashs dans <code>Saved/Crashes</code> et <code>Saved/Logs</code>.</li>
+      <li><code>check</code> pour l'impossible, <code>ensure</code> pour l'anormal mais récupérable ; logs par catégorie, <code>DrawDebug*</code>, variables console et Visual Logger pour comprendre.</li>
+      <li>On raisonne en <strong>millisecondes</strong> : 16,7 ms à 60 fps. La frame est imposée par l'étage le plus lent (Game, Draw, RHIT ou GPU) : <code>stat unit</code> le désigne.</li>
+      <li><strong>Unreal Insights</strong> dit où passe le temps ; instrumentez votre code avec <code>TRACE_CPUPROFILER_EVENT_SCOPE</code>.</li>
+      <li>CPU : moins de Tick, des événements, du cache, du pooling. GPU : draw calls, pixels (résolution, post-process, translucidité), ombres et Lumen.</li>
+      <li>Mémoire : attention aux références dures et aux casts ; Size Map et Reference Viewer les révèlent. Profilez toujours un build packagé.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

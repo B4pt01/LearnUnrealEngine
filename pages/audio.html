@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audio &amp; MetaSounds — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="audio">
+<article class="doc">
+
+  <h1>Audio &amp; MetaSounds</h1>
+  <p class="lead">Le son représente la moitié de l'expérience d'un jeu : un impact sans bruit paraît mou, un couloir silencieux paraît vide. Ce chapitre vous apprend à jouer des sons depuis le gameplay, à les placer dans l'espace, à créer des sons procéduraux avec MetaSounds et à mixer l'ensemble pour que le joueur entende ce qui compte.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Connaître les <strong>assets audio</strong> d'Unreal et leur rôle</li>
+      <li>Jouer un son en Blueprint et en C++ : « tire et oublie » ou <code>UAudioComponent</code></li>
+      <li>Régler l'<strong>atténuation</strong> et la <strong>spatialisation</strong></li>
+      <li>Construire une <strong>MetaSound</strong> et la piloter avec des paramètres</li>
+      <li>Créer un système de <strong>bruits de pas</strong> selon la surface</li>
+      <li>Mixer avec Sound Classes, Sound Mixes, Submixes et Concurrency</li>
+      <li>Gérer la musique et les performances audio</li>
+    </ul>
+  </div>
+
+  <h2>Les assets audio</h2>
+  <p>Tout commence par un fichier <code>.wav</code> importé dans le Content Browser, qui devient une <strong>Sound Wave</strong>. Les autres assets décrivent comment ce son est joué, entendu et mixé :</p>
+  <table>
+    <thead><tr><th>Asset</th><th>Exemple de nom</th><th>Rôle</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Sound Wave</strong></td><td><code>SW_Pas_Herbe_01</code></td><td>Le son brut importé. Peut boucler (<em>Looping</em>).</td></tr>
+      <tr><td><strong>Sound Cue</strong></td><td><code>SCue_Porte</code></td><td>Graphe de nœuds de l'ancien système : choix aléatoire, variation de hauteur, mélange.</td></tr>
+      <tr><td><strong>MetaSound Source</strong></td><td><code>MS_Pas</code></td><td>Graphe de traitement audio procédural, précis à l'échantillon. Le système recommandé en UE5.</td></tr>
+      <tr><td><strong>Sound Attenuation</strong></td><td><code>ATT_Moyen</code></td><td>Comment le volume baisse avec la distance, et comment le son est spatialisé.</td></tr>
+      <tr><td><strong>Sound Class</strong></td><td><code>SC_Music</code></td><td>Catégorie (musique, effets, voix…) pour régler le volume d'un groupe de sons.</td></tr>
+      <tr><td><strong>Sound Mix</strong></td><td><code>Mix_Options</code></td><td>Ensemble d'ajustements appliqués aux Sound Classes : volume des options, ducking pendant un dialogue.</td></tr>
+      <tr><td><strong>Sound Submix</strong></td><td><code>SMX_Reverb</code></td><td>Bus de mixage où passent les signaux, avec des effets (réverbération, égaliseur, compresseur).</td></tr>
+      <tr><td><strong>Sound Concurrency</strong></td><td><code>CON_Tirs</code></td><td>Nombre maximal de voix simultanées pour un groupe de sons.</td></tr>
+    </tbody>
+  </table>
+
+  <p>Côté code, tous les sons « jouables » héritent de <code>USoundBase</code> : une fonction qui attend un <code>USoundBase*</code> accepte indifféremment une Sound Wave, une Sound Cue ou une MetaSound.</p>
+  <ul class="tree">
+    <li><span class="node c-purple">USoundBase</span><span class="desc">Tout ce qui peut être joué</span>
+      <ul>
+        <li><span class="node c-blue">USoundWave</span><span class="desc">Le son importé</span></li>
+        <li><span class="node c-blue">USoundCue</span><span class="desc">Graphe de nœuds, ancien système toujours pris en charge</span></li>
+        <li><span class="node c-green">UMetaSoundSource</span><span class="desc">Graphe procédural MetaSound (plugin MetaSound, activé par défaut)</span></li>
+      </ul>
+    </li>
+  </ul>
+
+  <div class="callout info">
+    <p class="callout-title">Sound Cue ou MetaSound ?</p>
+    <p>Les Sound Cues fonctionnent toujours et vous en croiserez dans de nombreux projets et tutoriels. Pour un nouveau projet UE5, Epic recommande les <strong>MetaSounds</strong> : plus puissantes (synthèse, logique, timing à l'échantillon près), plus performantes et paramétrables depuis le gameplay.</p>
+  </div>
+
+  <h2>Jouer un son</h2>
+  <p>Deux approches existent, et le choix dépend d'une question simple : <strong>aurez-vous besoin de contrôler le son après l'avoir lancé ?</strong></p>
+  <div class="compare">
+    <div class="neutral">
+      <h4>Tirer et oublier</h4>
+      <p><code>PlaySound2D</code> (interface, sans position) et <code>PlaySoundAtLocation</code> (dans le monde). Rien n'est renvoyé : le moteur gère seul la durée de vie du son. Parfait pour un impact, un ramassage, un clic de bouton.</p>
+    </div>
+    <div class="alt">
+      <h4>Garder la main</h4>
+      <p><code>SpawnSound2D</code>, <code>SpawnSoundAtLocation</code> et <code>SpawnSoundAttached</code> renvoient un <code>UAudioComponent</code> que vous pouvez arrêter, mettre en pause ou modifier. Idéal pour un moteur de véhicule, une alarme, une musique.</p>
+    </div>
+  </div>
+  <p>Exemple : une pièce ramassée joue un son à sa position, puis se détruit. Le son continue après la destruction, car il n'appartient pas à l'acteur.</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="Le son est joué à la position de la pièce, puis la pièce se détruit : le son n'est pas coupé.">
+{
+  "nodes": [
+    { "id": "ov", "type": "event", "title": "Event ActorBeginOverlap", "x": 0, "y": 0,
+      "out": [ { "type": "exec" }, { "name": "Other Actor", "type": "object" } ] },
+    { "id": "loc", "type": "pure", "title": "GetActorLocation", "x": 20, "y": 130,
+      "in": [ { "name": "Target", "type": "object", "value": "self" } ],
+      "out": [ { "name": "Return Value", "type": "vector" } ] },
+    { "id": "play", "type": "function", "title": "Play Sound at Location", "x": 300, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Sound", "type": "object", "value": "MS_Pickup" }, { "name": "Location", "type": "vector" }, { "name": "Volume Multiplier", "type": "float", "value": "1.0" }, { "name": "Pitch Multiplier", "type": "float", "value": "1.0" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "kill", "type": "function", "title": "DestroyActor", "subtitle": "Target is Actor", "x": 590, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object", "value": "self" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ov", 0, "play", 0 ],
+    [ "loc", 0, "play", 2 ],
+    [ "play", 0, "kill", 0 ]
+  ]
+}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="SoundPickup.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "SoundPickup.generated.h"
+
+class USphereComponent;
+class USoundBase;
+
+UCLASS()
+class MYGAME_API ASoundPickup : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    ASoundPickup();
+
+protected:
+    virtual void NotifyActorBeginOverlap(AActor* OtherActor) override;
+
+    UPROPERTY(VisibleAnywhere, Category = "Pickup")
+    TObjectPtr<USphereComponent> Collision;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Pickup|Audio")
+    TObjectPtr<USoundBase> PickupSound;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="SoundPickup.cpp" data-highlight="22">
+#include "SoundPickup.h"
+#include "Components/SphereComponent.h"
+#include "GameFramework/Pawn.h"
+#include "Kismet/GameplayStatics.h"
+
+ASoundPickup::ASoundPickup()
+{
+    PrimaryActorTick.bCanEverTick = false;
+    Collision = CreateDefaultSubobject<USphereComponent>(TEXT("Collision"));
+    RootComponent = Collision;
+    Collision->InitSphereRadius(50.f);
+}
+
+void ASoundPickup::NotifyActorBeginOverlap(AActor* OtherActor)
+{
+    Super::NotifyActorBeginOverlap(OtherActor);
+
+    // Seuls les Pawns ramassent la pièce
+    if (!Cast<APawn>(OtherActor)) { return; }
+
+    // « Tire et oublie » : le moteur gère la durée de vie du son
+    UGameplayStatics::PlaySoundAtLocation(this, PickupSound, GetActorLocation());
+    Destroy();
+}
+</script>
+    </div>
+  </div>
+
+  <h3>Le UAudioComponent</h3>
+  <p>Pour un son durable attaché à un acteur, ajoutez un <code>UAudioComponent</code> (bouton <em>+ Add → Audio</em> en Blueprint). Il suit l'acteur, et vous le contrôlez avec <code>Play</code>, <code>Stop</code>, <code>SetPaused</code>, <code>FadeIn</code>, <code>FadeOut</code>, <code>SetVolumeMultiplier</code> ou <code>SetPitchMultiplier</code>. Voici une radio que le joueur allume et éteint :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Radio.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "Radio.generated.h"
+
+class UStaticMeshComponent;
+class UAudioComponent;
+
+UCLASS()
+class MYGAME_API ARadio : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    ARadio();
+
+    UFUNCTION(BlueprintCallable, Category = "Radio")
+    void Toggle();
+
+protected:
+    UPROPERTY(VisibleAnywhere, Category = "Radio")
+    TObjectPtr<UStaticMeshComponent> Mesh;
+
+    UPROPERTY(VisibleAnywhere, Category = "Radio")
+    TObjectPtr<UAudioComponent> Audio;
+
+    UPROPERTY(EditAnywhere, Category = "Radio")
+    float FadeTime = 1.5f;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Radio.cpp" data-highlight="13,20,24">
+#include "Radio.h"
+#include "Components/AudioComponent.h"
+#include "Components/StaticMeshComponent.h"
+
+ARadio::ARadio()
+{
+    PrimaryActorTick.bCanEverTick = false;
+    Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
+    RootComponent = Mesh;
+
+    Audio = CreateDefaultSubobject<UAudioComponent>(TEXT("Audio"));
+    Audio->SetupAttachment(RootComponent);
+    Audio->bAutoActivate = false; // la radio ne démarre pas toute seule
+}
+
+void ARadio::Toggle()
+{
+    if (Audio->IsPlaying())
+    {
+        Audio->FadeOut(FadeTime, 0.f); // baisse le volume, puis arrête le son
+    }
+    else
+    {
+        Audio->FadeIn(FadeTime);       // démarre à 0 et monte jusqu'au volume normal
+    }
+}
+</script>
+
+  <p>Pour un son ponctuel qu'il faut pouvoir couper (un sort en cours d'incantation, par exemple), utilisez <code>UGameplayStatics::SpawnSoundAttached(Sound, GetRootComponent())</code> : il renvoie un <code>UAudioComponent*</code>, détruit automatiquement à la fin du son par défaut.</p>
+
+  <div class="callout warn">
+    <p class="callout-title">Pièges classiques</p>
+    <p><strong>PlaySound2D pour un son du monde</strong> : il sera entendu au même volume partout, sans direction. <strong>Garder un pointeur brut</strong> vers le composant renvoyé par <code>SpawnSoundAtLocation</code> : il est détruit à la fin du son, stockez-le dans un <code>UPROPERTY</code> (ou un <code>TWeakObjectPtr</code>) et testez-le avant usage. <strong>Oublier l'atténuation</strong> : sans asset d'atténuation, un son « 3D » s'entend dans tout le niveau.</p>
+  </div>
+
+  <h2>Atténuation et spatialisation</h2>
+  <p>Un asset <strong>Sound Attenuation</strong> décrit comment un son se comporte dans l'espace. Assignez-le à vos sons (champ <em>Attenuation Settings</em>) plutôt que de cocher <em>Override Attenuation</em> partout : un seul asset partagé par tous les « petits sons » se règle en une fois.</p>
+  <dl class="defs">
+    <dt>Inner Radius</dt><dd>Rayon dans lequel le son est à plein volume. Avec la forme <em>Sphere</em> (il existe aussi Capsule, Box et Cone).</dd>
+    <dt>Falloff Distance</dt><dd>Distance, <strong>au-delà</strong> de l'Inner Radius, sur laquelle le volume descend jusqu'à zéro.</dd>
+    <dt>Attenuation Function</dt><dd>La forme de la courbe : <em>Linear</em>, <em>Logarithmic</em>, <em>Inverse</em>, <em>Log Reverse</em>, <em>Natural Sound</em> ou une courbe personnalisée.</dd>
+  </dl>
+
+  <figure class="figure">
+    <svg viewBox="0 0 720 300" width="720" role="img" aria-label="Volume en fonction de la distance pour les courbes Linear, Logarithmic et Natural Sound">
+      <rect x="70" y="50" width="60" height="200" fill="currentColor" fill-opacity="0.07"/>
+      <line x1="70" y1="150" x2="670" y2="150" stroke="currentColor" stroke-opacity="0.15" stroke-dasharray="4 4"/>
+      <line x1="130" y1="44" x2="130" y2="250" stroke="currentColor" stroke-opacity="0.4" stroke-dasharray="5 4"/>
+      <line x1="670" y1="44" x2="670" y2="250" stroke="currentColor" stroke-opacity="0.4" stroke-dasharray="5 4"/>
+      <line x1="70" y1="40" x2="70" y2="250" stroke="currentColor" stroke-opacity="0.6" stroke-width="1.5"/>
+      <line x1="70" y1="250" x2="686" y2="250" stroke="currentColor" stroke-opacity="0.6" stroke-width="1.5"/>
+      <polyline fill="none" stroke="#5aa9ff" stroke-width="2.5" points="70,50 130,50 670,250"/>
+      <polyline fill="none" stroke="#ffb15c" stroke-width="2.5" stroke-linejoin="round" points="70,50 130,50 203,50 211,60.3 238,89.1 265,111.4 292,129.6 319,145 346,158.4 400,180.7 454,198.9 508,214.3 562,227.7 616,239.5 670,250"/>
+      <polyline fill="none" stroke="#4ade80" stroke-width="2.5" stroke-linejoin="round" points="70,50 130,50 143.5,81.7 157,108.4 170.5,130.9 184,149.8 197.5,165.7 211,179 238,199.8 265,214.4 292,224.8 346,237.4 400,243.7 454,246.8 508,248.4 670,249.8"/>
+      <g font-size="12" fill="currentColor">
+        <text x="62" y="54" text-anchor="end">1</text>
+        <text x="62" y="154" text-anchor="end">0,5</text>
+        <text x="62" y="254" text-anchor="end">0</text>
+        <text x="70" y="30" font-weight="600">Volume</text>
+        <text x="70" y="270" text-anchor="middle">0</text>
+        <text x="126" y="270">400 (Inner Radius)</text>
+        <text x="680" y="270" text-anchor="end">4 000 (Inner Radius + Falloff)</text>
+        <text x="680" y="292" text-anchor="end" font-weight="600">Distance (cm)</text>
+        <text x="100" y="242" text-anchor="middle" opacity="0.7">plein</text>
+        <text x="100" y="228" text-anchor="middle" opacity="0.7">volume</text>
+      </g>
+      <g font-size="13" fill="currentColor">
+        <line x1="500" y1="62" x2="530" y2="62" stroke="#5aa9ff" stroke-width="3"/><text x="540" y="66">Linear</text>
+        <line x1="500" y1="84" x2="530" y2="84" stroke="#ffb15c" stroke-width="3"/><text x="540" y="88">Logarithmic</text>
+        <line x1="500" y1="106" x2="530" y2="106" stroke="#4ade80" stroke-width="3"/><text x="540" y="110">Natural Sound</text>
+      </g>
+    </svg>
+    <figcaption>Volume (amplitude) selon la distance, avec un Inner Radius de 400 cm et une Falloff Distance de 3 600 cm. <b>Natural Sound</b> paraît très raide ici, mais il décroît régulièrement en décibels, ce qui correspond à la perception de l'oreille.</figcaption>
+  </figure>
+
+  <h3>Les autres réglages</h3>
+  <dl class="defs">
+    <dt>Spatialization</dt><dd>Place le son à gauche, à droite, devant ou derrière. La méthode <em>Panning</em> répartit le son entre les haut-parleurs ; la méthode <em>Binaural</em> (HRTF, via un plugin de spatialisation) simule la forme de la tête et des oreilles pour une localisation précise au casque, y compris en hauteur.</dd>
+    <dt>Air Absorption</dt><dd>Filtre les aigus avec la distance : un tir lointain devient sourd, comme dans la réalité.</dd>
+    <dt>Occlusion</dt><dd>Un trace entre la source et l'auditeur détecte les obstacles ; le son est alors étouffé (filtre passe-bas) et baissé. Pratique pour entendre un ennemi derrière un mur, mais chaque trace coûte un peu.</dd>
+    <dt>Reverb Send</dt><dd>Envoie une part du son vers la réverbération, d'autant plus forte que la source est loin : les sons lointains paraissent plus « dans la pièce ».</dd>
+    <dt>Focus</dt><dd>Les sons situés devant l'auditeur sont mis en avant, ceux sur les côtés et derrière légèrement atténués.</dd>
+  </dl>
+  <p>Enfin, les <strong>Audio Volumes</strong> sont des volumes placés dans le niveau qui appliquent une réverbération (une cathédrale, une grotte) et des réglages intérieur/extérieur : depuis l'intérieur d'une maison, la pluie du dehors est atténuée et filtrée.</p>
+
+  <h2>MetaSounds</h2>
+  <p>Une <strong>MetaSound Source</strong> (clic droit → <em>Audio → MetaSound Source</em>) est un graphe qui génère du son, un peu comme un matériau génère des pixels. On y trouve :</p>
+  <dl class="defs">
+    <dt>Inputs</dt><dd>Les paramètres exposés au gameplay : un float <code>RPM</code> pour un moteur, un booléen, un tableau de sons…</dd>
+    <dt>Outputs</dt><dd>Le signal audio produit (<code>Out Mono</code> ou <code>Out Left</code> / <code>Out Right</code>) et des événements de sortie.</dd>
+    <dt>Triggers</dt><dd>Des événements précis à l'échantillon près (comme les pins exec d'un Blueprint, mais synchronisés avec l'audio). <code>On Play</code> se déclenche au lancement ; <code>On Finished</code> doit être déclenché pour indiquer qu'un son ponctuel est terminé.</dd>
+    <dt>Interfaces</dt><dd>Des ensembles d'entrées et de sorties standard ajoutés par le moteur : <em>UE.Source</em> (On Play), <em>UE.Source.OneShot</em> (On Finished), <em>UE.Attenuation</em> (distance à l'auditeur)…</dd>
+  </dl>
+  <p>Les nœuds les plus utiles : <strong>Wave Player</strong> (joue une Sound Wave, avec <em>Pitch Shift</em> en demi-tons et boucle), <strong>Random Get</strong> (choisit un élément d'un tableau, sans répétition immédiate si demandé), <strong>Random (Float)</strong> (une valeur au hasard), <strong>Trigger Repeat</strong> (répète un trigger à intervalle régulier : mitrailleuse, tic-tac). Voici une MetaSound de pas : à chaque lecture, elle choisit une variation au hasard et décale légèrement sa hauteur, pour qu'aucun pas ne sonne comme le précédent.</p>
+
+<script type="application/json" class="bp-graph" data-caption="Imitation de l'éditeur MetaSound : On Play choisit une variation et une hauteur aléatoires, puis lance le Wave Player.">
+{
+  "nodes": [
+    { "id": "onplay", "type": "var", "title": "On Play", "x": 0, "y": 40, "out": [ { "type": "exec" } ] },
+    { "id": "waves", "type": "var", "title": "Waves", "x": 0, "y": 100, "out": [ { "type": "object", "array": true } ] },
+    { "id": "rget", "type": "function", "title": "Random Get", "subtitle": "WaveAsset:Array", "x": 160, "y": 0,
+      "in": [ { "name": "Next", "type": "exec" }, { "name": "In Array", "type": "object", "array": true }, { "name": "No Repeats", "type": "int" } ],
+      "out": [ { "name": "On Next", "type": "exec" }, { "name": "Value", "type": "object" } ] },
+    { "id": "rpitch", "type": "function", "title": "Random (Float)", "x": 160, "y": 170,
+      "in": [ { "name": "Next", "type": "exec" }, { "name": "Min", "type": "float", "value": "-2.0" }, { "name": "Max", "type": "float", "value": "2.0" } ],
+      "out": [ { "name": "On Next", "type": "exec" }, { "name": "Value", "type": "float" } ] },
+    { "id": "player", "type": "function", "title": "Wave Player", "subtitle": "Mono", "x": 402, "y": 0,
+      "in": [ { "name": "Play", "type": "exec" }, { "name": "Wave Asset", "type": "object" }, { "name": "Pitch Shift", "type": "float" } ],
+      "out": [ { "name": "On Finished", "type": "exec" }, { "name": "Out Mono", "type": "float" } ] },
+    { "id": "outs", "type": "flow", "title": "Outputs", "x": 630, "y": 160,
+      "in": [ { "name": "On Finished", "type": "exec" }, { "name": "Out Mono", "type": "float" } ] }
+  ],
+  "links": [
+    [ "onplay", 0, "rget", 0 ],
+    [ "onplay", 0, "rpitch", 0 ],
+    [ "waves", 0, "rget", 1 ],
+    [ "rget", 0, "player", 0 ],
+    [ "rget", 1, "player", 1 ],
+    [ "rpitch", 1, "player", 2 ],
+    [ "player", 0, "outs", 0 ],
+    [ "player", 1, "outs", 1 ]
+  ]
+}
+</script>
+
+  <div class="callout danger">
+    <p class="callout-title">Le son qui ne s'arrête jamais</p>
+    <p>Une MetaSound ponctuelle (interface <em>UE.Source.OneShot</em>) dont la sortie <code>On Finished</code> n'est reliée à rien continue de tourner en silence : elle occupe une voix et du processeur indéfiniment. Reliez toujours <code>On Finished</code> du Wave Player à la sortie <code>On Finished</code> du graphe.</p>
+  </div>
+
+  <h3>Piloter une MetaSound en jeu</h3>
+  <p>Les entrées d'une MetaSound se modifient pendant la lecture via le <code>UAudioComponent</code> qui la joue : <code>SetFloatParameter</code>, <code>SetBoolParameter</code>, <code>SetIntParameter</code> et <code>SetTriggerParameter</code> (nœud <em>Execute Trigger Parameter</em> en Blueprint). Le nom passé doit être exactement celui de l'entrée.</p>
+<script type="text/plain" data-lang="cpp" data-file="Vehicle.cpp (extrait)">
+#include "Components/AudioComponent.h"
+
+void AMyVehicle::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    // La MetaSound du moteur a une entrée float "RPM" qui règle la hauteur et le mélange
+    EngineAudio->SetFloatParameter(TEXT("RPM"), CurrentRPM);
+}
+
+void AMyVehicle::OnGearChanged()
+{
+    EngineAudio->SetTriggerParameter(TEXT("GearShift"));   // déclenche le « clac » du levier
+    EngineAudio->SetBoolParameter(TEXT("Damaged"), Health < 30.f);
+}
+</script>
+
+  <div class="quiz">
+    <p class="q">Vous devez jouer un bruit de moteur dont la hauteur suit la vitesse du véhicule. Quelle approche choisir ?</p>
+    <ul>
+      <li>Appeler <code>PlaySoundAtLocation</code> à chaque frame</li>
+      <li data-correct>Un <code>UAudioComponent</code> attaché au véhicule qui joue une MetaSound, avec <code>SetFloatParameter</code> à chaque frame</li>
+      <li>Une Sound Wave différente par vitesse</li>
+      <li><code>PlaySound2D</code> au démarrage du véhicule</li>
+    </ul>
+    <p class="explain">Le son doit durer, suivre le véhicule et changer en continu : il faut un composant (que l'on garde) et une source paramétrable. Relancer un son à chaque frame créerait des dizaines de voix superposées.</p>
+  </div>
+
+  <h2>Un système de bruits de pas</h2>
+  <p>Les pas sont le meilleur exemple de son « systémique » : le bon son dépend de l'animation (quand le pied touche le sol) et du décor (sur quoi il marche). La chaîne complète :</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    participant AN as Animation de marche
+    participant NT as AnimNotify Footstep
+    participant W as World
+    participant PM as Physical Material
+    participant AU as Audio
+    AN->>NT: Le pied touche le sol (notify posé sur la frame)
+    NT->>W: Line trace vers le bas depuis le pied
+    W-->>NT: FHitResult avec le Physical Material
+    NT->>PM: DetermineSurfaceType
+    PM-->>NT: SurfaceType1 (Herbe)
+    NT->>NT: Choisit le son dans la table Surface vers Son
+    NT->>AU: PlaySoundAtLocation au point d'impact
+    Note over AU: La MetaSound choisit une variation au hasard
+</pre>
+    <figcaption>Du contact du pied au son joué : animation, trace, matériau physique, choix du son.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><strong>Déclarer les surfaces</strong>Dans Project Settings → Physics → <em>Physical Surface</em>, nommez les types : <code>SurfaceType1</code> = Herbe, <code>SurfaceType2</code> = Pierre, <code>SurfaceType3</code> = Bois…</li>
+    <li><strong>Créer les Physical Materials</strong>Un asset <em>Physical Material</em> par surface (<code>PM_Herbe</code>…), avec son <em>Surface Type</em>. Assignez-le au matériau du sol (champ <em>Phys Material</em>) ou aux couches du Landscape.</li>
+    <li><strong>Poser les notifies</strong>Dans les animations de marche et de course, ajoutez la notify <code>Footstep</code> sur les frames de contact (voir <a href="animation.html">Animation</a>).</li>
+    <li><strong>Coder la notify</strong>Elle trace vers le bas, lit la surface et joue le son correspondant. Ajoutez <code>"PhysicsCore"</code> aux dépendances du module pour <code>UPhysicalMaterial</code>.</li>
+  </ol>
+
+<script type="text/plain" data-lang="cpp" data-file="AnimNotify_Footstep.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Animation/AnimNotifies/AnimNotify.h"
+#include "AnimNotify_Footstep.generated.h"
+
+class USoundBase;
+
+UCLASS(meta = (DisplayName = "Footstep"))
+class MYGAME_API UAnimNotify_Footstep : public UAnimNotify
+{
+    GENERATED_BODY()
+
+public:
+    virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
+        const FAnimNotifyEventReference& EventReference) override;
+
+protected:
+    UPROPERTY(EditAnywhere, Category = "Footstep")
+    FName FootBone = TEXT("foot_l");
+
+    // Un son (idéalement une MetaSound à variations) par type de surface
+    UPROPERTY(EditAnywhere, Category = "Footstep")
+    TMap<TEnumAsByte<EPhysicalSurface>, TObjectPtr<USoundBase>> SurfaceSounds;
+
+    UPROPERTY(EditAnywhere, Category = "Footstep")
+    TObjectPtr<USoundBase> DefaultSound;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="AnimNotify_Footstep.cpp" data-highlight="18,23,31">
+#include "AnimNotify_Footstep.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "PhysicalMaterials/PhysicalMaterial.h"
+
+void UAnimNotify_Footstep::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
+    const FAnimNotifyEventReference& EventReference)
+{
+    Super::Notify(MeshComp, Animation, EventReference);
+
+    UWorld* World = MeshComp ? MeshComp->GetWorld() : nullptr;
+    if (!World) { return; }
+
+    const FVector Start = MeshComp->GetSocketLocation(FootBone) + FVector(0.f, 0.f, 20.f);
+    const FVector End = Start - FVector(0.f, 0.f, 80.f);
+
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(Footstep), false, MeshComp->GetOwner());
+    Params.bReturnPhysicalMaterial = true; // sinon Hit.PhysMaterial reste vide
+
+    FHitResult Hit;
+    if (!World->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params)) { return; }
+
+    const EPhysicalSurface Surface = UPhysicalMaterial::DetermineSurfaceType(Hit.PhysMaterial.Get());
+
+    USoundBase* Sound = DefaultSound;
+    if (const TObjectPtr<USoundBase>* Found = SurfaceSounds.Find(Surface))
+    {
+        Sound = *Found;
+    }
+
+    UGameplayStatics::PlaySoundAtLocation(MeshComp, Sound, Hit.ImpactPoint);
+}
+</script>
+
+  <div class="callout tip">
+    <p class="callout-title">Une notify, pas un Tick</p>
+    <p>Déclencher les pas depuis l'animation garantit qu'ils restent synchronisés quelle que soit la vitesse, et que l'IA en profite aussi. La notify s'exécute même dans l'aperçu de l'éditeur d'animation : vous entendez le résultat sans lancer le jeu.</p>
+  </div>
+
+  <h2>Le mixage</h2>
+  <p>Mixer, c'est décider de ce que le joueur doit entendre en priorité. Avec cinquante sons simultanés, un mixage raté donne une bouillie où l'on n'entend ni les dialogues ni l'ennemi qui approche. Le chemin d'un son, simplifié :</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    S1["Sound Wave<br>ou MetaSound"] --> CC["Concurrency<br>la voix est-elle autorisée ?"]
+    CC --> ATT["Attenuation<br>distance, spatialisation"]
+    ATT --> SC["Sound Class<br>volume du groupe"]
+    SC --> SUB["Submix<br>effets : reverb, EQ"]
+    SUB --> MS["Master Submix"]
+    MS --> OUT["Haut-parleurs<br>ou casque"]
+    MIX["Sound Mix ou<br>Control Bus Mix"] -.->|ajuste| SC
+</pre>
+    <figcaption>Le trajet simplifié d'un son jusqu'aux haut-parleurs, et les points où l'on agit sur le mixage.</figcaption>
+  </figure>
+
+  <h3>Sound Classes</h3>
+  <p>Les <strong>Sound Classes</strong> forment une hiérarchie : régler le volume d'un parent agit sur tous ses enfants. Chaque son indique sa classe dans son champ <em>Sound Class</em>. Une organisation classique :</p>
+  <ul class="tree">
+    <li><span class="node c-purple">SC_Master</span><span class="desc">Volume général</span>
+      <ul>
+        <li><span class="node c-blue">SC_Music</span><span class="desc">Musique</span></li>
+        <li><span class="node c-green">SC_SFX</span><span class="desc">Effets sonores</span>
+          <ul>
+            <li><span class="node c-green">SC_Weapons</span></li>
+            <li><span class="node c-green">SC_Footsteps</span></li>
+            <li><span class="node c-green">SC_Ambience</span></li>
+          </ul>
+        </li>
+        <li><span class="node c-orange">SC_Voice</span><span class="desc">Dialogues : souvent prioritaires</span></li>
+        <li><span class="node c-yellow">SC_UI</span><span class="desc">Clics et notifications de l'interface</span></li>
+      </ul>
+    </li>
+  </ul>
+
+  <h3>Le volume dans le menu d'options</h3>
+  <p>La méthode historique utilise un <strong>Sound Mix</strong> : on y ajoute (ou modifie) un ajustement de volume pour une Sound Class, puis on active le mix. Les réglages ne sont pas sauvegardés automatiquement : enregistrez les valeurs (SaveGame ou fichier de configuration) et réappliquez-les au lancement du jeu.</p>
+<script type="text/plain" data-lang="cpp" data-file="MyGameInstance.cpp (extrait)">
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundClass.h"
+#include "Sound/SoundMix.h"
+
+// VolumeMix (SM_UserVolumes) et MusicClass (SC_Music) sont des UPROPERTY assignées dans le Blueprint enfant
+void UMyGameInstance::SetMusicVolume(float Volume)
+{
+    // Ajoute ou modifie l'ajustement de SC_Music dans le mix (appliqué aussi aux classes enfants)
+    UGameplayStatics::SetSoundMixClassOverride(this, VolumeMix, MusicClass, Volume, 1.f, 0.2f, true);
+
+    // L'ajustement n'agit que si le mix est actif
+    UGameplayStatics::PushSoundMixModifier(this, VolumeMix);
+}
+</script>
+  <p>L'approche moderne est le plugin <strong>Audio Modulation</strong>. On crée des <strong>Control Buses</strong> (une valeur entre 0 et 1, par exemple <code>CB_Music</code>), on les branche comme modulation de volume sur les Sound Classes, Submixes ou sons, puis un <strong>Control Bus Mix</strong> fixe leurs valeurs. Le gameplay agit ensuite sur les bus via les nœuds de la bibliothèque Audio Modulation (<code>UAudioModulationStatics</code> en C++). Plus souple, ce système sert aussi à moduler la hauteur ou les filtres, pas seulement le volume.</p>
+
+  <h3>Submixes et Concurrency</h3>
+  <p>Les <strong>Submixes</strong> sont des bus où les sons se rejoignent avant la sortie. On leur ajoute des <em>Submix Effect Presets</em> : une réverbération commune pour tous les sons d'un niveau, un compresseur sur les armes, un égaliseur « radio » sur les voix d'un talkie-walkie. Un son choisit son submix via le champ <em>Base Submix</em> ou des envois (<em>Submix Sends</em>).</p>
+  <p>Une <strong>Sound Concurrency</strong> limite le nombre d'instances simultanées d'un groupe de sons (<em>Max Count</em>), et décide quoi faire quand la limite est atteinte (<em>Resolution Rule</em>) :</p>
+  <table>
+    <thead><tr><th>Resolution Rule</th><th>Effet</th><th>Exemple</th></tr></thead>
+    <tbody>
+      <tr><td>Prevent New</td><td>Le nouveau son n'est pas joué</td><td>Réplique d'un PNJ déjà en train de parler</td></tr>
+      <tr><td>Stop Oldest</td><td>Le plus ancien est coupé</td><td>Douilles qui tombent</td></tr>
+      <tr><td>Stop Farthest then Oldest</td><td>Le plus lointain est coupé</td><td>Tirs dans une bataille : on garde les plus proches</td></tr>
+      <tr><td>Stop Quietest</td><td>Le moins audible est coupé</td><td>Impacts multiples</td></tr>
+      <tr><td>Stop Lowest Priority</td><td>Celui de plus faible <em>Priority</em> est coupé</td><td>Ambiances face aux sons importants</td></tr>
+    </tbody>
+  </table>
+  <p>L'option <em>Limit to Owner</em> applique la limite par acteur : chaque ennemi peut jouer au plus une réplique à la fois, sans empêcher les autres de parler.</p>
+
+  <h2>La musique</h2>
+  <p>Une musique de jeu est en général une boucle (option <em>Looping</em> de la Sound Wave, ou <em>Loop</em> du Wave Player dans une MetaSound), jouée en 2D : pas d'atténuation, elle s'entend partout. Pour passer d'une ambiance d'exploration à une musique de combat, on utilise souvent <strong>deux composants audio</strong> et un fondu enchaîné :</p>
+<script type="text/plain" data-lang="cpp" data-file="MusicManager.cpp (extrait)" data-highlight="10-11,15-16">
+void AMusicManager::SetCombat(bool bInCombat)
+{
+    if (bInCombat == bCombat) { return; }
+    bCombat = bInCombat;
+
+    // ExplorationMusic et CombatMusic sont deux UAudioComponent créés dans le constructeur,
+    // avec bAutoActivate = false ; ExplorationMusic->FadeIn() est appelé au BeginPlay
+    if (bCombat)
+    {
+        CombatMusic->FadeIn(CrossfadeTime);                  // démarre au début et monte
+        ExplorationMusic->AdjustVolume(CrossfadeTime, 0.f);  // baisse SANS arrêter
+    }
+    else
+    {
+        CombatMusic->FadeOut(CrossfadeTime, 0.f);            // baisse PUIS arrête
+        ExplorationMusic->AdjustVolume(CrossfadeTime, 1.f);  // remonte là où elle en était
+    }
+}
+</script>
+  <p><code>FadeOut</code> arrête le son à la fin du fondu, alors qu'<code>AdjustVolume</code> se contente de changer le volume : la musique d'exploration reprend là où elle en était. Selon ses réglages de virtualisation, un son devenu inaudible peut toutefois être suspendu ou redémarré : choisissez <em>Play When Silent</em> pour une musique qui doit continuer d'avancer en silence.</p>
+
+  <dl class="defs">
+    <dt>Quartz</dt><dd>Le système d'horloges musicales d'Unreal (<code>UQuartzSubsystem</code>). Vous créez une horloge avec un tempo et une signature rythmique, puis lancez des sons « quantifiés » (<code>PlayQuantized</code>) qui démarrent exactement sur le prochain temps ou la prochaine mesure. Il sert aussi à synchroniser le gameplay sur le rythme : jeux de rythme, ennemis qui attaquent en cadence.</dd>
+    <dt>Dialogues</dt><dd>Les assets <em>Dialogue Wave</em> et <em>Dialogue Voice</em> associent une réplique à son texte et à son locuteur, et s'intègrent à la localisation. Pour les sous-titres, la plupart des jeux affichent leur propre widget à partir d'une Data Table (texte, durée, locuteur), ce qui permet de régler taille, fond et couleur.</dd>
+  </dl>
+
+  <h2>Performances</h2>
+  <ul>
+    <li><strong>Compression</strong> : chaque Sound Wave a un format de compression et un réglage de qualité. Selon votre version, le moteur propose notamment Bink Audio, ADPCM, PCM et Opus, avec des valeurs par défaut par plateforme : baissez la qualité des sons d'ambiance et gardez le PCM pour les sons très courts répétés en boucle s'ils posent problème.</li>
+    <li><strong>Streaming</strong> : les longs fichiers (musiques, dialogues) sont lus par morceaux depuis le disque au lieu d'être entièrement chargés. Le comportement de chargement (<em>Loading Behavior</em>) se règle par son ou par Sound Class.</li>
+    <li><strong>Nombre de voix</strong> : chaque plateforme a un nombre maximal de voix simultanées (<em>Max Channels</em> dans les réglages audio de la plateforme). Les Concurrency et la <em>Priority</em> des sons décident qui est coupé quand la limite est atteinte.</li>
+    <li><strong>Virtualisation</strong> : un son inaudible (trop loin) peut être « virtualisé » : il n'est plus calculé mais reste suivi. Le réglage <em>Virtualization Mode</em> (<em>Disabled</em>, <em>Play When Silent</em>, <em>Restart</em>) choisit ce qui se passe quand il redevient audible.</li>
+  </ul>
+<script type="text/plain" data-lang="console" data-file="Console (touche ²)">
+au.3dVisualize.Enabled 1     # affiche les sources sonores dans le monde
+stat audio                   # statistiques du moteur audio
+</script>
+
+  <div class="callout perf">
+    <p class="callout-title">Mesurer avant d'optimiser</p>
+    <p>Selon votre version, le plugin <strong>Audio Insights</strong> et Unreal Insights montrent les voix actives, les sons virtualisés et le coût de vos MetaSounds. Voir le chapitre <a href="optimisation.html">Débogage &amp; optimisation</a>.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Le joueur baisse le curseur « Musique » du menu d'options, mais au lancement suivant le volume est revenu à 100 %. Pourquoi ?</p>
+    <ul>
+      <li>Le Sound Mix n'a pas de Sound Class parent</li>
+      <li data-correct>Les ajustements d'un Sound Mix ne sont pas sauvegardés : il faut enregistrer la valeur et la réappliquer au démarrage</li>
+      <li>Il fallait utiliser PlaySound2D</li>
+      <li>La musique devait être une Sound Cue</li>
+    </ul>
+    <p class="explain"><code>SetSoundMixClassOverride</code> agit sur la session en cours seulement. Sauvegardez le réglage (SaveGame ou configuration) et réappliquez-le au lancement, par exemple dans l'Init de la GameInstance ou au premier BeginPlay.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Une zone qui change la musique</h4>
+    <p>Placez une musique d'extérieur qui joue dès le début du niveau. Créez une zone (une taverne) : quand le joueur y entre, la musique d'extérieur baisse et une musique de taverne monte en 2 secondes ; quand il sort, l'inverse.</p>
+    <details>
+      <summary>Voir la solution</summary>
+      <p>Dans le niveau, placez un <em>Ambient Sound</em> avec la musique d'extérieur (<em>Auto Activate</em> coché). Puis créez l'acteur de zone :</p>
+<script type="text/plain" data-lang="cpp" data-file="MusicZone.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "MusicZone.generated.h"
+
+class UBoxComponent;
+class UAudioComponent;
+class AAmbientSound;
+
+UCLASS()
+class MYGAME_API AMusicZone : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    AMusicZone();
+
+protected:
+    virtual void NotifyActorBeginOverlap(AActor* OtherActor) override;
+    virtual void NotifyActorEndOverlap(AActor* OtherActor) override;
+
+    UPROPERTY(VisibleAnywhere, Category = "Music")
+    TObjectPtr<UBoxComponent> Zone;
+
+    // Musique de la zone (Sound assigné dans l'éditeur)
+    UPROPERTY(VisibleAnywhere, Category = "Music")
+    TObjectPtr<UAudioComponent> ZoneMusic;
+
+    // L'Ambient Sound de l'extérieur, choisi dans le niveau
+    UPROPERTY(EditInstanceOnly, Category = "Music")
+    TObjectPtr<AAmbientSound> OutsideMusic;
+
+    UPROPERTY(EditAnywhere, Category = "Music")
+    float FadeTime = 2.f;
+
+private:
+    bool IsLocalPlayer(AActor* Actor) const;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="MusicZone.cpp">
+#include "MusicZone.h"
+#include "Components/AudioComponent.h"
+#include "Components/BoxComponent.h"
+#include "GameFramework/Pawn.h"
+#include "Sound/AmbientSound.h"
+
+AMusicZone::AMusicZone()
+{
+    PrimaryActorTick.bCanEverTick = false;
+    Zone = CreateDefaultSubobject<UBoxComponent>(TEXT("Zone"));
+    RootComponent = Zone;
+    Zone->SetBoxExtent(FVector(600.f, 600.f, 300.f));
+
+    ZoneMusic = CreateDefaultSubobject<UAudioComponent>(TEXT("ZoneMusic"));
+    ZoneMusic->SetupAttachment(RootComponent);
+    ZoneMusic->bAutoActivate = false;
+}
+
+bool AMusicZone::IsLocalPlayer(AActor* Actor) const
+{
+    const APawn* Pawn = Cast<APawn>(Actor);
+    return Pawn && Pawn->IsLocallyControlled() && Pawn->IsPlayerControlled();
+}
+
+void AMusicZone::NotifyActorBeginOverlap(AActor* OtherActor)
+{
+    Super::NotifyActorBeginOverlap(OtherActor);
+    if (!IsLocalPlayer(OtherActor)) { return; }
+
+    ZoneMusic->FadeIn(FadeTime);
+    if (OutsideMusic)
+    {
+        OutsideMusic->GetAudioComponent()->AdjustVolume(FadeTime, 0.f);
+    }
+}
+
+void AMusicZone::NotifyActorEndOverlap(AActor* OtherActor)
+{
+    Super::NotifyActorEndOverlap(OtherActor);
+    if (!IsLocalPlayer(OtherActor)) { return; }
+
+    ZoneMusic->FadeOut(FadeTime, 0.f);
+    if (OutsideMusic)
+    {
+        OutsideMusic->GetAudioComponent()->AdjustVolume(FadeTime, 1.f);
+    }
+}
+</script>
+      <p>Placez l'acteur sur la taverne, assignez la musique au composant <code>ZoneMusic</code> et choisissez l'Ambient Sound dans le champ <code>OutsideMusic</code>. Le test <code>IsLocallyControlled</code> évite qu'un PNJ qui entre dans la taverne change votre musique. En Blueprint, la logique est identique avec <em>On Component Begin Overlap</em>, <em>Fade In</em>, <em>Fade Out</em> et <em>Adjust Volume</em>.</p>
+    </details>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Dans une bataille, 40 soldats tirent en même temps et le mixage sature. Quelle est la meilleure solution ?</p>
+    <ul>
+      <li>Baisser le volume de toutes les Sound Waves de tir</li>
+      <li>Désactiver l'atténuation des tirs</li>
+      <li data-correct>Une Sound Concurrency sur les tirs, avec un Max Count limité et la règle Stop Farthest then Oldest</li>
+      <li>Jouer les tirs avec PlaySound2D</li>
+    </ul>
+    <p class="explain">La Concurrency garde les tirs les plus proches et les plus récents, ceux qui comptent pour le joueur, et libère des voix pour le reste du mixage. Baisser le volume ne réduit ni la bouillie sonore ni le coût.</p>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Une <strong>Sound Wave</strong> est le son brut ; les <strong>MetaSounds</strong> sont l'outil recommandé en UE5 pour les sons variés et paramétrables.</li>
+      <li><code>PlaySoundAtLocation</code> pour « tirer et oublier », un <code>UAudioComponent</code> quand il faut garder le contrôle (fondus, pause, paramètres).</li>
+      <li>L'<strong>atténuation</strong> se définit dans un asset partagé : Inner Radius, Falloff Distance, courbe, spatialisation, occlusion.</li>
+      <li>Une MetaSound ponctuelle doit déclencher <code>On Finished</code> ; ses entrées se pilotent avec <code>SetFloatParameter</code> et ses variantes.</li>
+      <li>Les pas combinent <strong>AnimNotify</strong>, trace, <strong>Physical Material</strong> et table de sons.</li>
+      <li>Mixez avec les <strong>Sound Classes</strong>, les <strong>Sound Mixes</strong> ou l'<strong>Audio Modulation</strong>, les <strong>Submixes</strong> et la <strong>Concurrency</strong>.</li>
+      <li><code>FadeOut</code> arrête le son ; <code>AdjustVolume</code> ne fait que changer son volume.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

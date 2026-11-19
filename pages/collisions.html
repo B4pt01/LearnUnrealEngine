@@ -1,0 +1,1017 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Collisions, traces &amp; physique — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="collisions">
+<article class="doc">
+
+  <h1>Collisions, traces &amp; physique</h1>
+  <p class="lead">Un mur qui arrête le joueur, une pièce ramassée en passant dessus, une balle qui touche sa cible, une caisse qui vole sous l'effet d'une explosion : tout cela repose sur le système de collision d'Unreal. Ce chapitre explique comment il décide qui bloque quoi, comment interroger le monde avec des traces, et comment utiliser la physique Chaos.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Distinguer collision <strong>simple</strong> et <strong>complexe</strong>, et régler les collisions d'un mesh</li>
+      <li>Comprendre les <strong>canaux</strong>, les <strong>réponses</strong> (Ignore, Overlap, Block) et les <strong>presets</strong></li>
+      <li>Réagir aux événements <strong>Hit</strong> et <strong>Overlap</strong> en Blueprint et en C++</li>
+      <li>Lancer des <strong>line traces</strong>, des <strong>sweeps</strong> et des requêtes de chevauchement</li>
+      <li>Manipuler la <strong>physique</strong> (impulsions, contraintes, matériaux) et écrire un <strong>projectile</strong></li>
+    </ul>
+  </div>
+
+  <h2>Collision simple et complexe</h2>
+  <p>Chaque Static Mesh peut avoir deux représentations de collision. La <strong>collision simple</strong> est faite de formes primitives (boîtes, sphères, capsules, enveloppes convexes) : très rapide à tester, elle sert à la physique et à la plupart des requêtes. La <strong>collision complexe</strong> utilise directement les triangles du mesh : précise, mais beaucoup plus coûteuse, elle sert aux traces qui demandent de la précision (<code>bTraceComplex</code>).</p>
+
+  <div class="compare">
+    <div class="good">
+      <h4>Simple (formes primitives)</h4>
+      <ul>
+        <li>Rapide, utilisée par la physique</li>
+        <li>Indispensable pour <em>Simulate Physics</em></li>
+        <li>Suffisante pour 95 % des objets de gameplay</li>
+      </ul>
+    </div>
+    <div class="neutral">
+      <h4>Complexe (triangles du mesh)</h4>
+      <ul>
+        <li>Précise au triangle près</li>
+        <li>Pour des traces fines (tir sur un décor détaillé)</li>
+        <li>Ne peut pas servir à un objet simulé</li>
+      </ul>
+    </div>
+  </div>
+
+  <p>Dans le <strong>Static Mesh Editor</strong>, le menu <em>Collision</em> génère la collision simple : <em>Add Sphere / Capsule / Box Simplified Collision</em>, les variantes <em>10DOP</em>, <em>18DOP</em>, <em>26DOP</em> (boîtes à faces biseautées), et <em>Auto Convex Collision</em> qui décompose le mesh en plusieurs enveloppes convexes. Activez <em>Show → Simple Collision</em> pour la voir. Le réglage <strong>Collision Complexity</strong> du panneau Details choisit ce qui est utilisé :</p>
+  <ul>
+    <li><strong>Project Default</strong> / <strong>Simple And Complex</strong> : simple pour la physique et les requêtes ordinaires, complexe pour les traces complexes ;</li>
+    <li><strong>Use Simple Collision As Complex</strong> : la forme simple sert aussi aux traces complexes ;</li>
+    <li><strong>Use Complex Collision As Simple</strong> : les triangles servent à tout.</li>
+  </ul>
+  <div class="callout perf">
+    <p class="callout-title">Use Complex Collision As Simple a un coût</p>
+    <p>C'est tentant pour un décor de forme compliquée, mais chaque requête et chaque contact physique teste alors des milliers de triangles. Réservez-le aux grands éléments statiques (terrain sculpté, grotte) et jamais aux objets dynamiques : un mesh en collision complexe ne peut pas simuler la physique.</p>
+  </div>
+
+  <h2>Les modes Collision Enabled</h2>
+  <p>Sur chaque composant, <strong>Collision Enabled</strong> dit à quels systèmes il participe. Les <em>requêtes</em> (<em>queries</em>) sont les traces, sweeps et overlaps ; la <em>physique</em> est la simulation des corps rigides.</p>
+  <table>
+    <thead><tr><th>Mode</th><th>Requêtes</th><th>Physique</th><th>Usage</th></tr></thead>
+    <tbody>
+      <tr><td><code>No Collision</code></td><td>Non</td><td>Non</td><td>Décor purement visuel, mesh d'un objet ramassable</td></tr>
+      <tr><td><code>Query Only (No Physics Collision)</code></td><td>Oui</td><td>Non</td><td>Zones de déclenchement, capsules de personnages, objets déplacés par code</td></tr>
+      <tr><td><code>Physics Only (No Query Collision)</code></td><td>Non</td><td>Oui</td><td>Débris simulés que les traces doivent ignorer</td></tr>
+      <tr><td><code>Collision Enabled (Query and Physics)</code></td><td>Oui</td><td>Oui</td><td>Caisses, tonneaux, tout objet physique interactif</td></tr>
+    </tbody>
+  </table>
+  <p class="small muted">Les versions récentes ajoutent des modes <em>Probe</em> (données de contact sans réponse physique), d'usage avancé.</p>
+
+  <h2>Canaux et réponses</h2>
+  <p>Chaque composant possède un <strong>type d'objet</strong> (<em>Object Type</em>) et une <strong>réponse</strong> pour chaque canal : <strong>Ignore</strong> (aucune interaction), <strong>Overlap</strong> (on se traverse, mais on peut être prévenu) ou <strong>Block</strong> (on se bloque).</p>
+  <ul class="tree">
+    <li><span class="node c-blue">Collision Presets</span><span class="desc">un preset (Pawn, BlockAll…) ou Custom</span>
+      <ul>
+        <li><span class="node">Collision Enabled</span><span class="desc">No Collision, Query Only, Physics Only, Query and Physics</span></li>
+        <li><span class="node c-orange">Object Type</span><span class="desc">ce que JE suis : WorldStatic, WorldDynamic, Pawn…</span></li>
+        <li><span class="node c-green">Collision Responses</span><span class="desc">comment je réagis à chaque canal</span>
+          <ul>
+            <li><span class="node c-green">Trace Responses</span><span class="desc">Visibility, Camera, canaux de trace personnalisés</span></li>
+            <li><span class="node c-green">Object Responses</span><span class="desc">WorldStatic, WorldDynamic, Pawn, PhysicsBody, Vehicle, Destructible</span></li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+    <li><span class="node c-purple">Generate Overlap Events</span><span class="desc">case à cocher, nécessaire pour les événements d'overlap</span></li>
+    <li><span class="node c-purple">Simulation Generates Hit Events</span><span class="desc">événements Hit pour les objets simulés</span></li>
+  </ul>
+
+  <h3>Types d'objets et canaux de trace</h3>
+  <dl class="defs">
+    <dt>WorldStatic</dt><dd>Ce qui ne bouge pas : sols, murs, décor.</dd>
+    <dt>WorldDynamic</dt><dd>Ce qui bouge sans être un personnage ni simuler : portes, plateformes, ascenseurs.</dd>
+    <dt>Pawn</dt><dd>Les personnages et autres Pawns (leur capsule).</dd>
+    <dt>PhysicsBody</dt><dd>Les objets qui simulent la physique.</dd>
+    <dt>Vehicle, Destructible</dt><dd>Véhicules et objets destructibles.</dd>
+    <dt>Visibility</dt><dd>Canal de <em>trace</em> : « est-ce que ça bloque la vue ? ». Utilisé par défaut par de nombreuses requêtes (interaction, tir simple, curseur).</dd>
+    <dt>Camera</dt><dd>Canal de trace utilisé par le Spring Arm pour savoir quand rapprocher la caméra.</dd>
+  </dl>
+  <p>Vous pouvez créer jusqu'à 18 canaux personnalisés dans <em>Project Settings → Engine → Collision</em> (<em>New Object Channel</em>, <em>New Trace Channel</em>), par exemple un canal de trace <em>Interaction</em> que seuls les objets interactifs bloquent. Ils sont enregistrés dans <code>DefaultEngine.ini</code> et correspondent en C++ aux valeurs <code>ECC_GameTraceChannel1</code> à <code>18</code>, dans l'ordre de création :</p>
+<script type="text/plain" data-lang="ini" data-file="Config/DefaultEngine.ini">
+[/Script/Engine.CollisionProfile]
++DefaultChannelResponses=(Channel=ECC_GameTraceChannel1,DefaultResponse=ECR_Ignore,bTraceType=True,bStaticObject=False,Name="Interaction")
++DefaultChannelResponses=(Channel=ECC_GameTraceChannel2,DefaultResponse=ECR_Block,bTraceType=False,bStaticObject=False,Name="Projectile")
+</script>
+<script type="text/plain" data-lang="cpp" data-file="MyGameCollision.h">
+#pragma once
+
+#include "CoreMinimal.h"
+
+// Des noms lisibles plutôt que des numéros (vérifiez l'ordre dans DefaultEngine.ini)
+#define ECC_Interaction ECC_GameTraceChannel1
+#define ECC_Projectile  ECC_GameTraceChannel2
+</script>
+
+  <h3>La règle de résolution</h3>
+  <p>Quand deux objets A et B se rencontrent, Unreal regarde la réponse de A au type de B, et la réponse de B au type de A. Le résultat est la <strong>moins restrictive des deux</strong> (Ignore &lt; Overlap &lt; Block). Pour qu'ils se bloquent, il faut donc que <em>les deux</em> répondent Block.</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 800 270" width="800" role="img" aria-label="Matrice de résolution des collisions : le résultat est la réponse la moins restrictive des deux objets">
+      <text x="415" y="24" font-size="13" font-weight="700" fill="currentColor" text-anchor="middle">Réponse de B au type de A</text>
+      <g font-size="13" fill="currentColor" text-anchor="middle">
+        <text x="305" y="50">Ignore</text><text x="415" y="50">Overlap</text><text x="525" y="50">Block</text>
+      </g>
+      <text x="20" y="140" font-size="13" font-weight="700" fill="currentColor">Réponse de A</text>
+      <text x="20" y="158" font-size="13" font-weight="700" fill="currentColor">au type de B</text>
+      <g font-size="13" fill="currentColor" text-anchor="end">
+        <text x="240" y="94">Ignore</text><text x="240" y="152">Overlap</text><text x="240" y="210">Block</text>
+      </g>
+      <g stroke="currentColor" stroke-opacity="0.35">
+        <rect x="250" y="62" width="110" height="58" fill="currentColor" fill-opacity="0.06"/>
+        <rect x="360" y="62" width="110" height="58" fill="currentColor" fill-opacity="0.06"/>
+        <rect x="470" y="62" width="110" height="58" fill="currentColor" fill-opacity="0.06"/>
+        <rect x="250" y="120" width="110" height="58" fill="currentColor" fill-opacity="0.06"/>
+        <rect x="360" y="120" width="110" height="58" fill="#ffb15c" fill-opacity="0.3"/>
+        <rect x="470" y="120" width="110" height="58" fill="#ffb15c" fill-opacity="0.3"/>
+        <rect x="250" y="178" width="110" height="58" fill="currentColor" fill-opacity="0.06"/>
+        <rect x="360" y="178" width="110" height="58" fill="#ffb15c" fill-opacity="0.3"/>
+        <rect x="470" y="178" width="110" height="58" fill="#5aa9ff" fill-opacity="0.35"/>
+      </g>
+      <g font-size="13" font-weight="700" fill="currentColor" text-anchor="middle">
+        <text x="305" y="96" opacity="0.6">Ignore</text><text x="415" y="96" opacity="0.6">Ignore</text><text x="525" y="96" opacity="0.6">Ignore</text>
+        <text x="305" y="154" opacity="0.6">Ignore</text><text x="415" y="154">Overlap</text><text x="525" y="154">Overlap</text>
+        <text x="305" y="212" opacity="0.6">Ignore</text><text x="415" y="212">Overlap</text><text x="525" y="212">Block</text>
+      </g>
+      <g font-size="12" fill="currentColor">
+        <text x="600" y="80" font-weight="700">Ignore &lt; Overlap &lt; Block</text>
+        <text x="600" y="104">Le résultat est la réponse</text>
+        <text x="600" y="120">la plus faible des deux.</text>
+        <text x="600" y="152" fill="#ffb15c" font-weight="700">Overlap</text>
+        <text x="600" y="168">Événements seulement si</text>
+        <text x="600" y="184">Generate Overlap Events</text>
+        <text x="600" y="200">est coché des deux côtés.</text>
+        <text x="600" y="232" fill="#5aa9ff" font-weight="700">Block : les deux le veulent.</text>
+      </g>
+    </svg>
+    <figcaption>Matrice de résolution : il suffit qu'un des deux objets ignore l'autre pour qu'ils se traversent sans rien se dire.</figcaption>
+  </figure>
+
+  <div class="callout warn">
+    <p class="callout-title">« Mon overlap ne se déclenche pas »</p>
+    <p>Vérifiez dans l'ordre : les deux composants ont <em>Collision Enabled</em> avec requêtes ; les réponses mutuelles sont au moins Overlap ; <strong>Generate Overlap Events est coché sur les deux composants</strong> (le piège le plus fréquent) ; la fonction liée est bien une <code>UFUNCTION()</code> avec la bonne signature.</p>
+  </div>
+
+  <h3>Les presets</h3>
+  <p>Plutôt que de régler chaque canal à la main, on choisit un <strong>preset</strong> (profil). Les plus utiles :</p>
+  <table>
+    <thead><tr><th>Preset</th><th>Type d'objet</th><th>Comportement</th></tr></thead>
+    <tbody>
+      <tr><td><code>NoCollision</code></td><td>—</td><td>Aucune collision</td></tr>
+      <tr><td><code>BlockAll</code></td><td>WorldStatic</td><td>Bloque tout : décor</td></tr>
+      <tr><td><code>BlockAllDynamic</code></td><td>WorldDynamic</td><td>Bloque tout : obstacle mobile, projectile simple</td></tr>
+      <tr><td><code>OverlapAll</code> / <code>OverlapAllDynamic</code></td><td>WorldStatic / WorldDynamic</td><td>Chevauche tout, ne bloque rien</td></tr>
+      <tr><td><code>Trigger</code></td><td>WorldDynamic</td><td>Zone de déclenchement (requêtes seulement)</td></tr>
+      <tr><td><code>Pawn</code></td><td>Pawn</td><td>Capsule d'un personnage (ignore le canal Visibility)</td></tr>
+      <tr><td><code>CharacterMesh</code></td><td>Pawn</td><td>Mesh d'un personnage : requêtes seulement, ignore les Pawns</td></tr>
+      <tr><td><code>PhysicsActor</code></td><td>PhysicsBody</td><td>Objet simulé</td></tr>
+      <tr><td><code>Ragdoll</code></td><td>PhysicsBody</td><td>Squelette simulé (personnage mort)</td></tr>
+      <tr><td><code>InvisibleWall</code></td><td>WorldStatic</td><td>Mur invisible : bloque tout sauf Visibility</td></tr>
+      <tr><td><code>IgnoreOnlyPawn</code> / <code>OverlapOnlyPawn</code></td><td>WorldDynamic</td><td>Laisse passer les Pawns, ou les détecte seulement</td></tr>
+    </tbody>
+  </table>
+  <p>Vous pouvez créer vos propres presets dans <em>Project Settings → Engine → Collision → Preset → New</em> (par exemple un preset <em>Projectile</em>), puis les appliquer en C++ avec <code>SetCollisionProfileName(TEXT("Projectile"))</code>.</p>
+
+  <h2>Hit ou Overlap</h2>
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TD
+    Q1{"Une des deux réponses<br>est-elle Ignore ?"}
+    Q1 -- "Oui" --> N["Rien<br>les objets se traversent"]
+    Q1 -- "Non" --> Q2{"Les deux réponses<br>sont-elles Block ?"}
+    Q2 -- "Oui" --> H["Blocage<br>événement Hit"]
+    Q2 -- "Non" --> Q3{"Generate Overlap Events<br>coché des deux côtés ?"}
+    Q3 -- "Oui" --> O["Overlap<br>Begin puis End Overlap"]
+    Q3 -- "Non" --> S["Traversée<br>sans événement"]
+</pre>
+    <figcaption>Du réglage des réponses à l'événement reçu.</figcaption>
+  </figure>
+
+  <table>
+    <thead><tr><th>Événement</th><th>Niveau</th><th>Déclenché quand</th></tr></thead>
+    <tbody>
+      <tr><td><code>OnComponentHit</code></td><td>Composant</td><td>Blocage pendant un déplacement par balayage (personnage, projectile, <code>SetActorLocation</code> avec sweep) ; pour un objet <strong>simulé</strong>, seulement si <em>Simulation Generates Hit Events</em> est coché</td></tr>
+      <tr><td><code>OnComponentBeginOverlap</code></td><td>Composant</td><td>Début d'un chevauchement</td></tr>
+      <tr><td><code>OnComponentEndOverlap</code></td><td>Composant</td><td>Fin d'un chevauchement</td></tr>
+      <tr><td><code>OnActorHit</code>, <code>OnActorBeginOverlap</code>, <code>OnActorEndOverlap</code></td><td>Actor</td><td>Les mêmes, pour n'importe quel composant de l'Actor (surcharges C++ : <code>NotifyHit</code>, <code>NotifyActorBeginOverlap</code>)</td></tr>
+    </tbody>
+  </table>
+
+  <p>Exemple : une zone de lave qui blesse les personnages qui y entrent.</p>
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="Dans BP_DamageZone : l'événement d'overlap de la Box, filtré par un Cast vers Character.">
+{
+  "nodes": [
+    { "id": "ev", "type": "event", "title": "On Component Begin Overlap (Box)", "x": 0, "y": 0,
+      "out": [ { "type": "exec" }, { "name": "Overlapped Component", "type": "object" }, { "name": "Other Actor", "type": "object" },
+               { "name": "Other Comp", "type": "object" }, { "name": "Other Body Index", "type": "int" },
+               { "name": "From Sweep", "type": "bool" }, { "name": "Sweep Result", "type": "struct" } ] },
+    { "id": "cast", "type": "cast", "title": "Cast To Character", "x": 320, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Object", "type": "object" } ],
+      "out": [ { "type": "exec" }, { "name": "Cast Failed", "type": "exec" }, { "name": "As Character", "type": "object" } ] },
+    { "id": "print", "type": "function", "title": "Print String", "x": 560, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "In String", "type": "string", "value": "Ça brûle !" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ev", 0, "cast", 0 ],
+    [ "ev", 2, "cast", 1 ],
+    [ "cast", 0, "print", 0 ]
+  ]
+}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="DamageZone.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "DamageZone.generated.h"
+
+class UBoxComponent;
+
+UCLASS()
+class MYGAME_API ADamageZone : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    ADamageZone();
+
+protected:
+    virtual void BeginPlay() override;
+
+    UFUNCTION()
+    void OnOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+
+    UFUNCTION()
+    void OnOverlapEnd(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
+
+    UPROPERTY(VisibleAnywhere, Category = "Components")
+    TObjectPtr<UBoxComponent> Box;
+
+    UPROPERTY(EditAnywhere, Category = "Damage", meta = (ClampMin = "0.0"))
+    float Damage = 20.f;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="DamageZone.cpp">
+#include "DamageZone.h"
+#include "Components/BoxComponent.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/DamageType.h"
+#include "Kismet/GameplayStatics.h"
+
+ADamageZone::ADamageZone()
+{
+    PrimaryActorTick.bCanEverTick = false;
+
+    Box = CreateDefaultSubobject<UBoxComponent>(TEXT("Box"));
+    RootComponent = Box;
+    Box->SetBoxExtent(FVector(200.f, 200.f, 50.f));
+    Box->SetCollisionProfileName(TEXT("Trigger"));
+    Box->SetGenerateOverlapEvents(true);
+}
+
+void ADamageZone::BeginPlay()
+{
+    Super::BeginPlay();
+    Box->OnComponentBeginOverlap.AddDynamic(this, &ADamageZone::OnOverlapBegin);
+    Box->OnComponentEndOverlap.AddDynamic(this, &ADamageZone::OnOverlapEnd);
+}
+
+void ADamageZone::OnOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+{
+    if (ACharacter* Character = Cast<ACharacter>(OtherActor))
+    {
+        UE_LOG(LogTemp, Log, TEXT("%s entre dans la lave"), *Character->GetName());
+        UGameplayStatics::ApplyDamage(Character, Damage, nullptr, this, UDamageType::StaticClass());
+    }
+}
+
+void ADamageZone::OnOverlapEnd(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
+{
+    UE_LOG(LogTemp, Log, TEXT("%s sort de la lave"), *GetNameSafe(OtherActor));
+}
+</script>
+    </div>
+  </div>
+
+  <p>Pour un <strong>Hit</strong>, la signature diffère. Exemple d'une caisse physique qui joue un son quand elle heurte quelque chose assez fort :</p>
+<script type="text/plain" data-lang="cpp" data-file="Crate.cpp">
+// Crate.h :
+// UFUNCTION()
+// void OnHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit);
+
+ACrate::ACrate()
+{
+    Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
+    RootComponent = Mesh;
+    Mesh->SetCollisionProfileName(TEXT("PhysicsActor"));
+    Mesh->SetSimulatePhysics(true);
+    Mesh->SetNotifyRigidBodyCollision(true);   // = « Simulation Generates Hit Events »
+}
+
+void ACrate::BeginPlay()
+{
+    Super::BeginPlay();
+    Mesh->OnComponentHit.AddDynamic(this, &ACrate::OnHit);
+}
+
+void ACrate::OnHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
+{
+    // NormalImpulse : force du choc (seuil à calibrer selon la masse)
+    if (NormalImpulse.Size() > ImpactThreshold && ImpactSound)
+    {
+        UGameplayStatics::PlaySoundAtLocation(this, ImpactSound, Hit.ImpactPoint);
+    }
+}
+</script>
+
+  <h2>Les traces</h2>
+  <p>Une <strong>trace</strong> interroge le monde : « qu'y a-t-il entre ce point et ce point ? ». C'est l'outil de base des tirs instantanés, de l'interaction, de la détection du sol, des lignes de vue de l'IA ou du placement d'objets sous le curseur.</p>
+  <dl class="defs">
+    <dt>Line trace</dt><dd>Un rayon infiniment fin (le <em>raycast</em> d'autres moteurs).</dd>
+    <dt>Sweep</dt><dd>Une forme (sphère, boîte, capsule) déplacée d'un point à un autre : « est-ce qu'une balle de 30 cm passerait ? ».</dd>
+    <dt>By Channel / By Object Type / By Profile</dt><dd>Filtrage selon la réponse des objets à un canal de trace, selon leur type d'objet, ou selon un preset entier.</dd>
+    <dt>Single / Multi</dt><dd><em>Single</em> renvoie le premier blocage. <em>Multi</em> renvoie aussi les objets en Overlap traversés avant le premier blocage (pratique pour une balle qui traverse des feuillages).</dd>
+  </dl>
+
+  <h3>Le résultat : FHitResult</h3>
+  <table>
+    <thead><tr><th>Champ</th><th>Contenu</th></tr></thead>
+    <tbody>
+      <tr><td><code>bBlockingHit</code></td><td>Vrai si la trace a été bloquée</td></tr>
+      <tr><td><code>bStartPenetrating</code></td><td>La forme était déjà dans un objet au départ</td></tr>
+      <tr><td><code>Time</code></td><td>Fraction du trajet parcourue avant l'impact (0 à 1)</td></tr>
+      <tr><td><code>Distance</code></td><td>Distance entre le départ et l'impact</td></tr>
+      <tr><td><code>Location</code></td><td>Position de la forme au moment de l'impact (centre de la sphère d'un sweep ; égale à <code>ImpactPoint</code> pour une ligne)</td></tr>
+      <tr><td><code>ImpactPoint</code></td><td>Point de contact exact sur la surface touchée</td></tr>
+      <tr><td><code>Normal</code></td><td>Normale de la forme balayée au contact (égale à <code>ImpactNormal</code> pour une ligne)</td></tr>
+      <tr><td><code>ImpactNormal</code></td><td>Normale de la surface touchée : orienter un impact, un decal, un rebond</td></tr>
+      <tr><td><code>TraceStart</code>, <code>TraceEnd</code></td><td>Départ et arrivée demandés</td></tr>
+      <tr><td><code>GetActor()</code>, <code>GetComponent()</code></td><td>Actor et composant touchés</td></tr>
+      <tr><td><code>BoneName</code></td><td>Os touché sur un Skeletal Mesh (tir à la tête)</td></tr>
+      <tr><td><code>PhysMaterial</code></td><td>Matériau physique touché (si demandé dans les paramètres)</td></tr>
+    </tbody>
+  </table>
+
+  <figure class="figure">
+    <svg viewBox="0 0 800 300" width="800" role="img" aria-label="Une line trace part de la caméra, ignore le personnage, touche un mur incliné : Start, End, ImpactPoint et ImpactNormal">
+      <defs>
+        <marker id="col-arrow-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#ff6b6b"/></marker>
+        <marker id="col-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+      </defs>
+      <polygon points="470,40 500,40 560,270 530,270" fill="#ffb15c" fill-opacity="0.25" stroke="#ffb15c" stroke-width="1.5"/>
+      <text x="512" y="30" font-size="12" fill="#ffb15c" font-weight="700">Mur (Block sur Visibility)</text>
+      <rect x="40" y="136" width="36" height="28" rx="4" fill="#5aa9ff" fill-opacity="0.3" stroke="#5aa9ff"/>
+      <text x="30" y="186" font-size="12" fill="currentColor">Caméra</text>
+      <circle cx="200" cy="150" r="22" fill="none" stroke="currentColor" stroke-dasharray="4 3" stroke-opacity="0.7"/>
+      <text x="200" y="110" font-size="12" fill="currentColor" text-anchor="middle">Personnage ignoré</text>
+      <text x="200" y="124" font-size="11" fill="currentColor" text-anchor="middle" opacity="0.75">AddIgnoredActor(this)</text>
+      <line x1="90" y1="150" x2="499" y2="150" stroke="#4ade80" stroke-width="2.5"/>
+      <line x1="499" y1="150" x2="760" y2="150" stroke="currentColor" stroke-width="1.5" stroke-dasharray="6 5" stroke-opacity="0.6"/>
+      <circle cx="90" cy="150" r="5" fill="#4ade80"/>
+      <circle cx="760" cy="150" r="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="90" y="208" font-size="12" fill="#4ade80" font-weight="700">Start</text>
+      <text x="90" y="222" font-size="11" fill="currentColor" opacity="0.75">TraceStart</text>
+      <text x="720" y="136" font-size="12" fill="currentColor" font-weight="700">End</text>
+      <text x="700" y="174" font-size="11" fill="currentColor" opacity="0.75">jamais atteint</text>
+      <line x1="499" y1="150" x2="412" y2="173" stroke="#ff6b6b" stroke-width="2.5" marker-end="url(#col-arrow-r)"/>
+      <circle cx="499" cy="150" r="6" fill="#ff6b6b"/>
+      <text x="488" y="138" font-size="12" fill="#ff6b6b" font-weight="700" text-anchor="end">ImpactPoint</text>
+      <text x="330" y="196" font-size="12" fill="#ff6b6b" font-weight="700">ImpactNormal</text>
+      <text x="330" y="210" font-size="11" fill="currentColor" opacity="0.75">perpendiculaire au mur</text>
+      <line x1="90" y1="250" x2="499" y2="250" stroke="currentColor" stroke-width="1.2" marker-start="url(#col-arrow)" marker-end="url(#col-arrow)"/>
+      <text x="294" y="270" font-size="12" fill="currentColor" text-anchor="middle">Distance (ici Time ≈ 0,61 du trajet Start → End)</text>
+    </svg>
+    <figcaption>Une line trace depuis la caméra : elle ignore le joueur, s'arrête au premier objet qui bloque le canal, et renvoie le point et la normale d'impact.</figcaption>
+  </figure>
+
+  <h3>Une trace d'interaction</h3>
+<script type="text/plain" data-lang="cpp" data-file="MyCharacter.cpp">
+#include "Camera/CameraComponent.h"
+#include "DrawDebugHelpers.h"
+
+bool AMyCharacter::TraceForInteractable(FHitResult& OutHit) const
+{
+    const FVector Start = FollowCamera->GetComponentLocation();
+    const FVector End = Start + FollowCamera->GetForwardVector() * InteractRange;
+
+    FCollisionQueryParams Params;
+    Params.AddIgnoredActor(this);              // sinon la trace touche notre propre corps
+
+    const bool bHit = GetWorld()->LineTraceSingleByChannel(OutHit, Start, End, ECC_Visibility, Params);
+
+    DrawDebugLine(GetWorld(), Start, bHit ? OutHit.ImpactPoint : End, bHit ? FColor::Green : FColor::Red, false, 1.f, 0, 1.f);
+    return bHit;
+}
+</script>
+  <p>Le même principe en Blueprint, avec <em>Break Hit Result</em> pour lire le résultat. L'Actor touché reçoit ensuite le message d'interface <em>Interact</em> (voir <a href="cpp-avance.html">C++ avancé</a>) :</p>
+<script type="application/json" class="bp-graph" data-caption="Line Trace By Channel : Return Value indique un blocage, Out Hit contient les détails à décomposer.">
+{
+  "nodes": [
+    { "id": "lt", "type": "function", "title": "Line Trace By Channel", "x": 0, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Start", "type": "vector" }, { "name": "End", "type": "vector" },
+              { "name": "Trace Channel", "type": "enum", "value": "Visibility" }, { "name": "Trace Complex", "type": "bool", "value": false },
+              { "name": "Actors to Ignore", "type": "object", "array": true }, { "name": "Draw Debug Type", "type": "enum", "value": "For Duration" },
+              { "name": "Ignore Self", "type": "bool", "value": true } ],
+      "out": [ { "type": "exec" }, { "name": "Out Hit", "type": "struct" }, { "name": "Return Value", "type": "bool" } ] },
+    { "id": "br", "type": "flow", "title": "Branch", "x": 372, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Condition", "type": "bool" } ],
+      "out": [ { "name": "True", "type": "exec" }, { "name": "False", "type": "exec" } ] },
+    { "id": "brk", "type": "pure", "title": "Break Hit Result", "x": 372, "y": 140,
+      "in": [ { "name": "Hit", "type": "struct" } ],
+      "out": [ { "name": "Blocking Hit", "type": "bool" }, { "name": "Distance", "type": "float" }, { "name": "Impact Point", "type": "vector" },
+               { "name": "Impact Normal", "type": "vector" }, { "name": "Hit Actor", "type": "object" } ] },
+    { "id": "msg", "type": "interface", "title": "Interact", "subtitle": "Message", "x": 598, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object" }, { "name": "Instigator", "type": "object", "value": "self" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "lt", 0, "br", 0 ],
+    [ "lt", 2, "br", 1 ],
+    [ "lt", 1, "brk", 0 ],
+    [ "br", 0, "msg", 0 ],
+    [ "brk", 4, "msg", 1 ]
+  ],
+  "comments": [ { "x": -12, "y": -44, "w": 348, "h": 312, "text": "Suite de IA_Interact (Started)", "color": "#5a7fb0" } ]
+}
+</script>
+
+  <h3>Un tir instantané (hitscan)</h3>
+  <p>Les armes à balles rapides n'ont pas besoin de projectile : une trace suffit. On part du point de vue du joueur, on ajoute une légère dispersion, et on inflige des dégâts ponctuels à ce qui est touché.</p>
+<script type="text/plain" data-lang="cpp" data-file="HitscanWeapon.cpp">
+#include "HitscanWeapon.h"
+#include "DrawDebugHelpers.h"
+#include "GameFramework/DamageType.h"
+#include "GameFramework/Pawn.h"
+#include "Kismet/GameplayStatics.h"
+
+void AHitscanWeapon::Fire()
+{
+    APawn* OwnerPawn = Cast<APawn>(GetOwner());
+    AController* OwnerController = OwnerPawn ? OwnerPawn->GetController() : nullptr;
+    if (!OwnerController)
+    {
+        return;
+    }
+
+    FVector ViewLocation;
+    FRotator ViewRotation;
+    OwnerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
+
+    // Dispersion : direction aléatoire dans un cône de 1,5 degré
+    const FVector ShotDirection = FMath::VRandCone(ViewRotation.Vector(), FMath::DegreesToRadians(1.5f));
+    const FVector End = ViewLocation + ShotDirection * Range;
+
+    FCollisionQueryParams Params;
+    Params.AddIgnoredActor(this);
+    Params.AddIgnoredActor(OwnerPawn);
+    Params.bReturnPhysicalMaterial = true;     // pour choisir l'effet d'impact selon la surface
+
+    FHitResult Hit;
+    if (GetWorld()->LineTraceSingleByChannel(Hit, ViewLocation, End, ECC_Visibility, Params))
+    {
+        if (AActor* HitActor = Hit.GetActor())
+        {
+            UGameplayStatics::ApplyPointDamage(HitActor, Damage, ShotDirection, Hit, OwnerController, this, UDamageType::StaticClass());
+        }
+        DrawDebugLine(GetWorld(), ViewLocation, Hit.ImpactPoint, FColor::Red, false, 1.f, 0, 1.f);
+    }
+}
+</script>
+  <p>Dans un vrai jeu, créez un canal de trace dédié (<em>Weapon</em>) plutôt que d'utiliser Visibility : vous pourrez alors laisser passer les balles à travers un grillage qui bloque pourtant la vue, ou l'inverse.</p>
+
+  <h3>Détecter le sol avec un sweep</h3>
+  <p>Une ligne passe entre les lattes d'un pont ou au bord d'une marche ; une sphère balayée vers le bas donne un résultat plus fiable :</p>
+<script type="text/plain" data-lang="cpp" data-file="HoverDrone.cpp">
+bool AHoverDrone::IsCloseToGround(float MaxDistance, FHitResult& OutHit) const
+{
+    const FVector Start = GetActorLocation();
+    const FVector End = Start - FVector(0.f, 0.f, MaxDistance);
+
+    FCollisionQueryParams Params;
+    Params.AddIgnoredActor(this);
+
+    return GetWorld()->SweepSingleByChannel(
+        OutHit, Start, End, FQuat::Identity, ECC_Visibility,
+        FCollisionShape::MakeSphere(30.f), Params);
+}
+</script>
+
+  <h3>Déboguer les collisions</h3>
+  <ul>
+    <li><strong>Formes de débogage</strong> : <code>DrawDebugLine</code>, <code>DrawDebugSphere</code>, <code>DrawDebugBox</code> (header <code>DrawDebugHelpers.h</code>), ou le paramètre <em>Draw Debug Type</em> des nœuds de trace en Blueprint.</li>
+    <li><strong>Afficher les collisions</strong> : dans le viewport, <em>Show → Collision</em> (<kbd>Alt</kbd>+<kbd>C</kbd>) ; en jeu, la commande console <code>show collision</code>.</li>
+    <li><strong>Modes de vue</strong> : le menu des modes de vue du viewport (<em>Lit</em>) propose <em>Player Collision</em> et <em>Visibility Collision</em>, qui montrent exactement ce qui bloque le joueur ou le canal Visibility.</li>
+  </ul>
+
+  <h2>Requêtes de chevauchement : une explosion</h2>
+  <p>Une <strong>requête d'overlap</strong> pose une forme immobile dans le monde et liste tout ce qu'elle touche, sans attendre d'événement. Idéal pour une explosion : on cherche tout ce qui se trouve dans un rayon, puis on applique dégâts et impulsions.</p>
+<script type="text/plain" data-lang="cpp" data-file="ExplosiveBarrel.cpp">
+#include "ExplosiveBarrel.h"
+#include "Engine/OverlapResult.h"
+#include "GameFramework/DamageType.h"
+#include "Kismet/GameplayStatics.h"
+
+void AExplosiveBarrel::Explode()
+{
+    const FVector Center = GetActorLocation();
+
+    // 1. Dégâts : atténués avec la distance, bloqués par les murs (canal Visibility)
+    TArray<AActor*> IgnoredActors;
+    IgnoredActors.Add(this);
+    UGameplayStatics::ApplyRadialDamage(this, Damage, Center, Radius, UDamageType::StaticClass(),
+        IgnoredActors, this, GetInstigatorController(), false, ECC_Visibility);
+
+    // 2. Impulsion sur tous les corps simulés dans le rayon
+    TArray<FOverlapResult> Overlaps;
+    FCollisionQueryParams Params;
+    Params.AddIgnoredActor(this);
+    GetWorld()->OverlapMultiByChannel(Overlaps, Center, FQuat::Identity, ECC_Visibility,
+        FCollisionShape::MakeSphere(Radius), Params);
+
+    for (const FOverlapResult& Overlap : Overlaps)
+    {
+        UPrimitiveComponent* Comp = Overlap.GetComponent();
+        if (Comp && Comp->IsSimulatingPhysics())
+        {
+            // bVelChange = true : même effet quelle que soit la masse
+            Comp->AddRadialImpulse(Center, Radius, ImpulseStrength, ERadialImpulseFalloff::RIF_Linear, true);
+        }
+    }
+
+    Destroy();
+}
+</script>
+  <p>Alternative plus simple, aussi disponible en Blueprint (nœud <em>Sphere Overlap Actors</em>) :</p>
+<script type="text/plain" data-lang="cpp" data-file="ExplosiveBarrel.cpp">
+#include "Kismet/KismetSystemLibrary.h"
+
+TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+ObjectTypes.Add(UEngineTypes::ConvertToObjectType(ECC_Pawn));
+ObjectTypes.Add(UEngineTypes::ConvertToObjectType(ECC_PhysicsBody));
+
+TArray<AActor*> ActorsToIgnore;
+ActorsToIgnore.Add(this);
+
+TArray<AActor*> FoundActors;
+UKismetSystemLibrary::SphereOverlapActors(this, GetActorLocation(), Radius, ObjectTypes, nullptr, ActorsToIgnore, FoundActors);
+</script>
+  <p>Les dégâts reçus se traitent dans la cible (<code>TakeDamage</code> ou l'événement <em>Any Damage</em>), comme expliqué dans <a href="systemes-gameplay.html">Systèmes de gameplay</a>. Le composant <code>URadialForceComponent</code> offre aussi un <code>FireImpulse()</code> prêt à l'emploi.</p>
+
+  <h2>La physique avec Chaos</h2>
+  <p>Depuis UE5, le moteur physique est <strong>Chaos</strong>. Pour qu'un objet soit simulé, cochez <strong>Simulate Physics</strong> sur son composant (il doit avoir une collision simple et <em>Collision Enabled</em> avec physique). Réglages essentiels de la section <em>Physics</em> :</p>
+  <ul>
+    <li><strong>Mass (kg)</strong> : calculée depuis le volume, ou forcée (<code>SetMassOverrideInKg</code>).</li>
+    <li><strong>Linear Damping</strong> / <strong>Angular Damping</strong> : freinage du mouvement et de la rotation (résistance de l'air).</li>
+    <li><strong>Enable Gravity</strong>, et les <strong>Lock Position / Rotation</strong> (contraintes d'axes, pour un jeu en 2D par exemple).</li>
+  </ul>
+  <div class="callout warn">
+    <p class="callout-title">Simuler un composant qui n'est pas la racine</p>
+    <p>Un composant enfant qui simule la physique se <strong>détache</strong> de son parent : l'Actor reste sur place pendant que le mesh tombe. <code>GetActorLocation()</code> ne suit plus l'objet. Faites du composant simulé le Root Component quand c'est possible.</p>
+  </div>
+
+  <h3>Forces et impulsions</h3>
+  <table>
+    <thead><tr><th>Fonction</th><th>Nature</th><th>Appel</th><th>Exemple</th></tr></thead>
+    <tbody>
+      <tr><td><code>AddImpulse</code></td><td>Instantanée : change la vitesse d'un coup</td><td>Une fois</td><td>Coup de pied dans un ballon</td></tr>
+      <tr><td><code>AddImpulseAtLocation</code></td><td>Instantanée, en un point : fait aussi tourner</td><td>Une fois</td><td>Impact de balle sur une caisse</td></tr>
+      <tr><td><code>AddForce</code></td><td>Continue : son effet dépend de la durée</td><td>À chaque frame</td><td>Réacteur, vent, aimant</td></tr>
+      <tr><td><code>AddRadialImpulse</code></td><td>Instantanée, depuis un point, atténuée avec la distance</td><td>Une fois</td><td>Explosion</td></tr>
+      <tr><td><code>AddTorqueInRadians</code></td><td>Couple continu (rotation)</td><td>À chaque frame</td><td>Roue motrice</td></tr>
+    </tbody>
+  </table>
+  <p>Le paramètre <code>bVelChange</code> (ou <code>bAccelChange</code> pour les forces) ignore la masse : utile pour obtenir le même effet sur un caillou et sur un camion.</p>
+
+  <h3>Contraintes : une porte à charnière</h3>
+  <p>Un <code>UPhysicsConstraintComponent</code> relie deux corps et limite leurs mouvements relatifs : charnière, chaîne, ressort, ragdoll. Pour une porte poussée par le joueur, on verrouille tout sauf une rotation autour de l'axe vertical (<em>Swing 1</em>, autour de l'axe Z de la contrainte), limitée à 100 degrés.</p>
+<script type="text/plain" data-lang="cpp" data-file="PhysicsDoor.cpp">
+#include "PhysicsDoor.h"
+#include "Components/StaticMeshComponent.h"
+#include "PhysicsEngine/PhysicsConstraintComponent.h"
+
+APhysicsDoor::APhysicsDoor()
+{
+    Frame = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Frame"));
+    RootComponent = Frame;
+
+    Panel = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Panel"));
+    Panel->SetupAttachment(Frame);
+    Panel->SetSimulatePhysics(true);           // le battant est poussé par la physique
+
+    Hinge = CreateDefaultSubobject<UPhysicsConstraintComponent>(TEXT("Hinge"));
+    Hinge->SetupAttachment(Frame);             // à placer sur l'axe des gonds
+    Hinge->SetAngularSwing1Limit(EAngularConstraintMotion::ACM_Limited, 100.f);
+    Hinge->SetAngularSwing2Limit(EAngularConstraintMotion::ACM_Locked, 0.f);
+    Hinge->SetAngularTwistLimit(EAngularConstraintMotion::ACM_Locked, 0.f);
+    // Les translations (Linear Limits) sont verrouillées par défaut
+}
+
+void APhysicsDoor::BeginPlay()
+{
+    Super::BeginPlay();
+    Hinge->SetConstrainedComponents(Frame, NAME_None, Panel, NAME_None);
+}
+</script>
+
+  <h3>Matériaux physiques et surfaces</h3>
+  <p>Un <strong>Physical Material</strong> (clic droit → <em>Physics → Physical Material</em>) définit la <strong>friction</strong> (adhérence : glace ou caoutchouc), la <strong>restitution</strong> (rebond, de 0 à 1), la densité, et un <strong>Surface Type</strong>. Les types de surface se nomment dans <em>Project Settings → Engine → Physics → Physical Surface</em> (Métal, Bois, Herbe…). On assigne le matériau physique à un matériau de rendu ou directement au composant ; une trace peut ensuite connaître la surface touchée pour choisir un son de pas ou un effet d'impact.</p>
+<script type="text/plain" data-lang="cpp" data-file="Footsteps.cpp">
+#include "Kismet/GameplayStatics.h"
+
+// Params.bReturnPhysicalMaterial = true doit avoir été demandé pour la trace
+const EPhysicalSurface Surface = UGameplayStatics::GetSurfaceType(Hit);
+switch (Surface)
+{
+case SurfaceType1:    // nommé « Metal » dans les Project Settings
+    PlayFootstep(MetalSound, Hit.ImpactPoint);
+    break;
+case SurfaceType2:    // « Wood »
+    PlayFootstep(WoodSound, Hit.ImpactPoint);
+    break;
+default:
+    PlayFootstep(DefaultSound, Hit.ImpactPoint);
+    break;
+}
+</script>
+
+  <h3>Objets rapides, stabilité et au-delà</h3>
+  <ul>
+    <li><strong>CCD</strong> (<em>Continuous Collision Detection</em>, case <em>Use CCD</em>) : empêche un petit objet très rapide de traverser un mur fin entre deux frames (effet tunnel). Coûteux : à réserver aux objets qui en ont besoin.</li>
+    <li><strong>Substepping</strong> (<em>Project Settings → Engine → Physics</em>) : découpe une frame longue en plusieurs pas de simulation, pour des contraintes et véhicules plus stables à bas FPS. Les options exactes (substepping, physique asynchrone) dépendent de votre version.</li>
+    <li><strong>Chaos Destruction</strong> : des <em>Geometry Collections</em>, fracturées dans le mode <em>Fracture</em> de l'éditeur, se brisent de façon réaliste.</li>
+    <li><strong>Chaos Vehicles</strong> : le plugin <em>ChaosVehicles</em> fournit <code>AWheeledVehiclePawn</code> et un composant de mouvement de véhicule à roues (moteur, boîte de vitesses, suspensions).</li>
+  </ul>
+
+  <h2>Les projectiles</h2>
+  <p>Pour une roquette, une flèche ou une grenade, la balle doit exister et voyager dans le monde. Le <code>UProjectileMovementComponent</code> s'en charge : il déplace le composant racine par balayage (donc sans traverser les murs), applique la gravité et gère les rebonds, sans simulation physique coûteuse.</p>
+  <table>
+    <thead><tr><th>Propriété</th><th>Effet</th></tr></thead>
+    <tbody>
+      <tr><td><code>InitialSpeed</code> / <code>MaxSpeed</code></td><td>Vitesse de départ et plafond (0 = pas de plafond)</td></tr>
+      <tr><td><code>Velocity</code></td><td>Direction de départ, en espace local par défaut (vers l'avant de l'Actor)</td></tr>
+      <tr><td><code>ProjectileGravityScale</code></td><td>0 pour une trajectoire droite, 1 pour une gravité normale</td></tr>
+      <tr><td><code>bRotationFollowsVelocity</code></td><td>Le projectile s'oriente selon sa trajectoire (flèche)</td></tr>
+      <tr><td><code>bShouldBounce</code>, <code>Bounciness</code>, <code>Friction</code></td><td>Rebonds, vitesse conservée à chaque rebond, ralentissement au contact</td></tr>
+      <tr><td><code>bIsHomingProjectile</code>, <code>HomingTargetComponent</code>, <code>HomingAccelerationMagnitude</code></td><td>Missile à tête chercheuse</td></tr>
+      <tr><td><code>UpdatedComponent</code></td><td>Le composant déplacé (la racine par défaut)</td></tr>
+    </tbody>
+  </table>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    S["SpawnActor<br>Owner et Instigator"] --> M["ProjectileMovement<br>déplacement par sweep"]
+    M --> Q{"Blocage ?"}
+    Q -- "Non" --> M
+    Q -- "Oui" --> H["OnComponentHit<br>à chaque impact"]
+    H --> B{"bShouldBounce ?"}
+    B -- "Oui" --> R["Rebond<br>OnProjectileBounce"]
+    R --> M
+    B -- "Non" --> X["Arrêt<br>OnProjectileStop"]
+    M -- "InitialLifeSpan écoulé" --> D["Destroy"]
+</pre>
+    <figcaption>Vie d'un projectile. Dans notre exemple, OnHit applique les dégâts et appelle Destroy dès le premier impact.</figcaption>
+  </figure>
+
+<script type="text/plain" data-lang="cpp" data-file="Projectile.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "Projectile.generated.h"
+
+class USphereComponent;
+class UStaticMeshComponent;
+class UProjectileMovementComponent;
+
+UCLASS()
+class MYGAME_API AProjectile : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    AProjectile();
+
+protected:
+    virtual void BeginPlay() override;
+
+    UFUNCTION()
+    void OnHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit);
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    TObjectPtr<USphereComponent> CollisionComp;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    TObjectPtr<UStaticMeshComponent> Mesh;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    TObjectPtr<UProjectileMovementComponent> ProjectileMovement;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Projectile", meta = (ClampMin = "0.0"))
+    float Damage = 25.f;
+
+    // Multiplie la vitesse du projectile pour pousser les objets physiques touchés
+    UPROPERTY(EditDefaultsOnly, Category = "Projectile", meta = (ClampMin = "0.0"))
+    float ImpulseScale = 100.f;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Projectile.cpp">
+#include "Projectile.h"
+#include "Components/SphereComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "GameFramework/DamageType.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/ProjectileMovementComponent.h"
+#include "Kismet/GameplayStatics.h"
+
+AProjectile::AProjectile()
+{
+    PrimaryActorTick.bCanEverTick = false;
+
+    // La sphère est la racine : c'est elle que le mouvement balaie
+    CollisionComp = CreateDefaultSubobject<USphereComponent>(TEXT("CollisionComp"));
+    CollisionComp->InitSphereRadius(6.f);
+    CollisionComp->SetCollisionProfileName(TEXT("BlockAllDynamic"));
+    CollisionComp->CanCharacterStepUpOn = ECB_No;
+    RootComponent = CollisionComp;
+
+    Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
+    Mesh->SetupAttachment(CollisionComp);
+    Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    ProjectileMovement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("ProjectileMovement"));
+    ProjectileMovement->UpdatedComponent = CollisionComp;
+    ProjectileMovement->InitialSpeed = 3000.f;
+    ProjectileMovement->MaxSpeed = 3000.f;
+    ProjectileMovement->bRotationFollowsVelocity = true;
+    ProjectileMovement->ProjectileGravityScale = 0.3f;
+
+    InitialLifeSpan = 3.f;                      // détruit automatiquement s'il ne touche rien
+}
+
+void AProjectile::BeginPlay()
+{
+    Super::BeginPlay();
+
+    // Ne pas toucher le tireur en sortant du canon
+    if (APawn* Shooter = GetInstigator())
+    {
+        CollisionComp->IgnoreActorWhenMoving(Shooter, true);
+    }
+    CollisionComp->OnComponentHit.AddDynamic(this, &AProjectile::OnHit);
+}
+
+void AProjectile::OnHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
+{
+    if (OtherActor && OtherActor != this)
+    {
+        UGameplayStatics::ApplyDamage(OtherActor, Damage, GetInstigatorController(), this, UDamageType::StaticClass());
+
+        if (OtherComp && OtherComp->IsSimulatingPhysics())
+        {
+            OtherComp->AddImpulseAtLocation(GetVelocity() * ImpulseScale, Hit.ImpactPoint);
+        }
+    }
+    Destroy();
+}
+</script>
+<script type="text/plain" data-lang="cpp" data-file="MyCharacter.cpp">
+void AMyCharacter::FireProjectile()
+{
+    const FRotator AimRotation = GetControlRotation();
+    const FVector MuzzleLocation = GetActorLocation() + AimRotation.RotateVector(MuzzleOffset);
+
+    FActorSpawnParameters Params;
+    Params.Owner = this;
+    Params.Instigator = this;                   // le projectile saura qui l'a tiré
+    GetWorld()->SpawnActor<AProjectile>(ProjectileClass, MuzzleLocation, AimRotation, Params);
+}
+</script>
+
+  <h2>Performance</h2>
+  <div class="callout perf">
+    <p class="callout-title">Les bons réflexes</p>
+    <ul>
+      <li>Collision simple et primitives partout où c'est possible ; <em>NoCollision</em> sur le décor que personne ne touche (herbe, petits détails).</li>
+      <li>Décochez <em>Generate Overlap Events</em> sur les composants qui n'en ont pas besoin : chaque mouvement d'un composant qui génère des overlaps coûte une mise à jour.</li>
+      <li>Traces : <em>Single</em> plutôt que <em>Multi</em>, distances courtes, canaux dédiés, et pas de trace à chaque frame quand un timer à 10 Hz suffit.</li>
+      <li>Physique : limitez le nombre de corps simulés simultanément, laissez-les s'endormir (ils se mettent en sommeil à l'arrêt), réservez CCD et substepping aux cas qui l'exigent.</li>
+      <li>Mesurez avant d'optimiser : voir <a href="optimisation.html">Débogage &amp; optimisation</a>.</li>
+    </ul>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Un objet A répond Block au type de B, mais B répond Overlap au type de A. Que se passe-t-il quand ils se rencontrent ?</p>
+    <ul>
+      <li>Ils se bloquent</li>
+      <li data-correct>Ils se chevauchent (Overlap)</li>
+      <li>Ils s'ignorent complètement</li>
+      <li>Cela dépend de celui qui se déplace</li>
+    </ul>
+    <p class="explain">La réponse la moins restrictive l'emporte : Overlap est plus faible que Block. Pour un blocage, les deux doivent répondre Block. Des événements d'overlap ne seront envoyés que si les deux ont <em>Generate Overlap Events</em>.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Vous voulez orienter un decal d'impact de balle à plat sur la surface touchée. Quel champ du <code>FHitResult</code> utiliser ?</p>
+    <ul>
+      <li><code>TraceEnd</code></li>
+      <li><code>Location</code></li>
+      <li data-correct><code>ImpactNormal</code></li>
+      <li><code>Time</code></li>
+    </ul>
+    <p class="explain"><code>ImpactNormal</code> est la normale de la surface touchée, perpendiculaire à celle-ci : c'est elle qui donne l'orientation du decal, placé en <code>ImpactPoint</code>.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Un jetpack doit pousser le personnage physique vers le haut tant que la touche est maintenue. Quelle fonction utiliser, et comment ?</p>
+    <ul>
+      <li><code>AddImpulse</code>, une fois à l'appui</li>
+      <li data-correct><code>AddForce</code>, à chaque frame tant que la touche est maintenue</li>
+      <li><code>AddRadialImpulse</code> sous les pieds</li>
+      <li><code>SetSimulatePhysics(false)</code></li>
+    </ul>
+    <p class="explain">Une poussée continue est une force : on l'applique à chaque frame et le moteur l'intègre selon la durée de la frame. Une impulsion est un changement instantané de vitesse, pour un événement ponctuel.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Une grenade rebondissante</h4>
+    <p>Créez un Actor <code>AGrenade</code> lancé comme un projectile : une sphère de collision racine, un mesh sans collision et un <code>UProjectileMovementComponent</code> qui rebondit. Trois secondes après son apparition, la grenade explose : dégâts radiaux atténués avec la distance, impulsion radiale sur les objets physiques proches, sphère de débogage, événement Blueprint <code>OnExploded</code> pour les effets, puis destruction.</p>
+    <details>
+      <summary>Voir la solution</summary>
+<script type="text/plain" data-lang="cpp" data-file="Grenade.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "Grenade.generated.h"
+
+class USphereComponent;
+class UStaticMeshComponent;
+class UProjectileMovementComponent;
+
+UCLASS()
+class MYGAME_API AGrenade : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    AGrenade();
+
+protected:
+    virtual void BeginPlay() override;
+
+    void Explode();
+
+    // Effet Niagara et son, dans le Blueprint enfant
+    UFUNCTION(BlueprintImplementableEvent, Category = "Grenade")
+    void OnExploded();
+
+    UPROPERTY(VisibleAnywhere, Category = "Components")
+    TObjectPtr<USphereComponent> CollisionComp;
+
+    UPROPERTY(VisibleAnywhere, Category = "Components")
+    TObjectPtr<UStaticMeshComponent> Mesh;
+
+    UPROPERTY(VisibleAnywhere, Category = "Components")
+    TObjectPtr<UProjectileMovementComponent> ProjectileMovement;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Grenade", meta = (ClampMin = "0.0"))
+    float FuseTime = 3.f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Grenade", meta = (ClampMin = "0.0"))
+    float Damage = 80.f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Grenade", meta = (ClampMin = "0.0"))
+    float ExplosionRadius = 500.f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Grenade", meta = (ClampMin = "0.0"))
+    float ImpulseStrength = 1500.f;
+
+private:
+    FTimerHandle FuseHandle;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Grenade.cpp">
+#include "Grenade.h"
+#include "Components/SphereComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "DrawDebugHelpers.h"
+#include "Engine/OverlapResult.h"
+#include "GameFramework/DamageType.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/ProjectileMovementComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "TimerManager.h"
+
+AGrenade::AGrenade()
+{
+    PrimaryActorTick.bCanEverTick = false;
+
+    CollisionComp = CreateDefaultSubobject<USphereComponent>(TEXT("CollisionComp"));
+    CollisionComp->InitSphereRadius(8.f);
+    CollisionComp->SetCollisionProfileName(TEXT("BlockAllDynamic"));
+    RootComponent = CollisionComp;
+
+    Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
+    Mesh->SetupAttachment(CollisionComp);
+    Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    ProjectileMovement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("ProjectileMovement"));
+    ProjectileMovement->UpdatedComponent = CollisionComp;
+    ProjectileMovement->InitialSpeed = 1500.f;
+    ProjectileMovement->MaxSpeed = 1500.f;
+    ProjectileMovement->ProjectileGravityScale = 1.f;
+    ProjectileMovement->bShouldBounce = true;
+    ProjectileMovement->Bounciness = 0.4f;     // garde 40 % de la vitesse à chaque rebond
+    ProjectileMovement->Friction = 0.3f;       // ralentit en roulant au sol
+}
+
+void AGrenade::BeginPlay()
+{
+    Super::BeginPlay();
+
+    if (APawn* Thrower = GetInstigator())
+    {
+        CollisionComp->IgnoreActorWhenMoving(Thrower, true);
+    }
+    GetWorldTimerManager().SetTimer(FuseHandle, this, &AGrenade::Explode, FuseTime, false);
+}
+
+void AGrenade::Explode()
+{
+    const FVector Center = GetActorLocation();
+
+    // 1. Dégâts radiaux : atténués avec la distance, bloqués par les murs
+    TArray<AActor*> IgnoredActors;
+    IgnoredActors.Add(this);
+    UGameplayStatics::ApplyRadialDamage(this, Damage, Center, ExplosionRadius, UDamageType::StaticClass(),
+        IgnoredActors, this, GetInstigatorController(), false, ECC_Visibility);
+
+    // 2. Impulsion radiale sur les corps simulés
+    TArray<FOverlapResult> Overlaps;
+    FCollisionQueryParams Params;
+    Params.AddIgnoredActor(this);
+    GetWorld()->OverlapMultiByChannel(Overlaps, Center, FQuat::Identity, ECC_Visibility,
+        FCollisionShape::MakeSphere(ExplosionRadius), Params);
+
+    for (const FOverlapResult& Overlap : Overlaps)
+    {
+        UPrimitiveComponent* Comp = Overlap.GetComponent();
+        if (Comp && Comp->IsSimulatingPhysics())
+        {
+            Comp->AddRadialImpulse(Center, ExplosionRadius, ImpulseStrength, ERadialImpulseFalloff::RIF_Linear, true);
+        }
+    }
+
+    // 3. Retour visuel et nettoyage
+    DrawDebugSphere(GetWorld(), Center, ExplosionRadius, 24, FColor::Orange, false, 2.f);
+    OnExploded();
+    Destroy();
+}
+</script>
+      <p>Lancez-la depuis le personnage comme le projectile précédent (<code>SpawnActor</code> avec <code>Instigator = this</code>), en visant légèrement vers le haut. Pour qu'elle explose aussi au contact d'un ennemi, liez <code>OnComponentHit</code> et appelez <code>Explode</code> si l'Actor touché est un Pawn ; pensez alors à effacer le timer avec <code>ClearTimer(FuseHandle)</code>.</p>
+    </details>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Collision simple pour la physique et la plupart des requêtes ; complexe pour des traces précises, avec parcimonie.</li>
+      <li>Chaque composant a un type d'objet et une réponse par canal ; le résultat est la réponse la plus faible des deux (Ignore &lt; Overlap &lt; Block).</li>
+      <li>Les overlaps exigent <em>Generate Overlap Events</em> des deux côtés ; les Hits d'objets simulés exigent <em>Simulation Generates Hit Events</em>.</li>
+      <li>Line traces et sweeps renvoient un <code>FHitResult</code> : <code>ImpactPoint</code>, <code>ImpactNormal</code>, <code>GetActor()</code>… N'oubliez pas <code>AddIgnoredActor(this)</code>.</li>
+      <li>Requêtes d'overlap + <code>ApplyRadialDamage</code> + <code>AddRadialImpulse</code> pour les explosions.</li>
+      <li>Impulsion pour un événement ponctuel, force pour une poussée continue ; contraintes et matériaux physiques pour le reste.</li>
+      <li><code>UProjectileMovementComponent</code> sur une sphère racine, <code>OnComponentHit</code> et <code>InitialLifeSpan</code> : la recette du projectile.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

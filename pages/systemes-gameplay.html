@@ -1,0 +1,1627 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Systèmes de gameplay — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="systemes-gameplay">
+<article class="doc">
+
+  <h1>Systèmes de gameplay</h1>
+  <p class="lead">Points de vie, objets à ramasser, inventaire, sauvegarde, règles de victoire : ces systèmes reviennent dans presque tous les jeux. Ce chapitre montre comment les construire proprement avec les outils d'Unreal, en séparant la logique (C++ ou Blueprint) des données (Data Assets, Data Tables, Gameplay Tags), puis vous présente le Gameplay Ability System utilisé par les grosses productions.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Construire un <strong>composant de santé</strong> réutilisable branché sur le système de dégâts du moteur</li>
+      <li>Créer des <strong>objets à ramasser</strong> et un <strong>inventaire</strong> avec empilement</li>
+      <li>Choisir entre <strong>Data Assets, Data Tables, Curve Tables</strong> et fichiers de configuration</li>
+      <li>Étiqueter le monde avec les <strong>Gameplay Tags</strong></li>
+      <li>Sauvegarder et recharger une partie avec <code>USaveGame</code></li>
+      <li>Gérer victoire, défaite et réapparition dans le <strong>GameMode</strong></li>
+      <li>Comprendre à quoi sert le <strong>Gameplay Ability System</strong> (GAS)</li>
+    </ul>
+  </div>
+
+  <h2>Santé et dégâts</h2>
+  <p>Unreal possède un <strong>système de dégâts intégré</strong>, présent dans <code>AActor</code> depuis toujours. Il ne gère pas de points de vie (c'est à vous de les stocker), mais il fournit un canal standard pour dire « cet acteur vient de subir 25 points de dégâts, infligés par tel joueur avec telle arme ». L'intérêt est énorme : une arme n'a pas besoin de connaître le type de sa cible. Elle appelle une fonction générique, et c'est la cible qui décide quoi faire (perdre de la vie, exploser, ignorer).</p>
+
+  <h3>Le trajet d'un dégât</h3>
+  <p>Toute la chaîne passe par <code>AActor::TakeDamage</code>. Les fonctions utilitaires de <code>UGameplayStatics</code> l'appellent pour vous, et l'implémentation de base diffuse ensuite le delegate <code>OnTakeAnyDamage</code> de l'acteur touché. Il suffit donc qu'un composant s'abonne à ce delegate pour recevoir tous les dégâts de son propriétaire :</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    participant PR as Projectile
+    participant EN as Ennemi
+    participant HC as HealthComponent
+    participant UI as Barre de vie
+    participant GM as GameMode
+    PR->>EN: ApplyDamage(25)
+    Note over PR,EN: via UGameplayStatics<br>puis TakeDamage
+    EN->>HC: OnTakeAnyDamage
+    HC->>HC: Health - 25
+    HC->>UI: OnHealthChanged
+    alt Health atteint 0
+        HC->>GM: OnDeath(Killer)
+        Note over GM: score, réapparition
+    end
+</pre>
+    <figcaption>Un projectile inflige des dégâts : le moteur les achemine jusqu'au composant de santé, qui prévient l'interface et le GameMode par des delegates.</figcaption>
+  </figure>
+
+  <h3>Un composant de santé réutilisable</h3>
+  <p>Plutôt que de coder la vie dans chaque classe (joueur, ennemi, caisse destructible), on crée un <code>UActorComponent</code> qu'on ajoute à n'importe quel acteur. Il expose deux <strong>dynamic multicast delegates</strong> (des événements auxquels plusieurs objets, y compris des Blueprints, peuvent s'abonner) : <code>OnHealthChanged</code> pour l'interface et <code>OnDeath</code> pour la logique de jeu. Les delegates sont détaillés dans <a href="cpp-avance.html">C++ avancé</a>.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="HealthComponent.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Components/ActorComponent.h"
+#include "HealthComponent.generated.h"
+
+class UHealthComponent;
+class UDamageType;
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnHealthChangedSignature,
+    UHealthComponent*, HealthComponent, float, NewHealth, float, Delta);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDeathSignature, AController*, Killer);
+
+UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
+class MYGAME_API UHealthComponent : public UActorComponent
+{
+    GENERATED_BODY()
+
+public:
+    UHealthComponent();
+
+    // Diffusé à chaque variation (dégâts ou soin) : idéal pour l'interface
+    UPROPERTY(BlueprintAssignable, Category = "Health")
+    FOnHealthChangedSignature OnHealthChanged;
+
+    // Diffusé une seule fois, quand la vie atteint 0
+    UPROPERTY(BlueprintAssignable, Category = "Health")
+    FOnDeathSignature OnDeath;
+
+    UFUNCTION(BlueprintCallable, Category = "Health")
+    void Heal(float Amount);
+
+    UFUNCTION(BlueprintPure, Category = "Health")
+    float GetHealth() const { return Health; }
+
+    UFUNCTION(BlueprintPure, Category = "Health")
+    float GetMaxHealth() const { return MaxHealth; }
+
+    UFUNCTION(BlueprintPure, Category = "Health")
+    float GetHealthPercent() const { return MaxHealth > 0.f ? Health / MaxHealth : 0.f; }
+
+    UFUNCTION(BlueprintPure, Category = "Health")
+    bool IsDead() const { return Health <= 0.f; }
+
+protected:
+    virtual void BeginPlay() override;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Health", meta = (ClampMin = "1.0"))
+    float MaxHealth = 100.f;
+
+    UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Health")
+    float Health = 0.f;
+
+private:
+    // Même signature que AActor::OnTakeAnyDamage
+    UFUNCTION()
+    void HandleTakeAnyDamage(AActor* DamagedActor, float Damage, const UDamageType* DamageType,
+                             AController* InstigatedBy, AActor* DamageCauser);
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="HealthComponent.cpp" data-highlight="17,30-31,33-36">
+#include "HealthComponent.h"
+#include "GameFramework/Actor.h"
+#include "GameFramework/Controller.h"
+
+UHealthComponent::UHealthComponent()
+{
+    PrimaryComponentTick.bCanEverTick = false; // tout est événementiel
+}
+
+void UHealthComponent::BeginPlay()
+{
+    Super::BeginPlay();
+    Health = MaxHealth;
+
+    if (AActor* MyOwner = GetOwner())
+    {
+        MyOwner->OnTakeAnyDamage.AddDynamic(this, &UHealthComponent::HandleTakeAnyDamage);
+    }
+}
+
+void UHealthComponent::HandleTakeAnyDamage(AActor* DamagedActor, float Damage,
+    const UDamageType* DamageType, AController* InstigatedBy, AActor* DamageCauser)
+{
+    if (Damage <= 0.f || IsDead())
+    {
+        return; // on ignore les soins déguisés et les coups sur un cadavre
+    }
+
+    const float OldHealth = Health;
+    Health = FMath::Clamp(Health - Damage, 0.f, MaxHealth);
+    OnHealthChanged.Broadcast(this, Health, Health - OldHealth);
+
+    if (IsDead())
+    {
+        OnDeath.Broadcast(InstigatedBy);
+    }
+}
+
+void UHealthComponent::Heal(float Amount)
+{
+    if (Amount <= 0.f || IsDead())
+    {
+        return;
+    }
+
+    const float OldHealth = Health;
+    Health = FMath::Min(Health + Amount, MaxHealth);
+    if (Health != OldHealth)
+    {
+        OnHealthChanged.Broadcast(this, Health, Health - OldHealth);
+    }
+}
+</script>
+
+  <div class="callout warn">
+    <p class="callout-title">Piège courant : s'abonner dans le constructeur</p>
+    <p>Liez <code>OnTakeAnyDamage</code> dans <code>BeginPlay</code>, pas dans le constructeur : à ce moment-là, le composant n'a pas encore de propriétaire fiable. Et n'oubliez pas <code>UFUNCTION()</code> sur la fonction liée : <code>AddDynamic</code> a besoin de la réflexion pour la retrouver par son nom. Sans cette macro, le lien échoue à l'exécution.</p>
+  </div>
+
+  <h3>Infliger des dégâts</h3>
+  <p><code>UGameplayStatics</code> propose trois fonctions, selon la nature du coup. Toutes finissent par appeler <code>TakeDamage</code> sur la cible, donc par déclencher <code>OnTakeAnyDamage</code> :</p>
+  <table>
+    <thead><tr><th>Fonction</th><th>Usage</th><th>Événements spécifiques déclenchés</th></tr></thead>
+    <tbody>
+      <tr><td><code>ApplyDamage</code></td><td>Dégât générique : mêlée, poison, chute</td><td><code>OnTakeAnyDamage</code> seulement</td></tr>
+      <tr><td><code>ApplyPointDamage</code></td><td>Coup localisé : balle, flèche. Transporte le <code>FHitResult</code> (os touché, point d'impact)</td><td><code>OnTakePointDamage</code> + <code>OnTakeAnyDamage</code></td></tr>
+      <tr><td><code>ApplyRadialDamage</code></td><td>Explosion : touche tous les acteurs dans un rayon, en vérifiant qu'aucun obstacle ne les protège</td><td><code>OnTakeRadialDamage</code> + <code>OnTakeAnyDamage</code></td></tr>
+    </tbody>
+  </table>
+
+  <p>Voici un projectile qui inflige 25 points de dégâts au premier acteur qu'il chevauche, puis se détruit :</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="BP_Projectile : au chevauchement, Apply Damage sur l'acteur touché, puis destruction du projectile. Le tireur est retrouvé via Get Instigator Controller.">
+{
+  "nodes": [
+    { "id": "ov", "type": "event", "title": "Event ActorBeginOverlap", "x": 0, "y": 0,
+      "out": [ { "type": "exec" }, { "name": "Other Actor", "type": "object" } ] },
+    { "id": "inst", "type": "pure", "title": "Get Instigator Controller", "x": 0, "y": 130,
+      "in": [ { "name": "Target", "type": "object", "value": "self" } ],
+      "out": [ { "name": "Return Value", "type": "object" } ] },
+    { "id": "self", "type": "var", "title": "Self", "x": 130, "y": 240, "out": [ { "type": "object" } ] },
+    { "id": "dmg", "type": "function", "title": "Apply Damage", "x": 290, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Damaged Actor", "type": "object" },
+              { "name": "Base Damage", "type": "float", "value": "25.0" },
+              { "name": "Event Instigator", "type": "object" }, { "name": "Damage Causer", "type": "object" },
+              { "name": "Damage Type Class", "type": "class", "value": "DamageType" } ],
+      "out": [ { "type": "exec" }, { "name": "Return Value", "type": "float" } ] },
+    { "id": "destroy", "type": "function", "title": "Destroy Actor", "x": 660, "y": 120,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object", "value": "self" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ov", 0, "dmg", 0 ], [ "ov", 1, "dmg", 1 ], [ "inst", 0, "dmg", 3 ],
+    [ "self", 0, "dmg", 4 ], [ "dmg", 0, "destroy", 0 ]
+  ]
+}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="Projectile.cpp">
+#include "Projectile.h"
+#include "Kismet/GameplayStatics.h"
+#include "GameFramework/DamageType.h"
+
+void AProjectile::NotifyActorBeginOverlap(AActor* OtherActor)
+{
+    Super::NotifyActorBeginOverlap(OtherActor);
+
+    // Ne pas se blesser soi-même au moment du tir
+    if (!OtherActor || OtherActor == GetInstigator())
+    {
+        return;
+    }
+
+    UGameplayStatics::ApplyDamage(
+        OtherActor,                 // qui reçoit
+        Damage,                     // combien (UPROPERTY, 25 par défaut)
+        GetInstigatorController(),  // qui est responsable (pour le score)
+        this,                       // quel objet a physiquement touché
+        DamageTypeClass);           // TSubclassOf<UDamageType>, nullptr = UDamageType
+
+    Destroy();
+}
+</script>
+    </div>
+  </div>
+
+  <div class="callout info">
+    <p class="callout-title">Instigator et Damage Causer : deux choses différentes</p>
+    <p>L'<strong>Instigator</strong> est le contrôleur responsable du coup (le joueur qui a tiré) : c'est lui qu'on crédite au tableau des scores. Le <strong>Damage Causer</strong> est l'objet qui a physiquement touché (la grenade, la balle). Pour que <code>GetInstigatorController()</code> renvoie quelque chose, renseignez l'Instigator au moment du spawn : <code>FActorSpawnParameters::Instigator = GetInstigator()</code> en C++, ou la broche <em>Instigator</em> du nœud <em>Spawn Actor from Class</em>.</p>
+  </div>
+
+  <h3>Les types de dégâts</h3>
+  <p>Le dernier paramètre, <code>DamageTypeClass</code>, est une <strong>classe</strong> dérivée de <code>UDamageType</code>. Elle ne contient pas de logique : c'est une étiquette qui porte quelques réglages (impulsion physique, dégâts causés par le monde…) et vos propres propriétés. La cible reçoit l'objet par défaut de cette classe (son CDO, en lecture seule) et peut réagir différemment au feu, au poison ou à la chute.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="DamageType_Fire.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/DamageType.h"
+#include "DamageType_Fire.generated.h"
+
+UCLASS()
+class MYGAME_API UDamageType_Fire : public UDamageType
+{
+    GENERATED_BODY()
+
+public:
+    // Données propres à ce type, lues par la cible
+    UPROPERTY(EditDefaultsOnly, Category = "Fire")
+    float BurnDuration = 3.f;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Dans HandleTakeAnyDamage">
+if (const UDamageType_Fire* Fire = Cast<UDamageType_Fire>(DamageType))
+{
+    StartBurning(Fire->BurnDuration); // effet supplémentaire propre au feu
+}
+</script>
+
+  <h3>Alternative : surcharger TakeDamage</h3>
+  <p>Pour un acteur unique (un boss avec une armure, un personnage qui subit double dégât à la tête), vous pouvez surcharger directement <code>TakeDamage</code> au lieu d'utiliser un composant. C'est l'endroit idéal pour <strong>modifier le montant avant qu'il ne soit diffusé</strong>, puisque c'est l'implémentation de base qui déclenche <code>OnTakeAnyDamage</code> :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="BossCharacter.cpp">
+#include "BossCharacter.h"
+#include "Engine/DamageEvents.h" // FPointDamageEvent (en-tête séparé depuis UE 5.1)
+
+float ABossCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
+                                 AController* EventInstigator, AActor* DamageCauser)
+{
+    float FinalDamage = DamageAmount * (1.f - ArmorRatio); // armure : -30 % par exemple
+
+    // Coup localisé ? On peut lire l'os touché dans le FHitResult
+    if (DamageEvent.IsOfType(FPointDamageEvent::ClassID))
+    {
+        const FPointDamageEvent& PointEvent = static_cast<const FPointDamageEvent&>(DamageEvent);
+        if (PointEvent.HitInfo.BoneName == TEXT("head"))
+        {
+            FinalDamage *= 2.f;
+        }
+    }
+
+    // Super diffuse OnTakeAnyDamage avec le montant modifié
+    return Super::TakeDamage(FinalDamage, DamageEvent, EventInstigator, DamageCauser);
+}
+</script>
+
+  <div class="callout tip">
+    <p class="callout-title">Composant ou surcharge ?</p>
+    <p>Le composant est réutilisable et configurable en Blueprint : c'est le bon choix par défaut. La surcharge de <code>TakeDamage</code> sert à <em>transformer</em> les dégâts propres à une classe. Les deux se combinent très bien : le boss réduit les dégâts dans <code>TakeDamage</code>, puis son <code>UHealthComponent</code> reçoit le montant final.</p>
+  </div>
+
+  <h2>Interaction : rappel</h2>
+  <p>Ouvrir une porte, parler à un PNJ ou ramasser un objet avec une touche repose sur deux briques déjà vues : une <strong>interface</strong> <code>IInteractable</code> (voir <a href="cpp-avance.html">C++ avancé</a>) que chaque objet interactif implémente, et une <strong>line trace</strong> depuis la caméra (voir <a href="collisions.html">Collisions, traces &amp; physique</a>) pour savoir ce que le joueur regarde.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="HeroCharacter.cpp (extrait)">
+void AHeroCharacter::TryInteract()
+{
+    const FVector Start = FollowCamera->GetComponentLocation();
+    const FVector End = Start + FollowCamera->GetForwardVector() * InteractRange; // 250 cm
+
+    FCollisionQueryParams Params;
+    Params.AddIgnoredActor(this);
+
+    FHitResult Hit;
+    if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params))
+    {
+        AActor* Target = Hit.GetActor();
+        if (Target && Target->Implements<UInteractable>())
+        {
+            // Fonctionne que l'interface soit implémentée en C++ ou en Blueprint
+            IInteractable::Execute_Interact(Target, this);
+        }
+    }
+}
+</script>
+
+  <p>La porte verrouillée de l'exercice final de ce chapitre utilise exactement ce mécanisme.</p>
+
+  <h2>Objets à ramasser</h2>
+  <p>Trousse de soin, munitions, pièce d'or, clé : tous ces objets partagent le même comportement (une zone de collision, un mesh qui tourne, une réaction quand le joueur passe dessus, une éventuelle réapparition). On le code <strong>une seule fois</strong> dans une classe de base abstraite, et les enfants ne redéfinissent que l'effet.</p>
+
+  <ul class="tree">
+    <li><span class="node c-blue">AActor</span>
+      <ul>
+        <li><span class="node c-orange">APickup</span><span class="desc">Abstract : sphère, mesh, overlap, minuteur de réapparition</span>
+          <ul>
+            <li><span class="node c-green">AHealthPickup</span><span class="desc">Soigne via le <code>UHealthComponent</code> du joueur</span></li>
+            <li><span class="node c-green">AAmmoPickup</span><span class="desc">Ajoute des munitions à l'arme équipée</span></li>
+            <li><span class="node c-green">AItemPickup</span><span class="desc">Ajoute un <code>UItemData</code> à l'inventaire</span>
+              <ul>
+                <li><span class="node c-teal">BP_Pickup_RedKey</span><span class="desc">Blueprint enfant : seules les valeurs changent</span></li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+  </ul>
+
+<script type="text/plain" data-lang="cpp" data-file="Pickup.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "Pickup.generated.h"
+
+class USphereComponent;
+class UStaticMeshComponent;
+
+UCLASS(Abstract)
+class MYGAME_API APickup : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    APickup();
+
+protected:
+    virtual void BeginPlay() override;
+
+    // À redéfinir dans les enfants. Renvoie false si l'objet ne peut pas être pris
+    // (vie déjà pleine, inventaire plein...) : il reste alors au sol.
+    virtual bool OnPickedUp(APawn* Picker) { return true; }
+
+    UPROPERTY(VisibleAnywhere, Category = "Pickup")
+    TObjectPtr<USphereComponent> Collision;
+
+    UPROPERTY(VisibleAnywhere, Category = "Pickup")
+    TObjectPtr<UStaticMeshComponent> Mesh;
+
+    UPROPERTY(EditAnywhere, Category = "Pickup")
+    bool bRespawns = true;
+
+    UPROPERTY(EditAnywhere, Category = "Pickup", meta = (EditCondition = "bRespawns", ClampMin = "0.1"))
+    float RespawnDelay = 10.f;
+
+private:
+    UFUNCTION()
+    void HandleOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
+                       UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
+                       bool bFromSweep, const FHitResult& SweepResult);
+
+    void SetPickupActive(bool bActive);
+    void Respawn();
+
+    FTimerHandle RespawnTimer;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Pickup.cpp" data-highlight="22,29,36-37">
+#include "Pickup.h"
+#include "Components/SphereComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "GameFramework/Pawn.h"
+#include "TimerManager.h"
+
+APickup::APickup()
+{
+    Collision = CreateDefaultSubobject<USphereComponent>(TEXT("Collision"));
+    Collision->InitSphereRadius(60.f);
+    Collision->SetCollisionProfileName(TEXT("OverlapAllDynamic"));
+    RootComponent = Collision;
+
+    Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
+    Mesh->SetupAttachment(RootComponent);
+    Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+}
+
+void APickup::BeginPlay()
+{
+    Super::BeginPlay();
+    Collision->OnComponentBeginOverlap.AddDynamic(this, &APickup::HandleOverlap);
+}
+
+void APickup::HandleOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
+    UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+{
+    APawn* Pawn = Cast<APawn>(OtherActor);
+    if (!Pawn || !Pawn->IsPlayerControlled() || !OnPickedUp(Pawn))
+    {
+        return;
+    }
+
+    if (bRespawns)
+    {
+        SetPickupActive(false);
+        GetWorldTimerManager().SetTimer(RespawnTimer, this, &APickup::Respawn, RespawnDelay, false);
+    }
+    else
+    {
+        Destroy();
+    }
+}
+
+void APickup::SetPickupActive(bool bActive)
+{
+    SetActorHiddenInGame(!bActive);
+    SetActorEnableCollision(bActive);
+}
+
+void APickup::Respawn()
+{
+    SetPickupActive(true);
+}
+</script>
+
+  <p>Un enfant n'a plus qu'à redéfinir <code>OnPickedUp</code>. La trousse de soin refuse d'être ramassée si la vie est déjà pleine, ce qui évite de la gaspiller :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="HealthPickup.cpp">
+#include "HealthPickup.h"
+#include "HealthComponent.h"
+
+bool AHealthPickup::OnPickedUp(APawn* Picker)
+{
+    UHealthComponent* Health = Picker->FindComponentByClass<UHealthComponent>();
+    if (!Health || Health->GetHealth() >= Health->GetMaxHealth())
+    {
+        return false; // reste au sol
+    }
+
+    Health->Heal(HealAmount); // UPROPERTY(EditAnywhere) float HealAmount = 25.f;
+    return true;
+}
+</script>
+
+  <div class="callout tip">
+    <p class="callout-title">Laisser les Blueprints redéfinir l'effet</p>
+    <p>Si vos game designers doivent créer de nouveaux objets sans C++, déclarez la fonction en <code>UFUNCTION(BlueprintNativeEvent)</code> : le C++ fournit <code>OnPickedUp_Implementation</code> par défaut, et un Blueprint enfant peut la remplacer dans son Event Graph.</p>
+  </div>
+
+  <h2>Inventaire</h2>
+  <p>Un inventaire est une <strong>liste d'emplacements</strong> (slots). Chaque emplacement contient une référence vers la <em>définition</em> d'un objet et une quantité. La définition (nom, icône, taille de pile maximale) est commune à toutes les potions de soin : elle vit dans un <strong>Data Asset</strong>, un asset de données créé dans le Content Browser. L'inventaire, lui, ne stocke que « 3 × DA_HealthPotion ».</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+classDiagram
+    class UInventoryComponent {
+        +TArray~FInventorySlot~ Slots
+        +int32 MaxSlots
+        +AddItem(Item, Quantity) int32
+        +RemoveItem(Item, Quantity) bool
+        +GetItemCount(Item) int32
+        +OnInventoryChanged
+    }
+    class FInventorySlot {
+        +TObjectPtr~UItemData~ Item
+        +int32 Quantity
+    }
+    class UItemData {
+        +FText DisplayName
+        +TSoftObjectPtr~UTexture2D~ Icon
+        +int32 MaxStack
+        +TSoftObjectPtr~UStaticMesh~ WorldMesh
+    }
+    class UPrimaryDataAsset
+    UPrimaryDataAsset <|-- UItemData
+    UInventoryComponent "1" *-- "0..*" FInventorySlot : contient
+    FInventorySlot --> UItemData : référence
+</pre>
+    <figcaption>L'inventaire possède des emplacements ; chaque emplacement pointe vers une définition d'objet partagée (un Data Asset).</figcaption>
+  </figure>
+
+  <h3>La définition d'objet : UItemData</h3>
+  <p><code>UPrimaryDataAsset</code> est une classe de données que l'on instancie dans le Content Browser (clic droit → <em>Miscellaneous</em> → <em>Data Asset</em>, puis choix de la classe). Les références vers l'icône et le mesh sont <strong>souples</strong> (<code>TSoftObjectPtr</code>) : elles ne chargent pas ces assets en mémoire tant qu'on n'en a pas besoin. Sans cela, ouvrir l'inventaire chargerait les textures de tous les objets du jeu.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="ItemData.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Engine/DataAsset.h"
+#include "ItemData.generated.h"
+
+class UTexture2D;
+class UStaticMesh;
+
+UCLASS(BlueprintType)
+class MYGAME_API UItemData : public UPrimaryDataAsset
+{
+    GENERATED_BODY()
+
+public:
+    // FText et non FString : le nom sera traduisible
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item")
+    FText DisplayName;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item", meta = (MultiLine = true))
+    FText Description;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item")
+    TSoftObjectPtr<UTexture2D> Icon;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item", meta = (ClampMin = "1"))
+    int32 MaxStack = 1;
+
+    // Mesh affiché quand l'objet est posé au sol
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item")
+    TSoftObjectPtr<UStaticMesh> WorldMesh;
+};
+</script>
+
+  <h3>Le composant d'inventaire</h3>
+<script type="text/plain" data-lang="cpp" data-file="InventoryComponent.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Components/ActorComponent.h"
+#include "InventoryComponent.generated.h"
+
+class UItemData;
+
+USTRUCT(BlueprintType)
+struct FInventorySlot
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory")
+    TObjectPtr<UItemData> Item = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory")
+    int32 Quantity = 0;
+};
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnInventoryChangedSignature);
+
+UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
+class MYGAME_API UInventoryComponent : public UActorComponent
+{
+    GENERATED_BODY()
+
+public:
+    // Renvoie la quantité qui n'a PAS pu être ajoutée (0 = tout est rentré)
+    UFUNCTION(BlueprintCallable, Category = "Inventory")
+    int32 AddItem(UItemData* Item, int32 Quantity = 1);
+
+    // Retire Quantity exemplaires ; échoue (et ne retire rien) s'il n'y en a pas assez
+    UFUNCTION(BlueprintCallable, Category = "Inventory")
+    bool RemoveItem(UItemData* Item, int32 Quantity = 1);
+
+    UFUNCTION(BlueprintPure, Category = "Inventory")
+    int32 GetItemCount(const UItemData* Item) const;
+
+    const TArray<FInventorySlot>& GetSlots() const { return Slots; }
+
+    UPROPERTY(BlueprintAssignable, Category = "Inventory")
+    FOnInventoryChangedSignature OnInventoryChanged;
+
+protected:
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory")
+    TArray<FInventorySlot> Slots;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Inventory", meta = (ClampMin = "1"))
+    int32 MaxSlots = 20;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="InventoryComponent.cpp" data-highlight="13-23,25-32,58-60">
+#include "InventoryComponent.h"
+#include "ItemData.h"
+
+int32 UInventoryComponent::AddItem(UItemData* Item, int32 Quantity)
+{
+    if (!Item || Quantity <= 0)
+    {
+        return Quantity;
+    }
+
+    int32 Remaining = Quantity;
+
+    // 1) Compléter d'abord les piles existantes du même objet
+    for (FInventorySlot& Slot : Slots)
+    {
+        if (Slot.Item == Item && Slot.Quantity < Item->MaxStack)
+        {
+            const int32 ToAdd = FMath::Min(Remaining, Item->MaxStack - Slot.Quantity);
+            Slot.Quantity += ToAdd;
+            Remaining -= ToAdd;
+            if (Remaining == 0) break;
+        }
+    }
+
+    // 2) Puis ouvrir de nouveaux emplacements tant qu'il reste de la place
+    while (Remaining > 0 && Slots.Num() < MaxSlots)
+    {
+        FInventorySlot& NewSlot = Slots.AddDefaulted_GetRef();
+        NewSlot.Item = Item;
+        NewSlot.Quantity = FMath::Min(Remaining, Item->MaxStack);
+        Remaining -= NewSlot.Quantity;
+    }
+
+    if (Remaining != Quantity)
+    {
+        OnInventoryChanged.Broadcast(); // l'UI se redessine
+    }
+    return Remaining;
+}
+
+int32 UInventoryComponent::GetItemCount(const UItemData* Item) const
+{
+    int32 Count = 0;
+    for (const FInventorySlot& Slot : Slots)
+    {
+        if (Slot.Item == Item) Count += Slot.Quantity;
+    }
+    return Count;
+}
+
+bool UInventoryComponent::RemoveItem(UItemData* Item, int32 Quantity)
+{
+    if (!Item || Quantity <= 0 || GetItemCount(Item) < Quantity)
+    {
+        return false;
+    }
+
+    // Parcours à l'envers : RemoveAt ne décale que les éléments déjà visités
+    int32 Remaining = Quantity;
+    for (int32 Index = Slots.Num() - 1; Index >= 0 && Remaining > 0; --Index)
+    {
+        FInventorySlot& Slot = Slots[Index];
+        if (Slot.Item != Item) continue;
+
+        const int32 ToRemove = FMath::Min(Remaining, Slot.Quantity);
+        Slot.Quantity -= ToRemove;
+        Remaining -= ToRemove;
+        if (Slot.Quantity == 0)
+        {
+            Slots.RemoveAt(Index);
+        }
+    }
+
+    OnInventoryChanged.Broadcast();
+    return true;
+}
+</script>
+
+  <div class="callout warn">
+    <p class="callout-title">Piège courant : supprimer pendant un parcours</p>
+    <p>Appeler <code>RemoveAt</code> dans une boucle <code>for (auto&amp; Slot : Slots)</code> invalide l'itérateur et provoque un crash ou des éléments sautés. Parcourez le tableau à l'envers avec un index, comme ci-dessus, ou utilisez <code>Slots.RemoveAll(...)</code> avec un prédicat.</p>
+  </div>
+
+  <h2>Conception pilotée par les données</h2>
+  <p>Le <strong>data-driven design</strong> consiste à sortir les chiffres du code. Les dégâts d'une arme, le prix d'une potion ou l'expérience nécessaire au niveau 12 ne devraient pas exiger une recompilation. Les game designers les modifient dans l'éditeur ou dans un tableur, et le code se contente de les lire. Unreal propose quatre outils complémentaires.</p>
+
+  <h3>Data Assets</h3>
+  <p>Vous venez d'en voir un avec <code>UItemData</code>. Un Data Asset est un <strong>fichier par entrée</strong>, édité dans le panneau Details, qui peut contenir n'importe quelle propriété : références vers des meshes, des sons, d'autres Data Assets, des tableaux. Utilisez <code>UPrimaryDataAsset</code> plutôt que <code>UDataAsset</code> : il s'intègre à l'<strong>Asset Manager</strong>, qui sait lister et charger à la demande tous les assets d'un type.</p>
+
+  <h3>Data Tables</h3>
+  <p>Une Data Table est un <strong>tableau</strong> : chaque ligne a un nom unique (<code>FName</code>) et des colonnes définies par une structure C++ héritant de <code>FTableRowBase</code>. Elle brille quand vous avez beaucoup d'entrées homogènes à équilibrer côte à côte : 40 armes, 300 lignes de dialogue, une table de butin.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="WeaponRow.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Engine/DataTable.h"
+#include "WeaponRow.generated.h"
+
+class UStaticMesh;
+
+USTRUCT(BlueprintType)
+struct MYGAME_API FWeaponRow : public FTableRowBase
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
+    FText DisplayName;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
+    float Damage = 10.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
+    float FireRate = 1.f; // tirs par seconde
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
+    int32 MagazineSize = 30;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
+    TSoftObjectPtr<UStaticMesh> Mesh;
+};
+</script>
+
+  <p>Après compilation, créez la table (clic droit → <em>Miscellaneous</em> → <em>Data Table</em>, choisissez <code>WeaponRow</code>), ou glissez directement un fichier <strong>CSV</strong> ou <strong>JSON</strong> dans le Content Browser : l'importeur demande la structure de ligne. La première colonne contient toujours le nom de la ligne :</p>
+
+<script type="text/plain" data-lang="text" data-file="Weapons.csv">
+Name,DisplayName,Damage,FireRate,MagazineSize,Mesh
+Pistol,"Pistolet",20,2.5,12,"/Game/Weapons/SM_Pistol.SM_Pistol"
+Rifle,"Fusil d'assaut",12,10,30,"/Game/Weapons/SM_Rifle.SM_Rifle"
+Shotgun,"Fusil à pompe",8,1.2,6,"/Game/Weapons/SM_Shotgun.SM_Shotgun"
+Sniper,"Fusil de précision",90,0.6,5,"/Game/Weapons/SM_Sniper.SM_Sniper"
+</script>
+
+  <p>Le fichier source est mémorisé : après modification du CSV dans votre tableur, un clic sur <strong>Reimport</strong> met la table à jour. Côté code, on lit une ligne avec <code>FindRow</code> :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Weapon.cpp">
+#include "Weapon.h"
+#include "WeaponRow.h"
+
+void AWeapon::BeginPlay()
+{
+    Super::BeginPlay();
+
+    // WeaponTable : UPROPERTY(EditDefaultsOnly) TObjectPtr<UDataTable>
+    // WeaponRowName : UPROPERTY(EditAnywhere) FName, par exemple "Rifle"
+    if (!WeaponTable)
+    {
+        return;
+    }
+
+    // Le second paramètre est un texte de contexte affiché dans le log si la ligne manque
+    if (const FWeaponRow* Row = WeaponTable->FindRow<FWeaponRow>(WeaponRowName, TEXT("AWeapon::BeginPlay")))
+    {
+        Damage = Row->Damage;
+        FireInterval = 1.f / FMath::Max(Row->FireRate, 0.01f);
+        AmmoInMagazine = Row->MagazineSize;
+    }
+}
+</script>
+
+  <div class="callout tip">
+    <p class="callout-title">Choisir une ligne dans l'éditeur sans faute de frappe</p>
+    <p>Au lieu d'un <code>FName</code> tapé à la main, déclarez un <code>FDataTableRowHandle</code> : le panneau Details affiche alors une liste déroulante des tables et de leurs lignes. Vous récupérez la ligne avec <code>Handle.GetRow&lt;FWeaponRow&gt;(TEXT("contexte"))</code>.</p>
+  </div>
+
+  <h3>Curve Tables et fichiers de configuration</h3>
+  <p>Une <strong>Curve Table</strong> (<code>UCurveTable</code>) contient des courbes nommées : pour chaque ligne, une valeur Y en fonction d'un X. C'est l'outil des progressions : XP nécessaire par niveau, dégâts d'un sort selon son rang. On l'importe aussi depuis un CSV (première ligne : les valeurs de X) et on l'évalue avec <code>FindCurve(RowName, Contexte)-&gt;Eval(Niveau)</code>, avec interpolation entre les points.</p>
+  <p>Les <strong>fichiers .ini</strong> conviennent aux réglages globaux et techniques. Une classe marquée <code>UCLASS(Config = Game)</code> lit ses propriétés <code>UPROPERTY(Config)</code> dans <code>DefaultGame.ini</code>, sous une section au nom de la classe :</p>
+
+<script type="text/plain" data-lang="ini" data-file="Config/DefaultGame.ini">
+[/Script/MyGame.ArenaGameMode]
+EnemiesToKill=15
+RespawnDelay=3.0
+</script>
+
+  <table>
+    <thead><tr><th>Outil</th><th>Forme</th><th>Idéal pour</th><th>Limites</th></tr></thead>
+    <tbody>
+      <tr><td>Data Asset</td><td>Un asset par entrée, édité dans Details</td><td>Objets riches et uniques : objets d'inventaire, armes, capacités, ennemis</td><td>Pas de vue tableur ; beaucoup de fichiers</td></tr>
+      <tr><td>Data Table</td><td>Lignes × colonnes, import/export CSV et JSON</td><td>Grandes listes homogènes à équilibrer dans un tableur</td><td>Une seule structure par table, pas d'héritage entre lignes</td></tr>
+      <tr><td>Curve Table</td><td>Courbes X → Y nommées</td><td>Progressions : XP, dégâts par niveau, prix</td><td>Uniquement des nombres</td></tr>
+      <tr><td>Config .ini</td><td>Fichier texte <code>Default*.ini</code></td><td>Réglages globaux et techniques</td><td>Pas de références d'assets pratiques, peu lisible à grande échelle</td></tr>
+    </tbody>
+  </table>
+
+  <div class="quiz">
+    <p class="q">Vous devez équilibrer 60 armes qui ont toutes les mêmes caractéristiques (dégâts, cadence, chargeur) et votre game designer travaille dans un tableur. Quel outil choisir ?</p>
+    <ul>
+      <li>Un Data Asset par arme</li>
+      <li data-correct>Une Data Table basée sur une structure FTableRowBase</li>
+      <li>Une Curve Table</li>
+      <li>Des constantes dans le code C++</li>
+    </ul>
+    <p class="explain">Des entrées nombreuses et homogènes, éditées dans un tableur : c'est le cas d'usage typique de la Data Table, importée et réimportée depuis un CSV. Les Data Assets conviendraient mieux à des objets aux structures variées ; la Curve Table ne stocke que des courbes numériques.</p>
+  </div>
+
+  <h2>Gameplay Tags</h2>
+  <p>Un <strong>Gameplay Tag</strong> est une étiquette hiérarchique, écrite avec des points : <code>Status.Debuff.Stun</code>. Il remplace avantageusement les booléens dispersés (<code>bIsStunned</code>, <code>bIsBurning</code>…), les énumérations qu'il faut modifier à chaque ajout et les chaînes de caractères sujettes aux fautes de frappe. Les tags sont déclarés une fois pour tout le projet, puis choisis dans une liste déroulante dans l'éditeur.</p>
+
+  <ul class="tree">
+    <li><span class="node c-purple">Status</span><span class="desc">États d'un personnage</span>
+      <ul>
+        <li><span class="node c-green">Status.Buff</span>
+          <ul>
+            <li><span class="node c-green">Status.Buff.Haste</span><span class="desc">accéléré</span></li>
+          </ul>
+        </li>
+        <li><span class="node c-red">Status.Debuff</span>
+          <ul>
+            <li><span class="node c-red">Status.Debuff.Stun</span><span class="desc">étourdi : ne peut plus agir</span></li>
+            <li><span class="node c-red">Status.Debuff.Burning</span><span class="desc">en feu</span></li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+    <li><span class="node c-yellow">Item</span><span class="desc">Catégories d'objets</span>
+      <ul>
+        <li><span class="node c-yellow">Item.Key</span>
+          <ul>
+            <li><span class="node c-yellow">Item.Key.Red</span></li>
+            <li><span class="node c-yellow">Item.Key.Blue</span></li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+    <li><span class="node c-blue">Damage</span><span class="desc">Natures de dégâts</span>
+      <ul>
+        <li><span class="node c-blue">Damage.Fire</span></li>
+        <li><span class="node c-blue">Damage.Poison</span></li>
+      </ul>
+    </li>
+  </ul>
+
+  <h3>FGameplayTag et FGameplayTagContainer</h3>
+  <p><code>FGameplayTag</code> représente un tag unique ; <code>FGameplayTagContainer</code> un ensemble de tags (ceux que possède un personnage, par exemple). La hiérarchie est la vraie force du système : une requête sur un parent trouve aussi ses enfants.</p>
+  <table>
+    <thead><tr><th>Container de l'acteur</th><th>Tag demandé</th><th><code>HasTag</code></th><th><code>HasTagExact</code></th></tr></thead>
+    <tbody>
+      <tr><td>{ Status.Debuff.Stun }</td><td>Status.Debuff.Stun</td><td>true</td><td>true</td></tr>
+      <tr><td>{ Status.Debuff.Stun }</td><td>Status.Debuff</td><td>true</td><td>false</td></tr>
+      <tr><td>{ Status.Debuff }</td><td>Status.Debuff.Stun</td><td>false</td><td>false</td></tr>
+    </tbody>
+  </table>
+  <p><code>HasAny(AutreContainer)</code> et <code>HasAll(AutreContainer)</code> testent plusieurs tags d'un coup (avec leurs variantes <code>HasAnyExact</code> et <code>HasAllExact</code>). Ainsi, « le personnage peut-il agir ? » devient simplement <code>!OwnedTags.HasTag(Status.Debuff)</code> si tous les malus empêchent d'agir, et ajouter un nouveau malus ne demande aucune modification de code.</p>
+
+  <h3>Déclarer les tags</h3>
+  <p>Trois méthodes, qui peuvent cohabiter :</p>
+  <ol class="steps">
+    <li><strong>Dans l'éditeur</strong><em>Project Settings</em> → <em>Project</em> → <em>GameplayTags</em> : bouton d'ajout dans la liste des tags. Le plus simple pour commencer.</li>
+    <li><strong>Dans un fichier .ini</strong>L'éditeur écrit en réalité dans <code>Config/DefaultGameplayTags.ini</code>, que vous pouvez aussi modifier à la main (pratique pour fusionner le travail de plusieurs personnes dans Git) :
+<script type="text/plain" data-lang="ini" data-file="Config/DefaultGameplayTags.ini">
+[/Script/GameplayTags.GameplayTagsSettings]
+ImportTagsFromConfig=True
++GameplayTagList=(Tag="Status.Debuff.Stun",DevComment="Ne peut plus agir")
++GameplayTagList=(Tag="Item.Key.Red",DevComment="Ouvre les portes rouges")
+</script>
+    </li>
+    <li><strong>En C++ : les tags natifs</strong>Déclarés avec les macros de <code>NativeGameplayTags.h</code>, ils sont enregistrés au démarrage et accessibles comme des variables, sans risque de faute de frappe dans une chaîne.</li>
+  </ol>
+
+<script type="text/plain" data-lang="cpp" data-file="MyGameplayTags.h">
+#pragma once
+
+#include "NativeGameplayTags.h"
+
+namespace MyGameplayTags
+{
+    MYGAME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Status_Debuff_Stun);
+    MYGAME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Item_Key_Red);
+}
+</script>
+<script type="text/plain" data-lang="cpp" data-file="MyGameplayTags.cpp">
+#include "MyGameplayTags.h"
+
+namespace MyGameplayTags
+{
+    UE_DEFINE_GAMEPLAY_TAG(Status_Debuff_Stun, "Status.Debuff.Stun");
+    UE_DEFINE_GAMEPLAY_TAG(Item_Key_Red, "Item.Key.Red");
+}
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Utilisation">
+// Une propriété éditable, filtrée sur une branche de l'arbre
+UPROPERTY(EditAnywhere, Category = "Door", meta = (Categories = "Item.Key"))
+FGameplayTag RequiredKey;
+
+// Les tags que possède le personnage
+UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Tags")
+FGameplayTagContainer OwnedTags;
+
+// Test avec un tag natif (conversion implicite en FGameplayTag)
+if (OwnedTags.HasTag(MyGameplayTags::Status_Debuff_Stun))
+{
+    return; // étourdi : on ignore l'entrée du joueur
+}
+</script>
+
+  <div class="callout info">
+    <p class="callout-title">Module à ajouter</p>
+    <p>Pour utiliser les types de tags en C++, ajoutez <code>"GameplayTags"</code> aux <code>PublicDependencyModuleNames</code> de votre fichier <code>.Build.cs</code>. Si plusieurs systèmes doivent interroger les tags d'un acteur sans le connaître, faites-lui implémenter <code>IGameplayTagAssetInterface</code> (fonction <code>GetOwnedGameplayTags</code>).</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Le container d'un personnage contient uniquement <code>Status.Debuff.Burning</code>. Que renvoie <code>HasTag(Status.Debuff)</code> ?</p>
+    <ul>
+      <li>false, car le tag exact Status.Debuff n'est pas présent</li>
+      <li data-correct>true, car Status.Debuff est un parent de Status.Debuff.Burning</li>
+      <li>Une erreur de compilation</li>
+      <li>true uniquement si le tag a été déclaré en C++</li>
+    </ul>
+    <p class="explain"><code>HasTag</code> tient compte de la hiérarchie : posséder un enfant revient à « posséder » ses parents. Pour exiger le tag exact, il faut <code>HasTagExact</code>, qui renverrait false ici.</p>
+  </div>
+
+  <h2>Système de sauvegarde</h2>
+  <p>Tout ce qui est en mémoire disparaît à la fermeture du jeu. Pour retrouver la progression, Unreal fournit <code>USaveGame</code> : une classe dont vous déclarez les propriétés, que le moteur <strong>sérialise</strong> (convertit en octets) dans un fichier <code>.sav</code>. En développement, ces fichiers se trouvent dans <code>Saved/SaveGames/</code> à la racine du projet ; dans un jeu Windows empaqueté, sous <code>%LOCALAPPDATA%/NomDuProjet/Saved/SaveGames/</code>.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TB
+    subgraph SAVE["1. Sauvegarde"]
+        direction LR
+        W["Monde en jeu<br>Actors, composants"] -- "collecte" --> S["UMySaveGame<br>en mémoire"]
+        S -- "SaveGameToSlot" --> F["Slot_0.sav<br>Saved/SaveGames"]
+    end
+    subgraph LOAD["2. Chargement"]
+        direction LR
+        F2["Slot_0.sav"] -- "LoadGameFromSlot" --> L["UMySaveGame<br>rechargé"]
+        L -- "application" --> W2["Monde restauré<br>position, inventaire"]
+    end
+    SAVE ~~~ LOAD
+</pre>
+    <figcaption>Le cycle de sauvegarde : on copie l'état utile dans un objet SaveGame, le moteur l'écrit sur disque, puis on fait l'inverse au chargement.</figcaption>
+  </figure>
+
+  <h3>La classe de sauvegarde</h3>
+<script type="text/plain" data-lang="cpp" data-file="MySaveGame.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/SaveGame.h"
+#include "MySaveGame.generated.h"
+
+class UItemData;
+
+USTRUCT()
+struct FSavedInventorySlot
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    TSoftObjectPtr<UItemData> Item; // un chemin d'asset, pas un pointeur vivant
+
+    UPROPERTY()
+    int32 Quantity = 0;
+};
+
+UCLASS()
+class MYGAME_API UMySaveGame : public USaveGame
+{
+    GENERATED_BODY()
+
+public:
+    static constexpr int32 LatestVersion = 2;
+
+    UPROPERTY()
+    int32 SaveVersion = LatestVersion;
+
+    UPROPERTY(BlueprintReadWrite, Category = "Save")
+    int32 Score = 0;
+
+    UPROPERTY()
+    FName LevelName;
+
+    UPROPERTY()
+    FTransform PlayerTransform;
+
+    UPROPERTY()
+    float PlayerHealth = 100.f;
+
+    UPROPERTY()
+    TArray<FSavedInventorySlot> Inventory;
+
+    UPROPERTY()
+    TSet<FName> CompletedQuests;
+
+    // État du niveau : coffres ouverts, portes déverrouillées, identifiés par un ID stable
+    UPROPERTY()
+    TSet<FName> OpenedChestIds;
+};
+</script>
+
+  <p>Seules les propriétés marquées <code>UPROPERTY()</code> sont écrites dans le fichier. Les fonctions de <code>UGameplayStatics</code> font le reste :</p>
+  <table>
+    <thead><tr><th>Fonction</th><th>Rôle</th></tr></thead>
+    <tbody>
+      <tr><td><code>CreateSaveGameObject(Classe)</code></td><td>Crée un objet SaveGame vide, avec les valeurs par défaut</td></tr>
+      <tr><td><code>SaveGameToSlot(Objet, Slot, UserIndex)</code></td><td>Écrit l'objet dans le fichier <code>Slot.sav</code> (bloquant), renvoie un booléen</td></tr>
+      <tr><td><code>AsyncSaveGameToSlot(...)</code></td><td>Même chose sur un autre thread, avec un delegate de fin : pas de micro-gel</td></tr>
+      <tr><td><code>LoadGameFromSlot(Slot, UserIndex)</code></td><td>Relit le fichier et renvoie un <code>USaveGame*</code> à caster (nullptr si absent)</td></tr>
+      <tr><td><code>DoesSaveGameExist(Slot, UserIndex)</code></td><td>Teste la présence d'une sauvegarde (pour griser « Continuer »)</td></tr>
+      <tr><td><code>DeleteGameInSlot(Slot, UserIndex)</code></td><td>Supprime la sauvegarde</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Sauvegarder un score</h3>
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="Créer un objet BP_MySaveGame, y copier le score courant, puis l'écrire dans le slot « Slot_0 ».">
+{
+  "nodes": [
+    { "id": "ev", "type": "custom", "title": "SaveProgress", "x": 0, "y": 0, "out": [ { "type": "exec" } ] },
+    { "id": "create", "type": "function", "title": "Create Save Game Object", "x": 180, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Save Game Class", "type": "class", "value": "BP_MySaveGame" } ],
+      "out": [ { "type": "exec" }, { "name": "Return Value", "type": "object" } ] },
+    { "id": "cast", "type": "cast", "title": "Cast To BP_MySaveGame", "x": 40, "y": 220,
+      "in": [ { "type": "exec" }, { "name": "Object", "type": "object" } ],
+      "out": [ { "type": "exec" }, { "name": "Cast Failed", "type": "exec" }, { "name": "As BP My Save Game", "type": "object" } ] },
+    { "id": "score", "type": "var", "title": "Current Score", "x": 150, "y": 385, "out": [ { "type": "int" } ] },
+    { "id": "set", "type": "set", "title": "SET", "x": 330, "y": 165,
+      "in": [ { "type": "exec" }, { "name": "Score", "type": "int" }, { "name": "Target", "type": "object" } ],
+      "out": [ { "type": "exec" }, { "type": "int" } ] },
+    { "id": "save", "type": "function", "title": "Save Game to Slot", "x": 530, "y": 240,
+      "in": [ { "type": "exec" }, { "name": "Save Game Object", "type": "object" },
+              { "name": "Slot Name", "type": "string", "value": "Slot_0" }, { "name": "User Index", "type": "int", "value": "0" } ],
+      "out": [ { "type": "exec" }, { "name": "Return Value", "type": "bool" } ] }
+  ],
+  "links": [
+    [ "ev", 0, "create", 0 ], [ "create", 0, "cast", 0 ], [ "create", 1, "cast", 1 ],
+    [ "cast", 0, "set", 0 ], [ "score", 0, "set", 1 ], [ "cast", 2, "set", 2 ],
+    [ "cast", 2, "save", 1 ], [ "set", 0, "save", 0 ]
+  ]
+}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="MyPlayerController.cpp">
+#include "MyPlayerController.h"
+#include "Kismet/GameplayStatics.h"
+#include "MySaveGame.h"
+
+void AMyPlayerController::SaveProgress()
+{
+    UMySaveGame* Save = Cast<UMySaveGame>(
+        UGameplayStatics::CreateSaveGameObject(UMySaveGame::StaticClass()));
+    if (!Save)
+    {
+        return;
+    }
+
+    Save->Score = CurrentScore;
+
+    const bool bSaved = UGameplayStatics::SaveGameToSlot(Save, TEXT("Slot_0"), 0);
+    UE_LOG(LogTemp, Log, TEXT("Sauvegarde %s"), bSaved ? TEXT("réussie") : TEXT("échouée"));
+}
+</script>
+    </div>
+  </div>
+
+  <p>Le chargement est symétrique : <em>Does Save Game Exist</em>, puis <em>Load Game from Slot</em>, puis un <strong>Cast</strong> vers votre classe pour lire ses variables. Selon votre version du moteur, la sortie de <em>Create Save Game Object</em> peut déjà être typée d'après la classe choisie ; le Cast reste en revanche indispensable après <em>Load Game from Slot</em>, qui renvoie un SaveGame générique.</p>
+
+  <h3>Centraliser dans un Subsystem</h3>
+  <p>Disperser des appels de sauvegarde dans tout le projet devient vite ingérable. Un <code>UGameInstanceSubsystem</code> (voir <a href="architecture.html">Architecture du moteur</a>) est l'endroit parfait : il vit toute la session, survit aux changements de niveau et garde la sauvegarde courante en mémoire.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="SaveSubsystem.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Subsystems/GameInstanceSubsystem.h"
+#include "SaveSubsystem.generated.h"
+
+class UMySaveGame;
+
+UCLASS()
+class MYGAME_API USaveSubsystem : public UGameInstanceSubsystem
+{
+    GENERATED_BODY()
+
+public:
+    virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+
+    // Collecte l'état du monde puis écrit le fichier en arrière-plan
+    UFUNCTION(BlueprintCallable, Category = "Save")
+    void WriteSave();
+
+    // Relit le fichier ; renvoie false s'il n'existe pas ou est illisible
+    UFUNCTION(BlueprintCallable, Category = "Save")
+    bool ReadSave();
+
+    UFUNCTION(BlueprintPure, Category = "Save")
+    UMySaveGame* GetCurrentSave() const { return CurrentSave; }
+
+private:
+    void HandleSaveFinished(const FString& SlotName, const int32 UserIndex, bool bSuccess);
+
+    UPROPERTY()
+    TObjectPtr<UMySaveGame> CurrentSave;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="SaveSubsystem.cpp" data-highlight="31,39-43,69,75-77">
+#include "SaveSubsystem.h"
+#include "MySaveGame.h"
+#include "InventoryComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "Engine/GameInstance.h"
+#include "GameFramework/PlayerController.h"
+
+namespace
+{
+    const TCHAR* SaveSlotName = TEXT("Slot_0");
+    constexpr int32 SaveUserIndex = 0;
+}
+
+void USaveSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+    Super::Initialize(Collection);
+
+    if (!ReadSave()) // première partie : on part d'une sauvegarde vierge
+    {
+        CurrentSave = Cast<UMySaveGame>(UGameplayStatics::CreateSaveGameObject(UMySaveGame::StaticClass()));
+    }
+}
+
+bool USaveSubsystem::ReadSave()
+{
+    if (!UGameplayStatics::DoesSaveGameExist(SaveSlotName, SaveUserIndex))
+    {
+        return false;
+    }
+
+    UMySaveGame* Loaded = Cast<UMySaveGame>(UGameplayStatics::LoadGameFromSlot(SaveSlotName, SaveUserIndex));
+    if (!Loaded)
+    {
+        return false; // fichier corrompu ou d'une autre classe
+    }
+
+    // Migration : les champs absents d'un vieux fichier gardent leur valeur par défaut,
+    // on ne corrige que ce qui a changé de sens entre deux versions
+    if (Loaded->SaveVersion < 2)
+    {
+        Loaded->Score *= 10; // la version 2 a multiplié le barème des points par 10
+    }
+    Loaded->SaveVersion = UMySaveGame::LatestVersion;
+
+    CurrentSave = Loaded;
+    return true;
+}
+
+void USaveSubsystem::WriteSave()
+{
+    if (!CurrentSave)
+    {
+        return;
+    }
+
+    CurrentSave->LevelName = FName(UGameplayStatics::GetCurrentLevelName(GetGameInstance()));
+
+    APlayerController* PC = GetGameInstance()->GetFirstLocalPlayerController();
+    if (APawn* Pawn = PC ? PC->GetPawn() : nullptr)
+    {
+        CurrentSave->PlayerTransform = Pawn->GetActorTransform();
+
+        if (const UInventoryComponent* Inventory = Pawn->FindComponentByClass<UInventoryComponent>())
+        {
+            CurrentSave->Inventory.Reset();
+            for (const FInventorySlot& Slot : Inventory->GetSlots())
+            {
+                FSavedInventorySlot& Saved = CurrentSave->Inventory.AddDefaulted_GetRef();
+                Saved.Item = TSoftObjectPtr<UItemData>(Slot.Item.Get());
+                Saved.Quantity = Slot.Quantity;
+            }
+        }
+    }
+
+    FAsyncSaveGameToSlotDelegate OnSaved;
+    OnSaved.BindUObject(this, &USaveSubsystem::HandleSaveFinished);
+    UGameplayStatics::AsyncSaveGameToSlot(CurrentSave, SaveSlotName, SaveUserIndex, OnSaved);
+}
+
+void USaveSubsystem::HandleSaveFinished(const FString& SlotName, const int32 UserIndex, bool bSuccess)
+{
+    UE_LOG(LogTemp, Log, TEXT("Sauvegarde %s : %s"), *SlotName, bSuccess ? TEXT("OK") : TEXT("ÉCHEC"));
+}
+</script>
+
+  <p>Au chargement d'un niveau, chaque acteur concerné relit ce qui le regarde. Un coffre, par exemple, porte un identifiant unique éditable (<code>UPROPERTY(EditInstanceOnly) FName ChestId</code>) et se met dans l'état « ouvert » dans son <code>BeginPlay</code> si cet identifiant figure dans <code>OpenedChestIds</code>.</p>
+
+  <h3>Que sauvegarder, et comment ?</h3>
+  <dl class="defs">
+    <dt>Le joueur</dt><dd>Transform, points de vie, inventaire (chemins d'assets et quantités), monnaie, compétences débloquées.</dd>
+    <dt>La progression</dt><dd>Quêtes terminées, niveaux débloqués, dialogues déjà vus : des ensembles de <code>FName</code> ou de <code>FGuid</code>.</dd>
+    <dt>L'état du niveau</dt><dd>Seulement ce qui diffère de l'état initial : coffres ouverts, ennemis uniques vaincus, leviers activés. Chaque acteur est désigné par un <strong>identifiant stable</strong>, jamais par un pointeur.</dd>
+    <dt>Les options</dt><dd>Dans un slot séparé (ou via <code>UGameUserSettings</code> pour les options graphiques), pour ne pas les perdre en effaçant une partie.</dd>
+  </dl>
+
+  <div class="callout danger">
+    <p class="callout-title">Ne sauvegardez jamais un pointeur vers un acteur du niveau</p>
+    <p>Un pointeur est une adresse mémoire valable uniquement pendant la session en cours. Au prochain lancement, l'ennemi ou le coffre est un <em>nouvel</em> objet, à une autre adresse : la référence relue sera nulle ou fausse. Stockez des identifiants (<code>FName</code>, <code>FGuid</code>) pour les acteurs, et des chemins (<code>TSoftObjectPtr</code>, <code>FPrimaryAssetId</code>) pour les assets.</p>
+  </div>
+
+  <div class="callout warn">
+    <p class="callout-title">Pensez au versionnage dès le premier jour</p>
+    <p>Vos joueurs garderont leurs fichiers d'une mise à jour à l'autre. Renommer une propriété fait perdre silencieusement sa valeur (elle est relue par son nom), et changer la classe de sauvegarde fait échouer le Cast. Ajoutez un champ <code>SaveVersion</code> dès la première version publique et migrez les anciens fichiers au chargement, comme dans <code>ReadSave</code> ci-dessus.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Pourquoi vaut-il mieux enregistrer <code>ChestId = "Crypte_Coffre_03"</code> plutôt qu'une référence vers l'acteur coffre ?</p>
+    <ul>
+      <li>Parce qu'un FName prend moins de place sur le disque</li>
+      <li data-correct>Parce que l'acteur sera recréé au prochain chargement du niveau et que l'ancienne référence ne le désignera plus</li>
+      <li>Parce que USaveGame refuse de compiler avec des pointeurs</li>
+      <li>Parce que les coffres n'ont pas de nom</li>
+    </ul>
+    <p class="explain">Les acteurs placés dans un niveau sont reconstruits à chaque chargement. Un identifiant stable, choisi par vous et identique d'une session à l'autre, est le seul moyen fiable de retrouver « le même » coffre.</p>
+  </div>
+
+  <h2>Déroulement d'une partie</h2>
+  <p>C'est le <strong>GameMode</strong> qui arbitre : il compte les ennemis vaincus, décide de la victoire ou de la défaite et fait réapparaître le joueur (voir <a href="architecture.html">Architecture du moteur</a>). Le personnage se contente de lui signaler sa mort, par exemple depuis l'événement <code>OnDeath</code> de son composant de santé : <code>GetWorld()-&gt;GetAuthGameMode&lt;AArenaGameMode&gt;()-&gt;OnPlayerDied(GetController())</code>.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="ArenaGameMode.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/GameModeBase.h"
+#include "ArenaGameMode.generated.h"
+
+UCLASS(Config = Game)
+class MYGAME_API AArenaGameMode : public AGameModeBase
+{
+    GENERATED_BODY()
+
+public:
+    void OnPlayerDied(AController* Controller);
+    void OnEnemyKilled();
+
+protected:
+    virtual void BeginPlay() override;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Rules")
+    int32 StartingLives = 3;
+
+    UPROPERTY(Config, EditDefaultsOnly, Category = "Rules")
+    float RespawnDelay = 3.f;
+
+    UPROPERTY(Config, EditDefaultsOnly, Category = "Rules")
+    int32 EnemiesToKill = 10;
+
+private:
+    void EndGame(bool bVictory);
+
+    int32 LivesLeft = 0;
+    int32 EnemiesKilled = 0;
+    FTimerHandle RespawnTimer;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="ArenaGameMode.cpp" data-highlight="19-20,31-34">
+#include "ArenaGameMode.h"
+#include "GameFramework/Pawn.h"
+#include "Kismet/GameplayStatics.h"
+#include "TimerManager.h"
+
+void AArenaGameMode::BeginPlay()
+{
+    Super::BeginPlay();
+    LivesLeft = StartingLives;
+}
+
+void AArenaGameMode::OnPlayerDied(AController* Controller)
+{
+    if (!Controller) return;
+
+    // Le corps reste 5 s au sol (ragdoll), mais n'est plus contrôlé
+    if (APawn* DeadPawn = Controller->GetPawn())
+    {
+        DeadPawn->DetachFromControllerPendingDestroy();
+        DeadPawn->SetLifeSpan(5.f);
+    }
+
+    if (--LivesLeft <= 0)
+    {
+        EndGame(false);
+        return;
+    }
+
+    // Réapparition différée : RestartPlayer crée un nouveau Pawn sur un PlayerStart
+    TWeakObjectPtr<AController> WeakController = Controller;
+    GetWorldTimerManager().SetTimer(RespawnTimer, FTimerDelegate::CreateWeakLambda(this, [this, WeakController]()
+    {
+        if (AController* C = WeakController.Get()) RestartPlayer(C);
+    }), RespawnDelay, false);
+}
+
+void AArenaGameMode::OnEnemyKilled()
+{
+    if (++EnemiesKilled >= EnemiesToKill)
+    {
+        EndGame(true);
+    }
+}
+
+void AArenaGameMode::EndGame(bool bVictory)
+{
+    // Afficher l'écran de victoire ou de défaite via le PlayerController, puis :
+    UGameplayStatics::SetGamePaused(this, true);
+}
+</script>
+
+  <h3>Les états de match d'AGameMode</h3>
+  <p><code>AGameModeBase</code> suffit à la plupart des jeux solo. Sa classe enfant <code>AGameMode</code> ajoute une <strong>machine à états de match</strong>, pensée pour les parties multijoueur avec phase d'attente et écran de fin. On passe d'un état à l'autre avec <code>StartMatch()</code> et <code>EndMatch()</code>, et on réagit en surchargeant <code>HandleMatchHasStarted()</code> ou <code>HandleMatchHasEnded()</code>. L'état courant se lit avec <code>GetMatchState()</code>.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+stateDiagram-v2
+    [*] --> EnteringMap
+    EnteringMap --> WaitingToStart : carte chargée
+    WaitingToStart --> InProgress : StartMatch()
+    InProgress --> WaitingPostMatch : EndMatch()
+    WaitingPostMatch --> LeavingMap : changement de carte
+    LeavingMap --> [*]
+    InProgress --> Aborted : AbortMatch()
+</pre>
+    <figcaption>Les états de match d'AGameMode (constantes de l'espace de noms MatchState). Par défaut, le match démarre dès que ReadyToStartMatch() renvoie true.</figcaption>
+  </figure>
+
+  <div class="callout warn">
+    <p class="callout-title">Piège courant : mélanger les familles</p>
+    <p><code>AGameMode</code> doit être associé à <code>AGameState</code>, et <code>AGameModeBase</code> à <code>AGameStateBase</code>. Utiliser un GameMode avec un GameStateBase (ou l'inverse) provoque des erreurs dans le log et un framework qui ne fonctionne qu'à moitié.</p>
+  </div>
+
+  <h3>Passer d'un niveau à l'autre</h3>
+  <ul>
+    <li><strong><code>UGameplayStatics::OpenLevel</code></strong> : décharge tout le monde et charge la nouvelle carte. Seule la GameInstance (et ses Subsystems) survit : c'est là que vous transmettez les données d'un niveau au suivant. Le paramètre <em>Options</em> (par exemple <code>?Difficulty=Hard</code>) peut être relu par le GameMode avec <code>UGameplayStatics::ParseOption</code>.</li>
+    <li><strong>Level Streaming</strong> : charger et décharger des sous-niveaux sans quitter la carte persistante, pour éviter un écran de chargement.</li>
+    <li><strong>ServerTravel</strong> : l'équivalent multijoueur, qui emmène tous les clients connectés (voir <a href="multijoueur.html">Réseau &amp; multijoueur</a>).</li>
+  </ul>
+
+  <h2>Introduction au Gameplay Ability System</h2>
+  <p>Le <strong>Gameplay Ability System</strong> (GAS) est le framework d'Epic pour les capacités, attributs et effets : il fait tourner <em>Fortnite</em> et le projet d'exemple <em>Lyra</em>. Il gère pour vous les coûts en mana, les temps de recharge, les buffs temporaires, les immunités, et surtout la <strong>prédiction réseau</strong> (le client joue la capacité immédiatement, le serveur valide).</p>
+
+  <div class="compare">
+    <div class="good">
+      <h4>GAS est pertinent si…</h4>
+      <ul>
+        <li>votre jeu compte des dizaines de capacités et d'effets (RPG, MOBA, hack'n'slash) ;</li>
+        <li>il est multijoueur et les capacités doivent être prédites ;</li>
+        <li>les buffs, malus et immunités interagissent entre eux.</li>
+      </ul>
+    </div>
+    <div class="bad">
+      <h4>GAS est surdimensionné si…</h4>
+      <ul>
+        <li>votre jeu est solo avec trois actions (sauter, tirer, ramasser) ;</li>
+        <li>vous débutez avec Unreal : apprenez d'abord les systèmes de ce chapitre ;</li>
+        <li>vous n'avez besoin que d'une barre de vie : un composant suffit.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Les pièces du système</h3>
+  <dl class="defs">
+    <dt>AbilitySystemComponent (ASC)</dt><dd>Le composant central, sur le personnage (ou sur le PlayerState en multijoueur, pour survivre à la mort du Pawn). Il possède les capacités, les attributs, les effets actifs et les tags.</dd>
+    <dt>AttributeSet</dt><dd>Un ensemble de valeurs numériques : Health, MaxHealth, Mana, AttackPower. Chaque attribut a une valeur de base et une valeur courante (base + modificateurs actifs).</dd>
+    <dt>GameplayAbility</dt><dd>Une action : dash, boule de feu, soin. Elle s'active, paie son coût, lance son temps de recharge, puis se termine.</dd>
+    <dt>GameplayEffect (GE)</dt><dd>Un asset de données qui modifie des attributs et/ou ajoute des tags : dégâts, poison, buff de vitesse, coût, cooldown.</dd>
+    <dt>GameplayCue</dt><dd>Le retour visuel et sonore (particules, son, tremblement de caméra), déclenché par un tag <code>GameplayCue.*</code> et séparé de la logique.</dd>
+    <dt>Gameplay Tags</dt><dd>Le langage commun : une capacité est bloquée si l'ASC porte <code>Status.Debuff.Stun</code>, un cooldown n'est rien d'autre qu'un tag temporaire.</dd>
+  </dl>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TB
+    IN["Entrée joueur"] --> ASC["AbilitySystemComponent"]
+    ASC -- "TryActivateAbility" --> GA["GameplayAbility<br>ex. Boule de feu"]
+    GA -- "CommitAbility" --> COST["GE de coût<br>Mana -20"]
+    GA -- "CommitAbility" --> CD["GE de cooldown<br>tag Cooldown.Fireball"]
+    GA -- "applique à la cible" --> GE["GameplayEffect<br>Damage 35"]
+    GE -- "modifie" --> AS["AttributeSet<br>Health, Mana"]
+    GE -- "déclenche" --> GC["GameplayCue<br>explosion, son"]
+    ASC -- "porte" --> TAGS["Gameplay Tags<br>Status.Debuff.Stun"]
+    TAGS -.->|bloque| GA
+</pre>
+    <figcaption>Activation d'une capacité avec GAS : la capacité paie son coût et lance son cooldown (deux GameplayEffects), puis applique un effet de dégâts qui modifie les attributs de la cible.</figcaption>
+  </figure>
+
+  <h3>Mise en place</h3>
+  <ol class="steps">
+    <li><strong>Activer le plugin</strong><em>Edit</em> → <em>Plugins</em>, cherchez « Gameplay Abilities », cochez-le et redémarrez l'éditeur.</li>
+    <li><strong>Ajouter les modules</strong>Dans le <code>.Build.cs</code> : <code>"GameplayAbilities"</code>, <code>"GameplayTags"</code> et <code>"GameplayTasks"</code>.</li>
+    <li><strong>Ajouter l'ASC</strong>Sur votre personnage, qui implémente <code>IAbilitySystemInterface</code> (une seule fonction : <code>GetAbilitySystemComponent()</code>). Appelez <code>InitAbilityActorInfo(Owner, Avatar)</code> une fois le personnage possédé, puis donnez les capacités avec <code>GiveAbility(FGameplayAbilitySpec(Classe, Niveau))</code>.</li>
+    <li><strong>Créer un AttributeSet</strong>Créé comme sous-objet du propriétaire de l'ASC (<code>CreateDefaultSubobject</code>), il est enregistré automatiquement.</li>
+  </ol>
+
+  <p>La macro <code>ATTRIBUTE_ACCESSORS</code> n'est pas fournie toute prête : on la définit soi-même (le modèle figure en commentaire dans <code>AttributeSet.h</code>). Elle génère les getters et setters de chaque attribut :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="MyAttributeSet.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "AttributeSet.h"
+#include "AbilitySystemComponent.h"
+#include "MyAttributeSet.generated.h"
+
+#define ATTRIBUTE_ACCESSORS(ClassName, PropertyName) \
+    GAMEPLAYATTRIBUTE_PROPERTY_GETTER(ClassName, PropertyName) \
+    GAMEPLAYATTRIBUTE_VALUE_GETTER(PropertyName) \
+    GAMEPLAYATTRIBUTE_VALUE_SETTER(PropertyName) \
+    GAMEPLAYATTRIBUTE_VALUE_INITTER(PropertyName)
+
+UCLASS()
+class MYGAME_API UMyAttributeSet : public UAttributeSet
+{
+    GENERATED_BODY()
+
+public:
+    UPROPERTY(BlueprintReadOnly, Category = "Attributes")
+    FGameplayAttributeData Health;
+    ATTRIBUTE_ACCESSORS(UMyAttributeSet, Health) // GetHealth(), SetHealth(), GetHealthAttribute()...
+
+    UPROPERTY(BlueprintReadOnly, Category = "Attributes")
+    FGameplayAttributeData MaxHealth;
+    ATTRIBUTE_ACCESSORS(UMyAttributeSet, MaxHealth)
+
+    UPROPERTY(BlueprintReadOnly, Category = "Attributes")
+    FGameplayAttributeData Mana;
+    ATTRIBUTE_ACCESSORS(UMyAttributeSet, Mana)
+
+    // Appelé avant chaque modification de la valeur courante : on borne Health
+    virtual void PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue) override
+    {
+        Super::PreAttributeChange(Attribute, NewValue);
+        if (Attribute == GetHealthAttribute())
+        {
+            NewValue = FMath::Clamp(NewValue, 0.f, GetMaxHealth());
+        }
+    }
+};
+</script>
+
+  <p>Une capacité hérite de <code>UGameplayAbility</code>. Le schéma est toujours le même : <code>ActivateAbility</code> → <code>CommitAbility</code> (paie le coût et lance le cooldown, échoue s'il manque du mana) → effet → <code>EndAbility</code>. Oublier <code>EndAbility</code> laisse la capacité active pour toujours, et ses tags d'activation bloquent alors les suivantes.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="GA_Dash.cpp">
+#include "GA_Dash.h"
+#include "GameFramework/Character.h"
+
+void UGA_Dash::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
+    const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
+    const FGameplayEventData* TriggerEventData)
+{
+    // Paie le coût (GE de coût) et lance le cooldown (GE de cooldown) définis dans les Class Defaults
+    if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+    {
+        EndAbility(Handle, ActorInfo, ActivationInfo, true, true); // annulée
+        return;
+    }
+
+    if (ACharacter* Character = Cast<ACharacter>(ActorInfo->AvatarActor.Get()))
+    {
+        Character->LaunchCharacter(Character->GetActorForwardVector() * DashStrength, true, false);
+    }
+
+    EndAbility(Handle, ActorInfo, ActivationInfo, true, false); // terminée normalement
+}
+</script>
+
+  <p>Les <strong>GameplayEffects</strong> se créent en Blueprint (classe enfant de <code>GameplayEffect</code>), sans code. Leur réglage principal est la <em>Duration Policy</em> :</p>
+  <table>
+    <thead><tr><th>Duration Policy</th><th>Comportement</th><th>Exemples</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Instant</strong></td><td>Modifie définitivement la valeur de base, puis disparaît</td><td>Dégâts, soin, coût en mana</td></tr>
+      <tr><td><strong>Has Duration</strong></td><td>Actif pendant N secondes, puis retiré. Avec une <em>Period</em>, s'applique à intervalles réguliers</td><td>Buff de vitesse 10 s, poison 5 dégâts/s, cooldown</td></tr>
+      <tr><td><strong>Infinite</strong></td><td>Actif jusqu'à ce qu'on le retire explicitement</td><td>Bonus d'un équipement porté, aura</td></tr>
+    </tbody>
+  </table>
+  <p>Chaque GE contient des <strong>Modifiers</strong> (attribut visé, opération comme Add, Multiply ou Override, et magnitude) et peut accorder des tags tant qu'il est actif. Un <em>cooldown</em> est simplement un GE « Has Duration » qui accorde un tag comme <code>Cooldown.Dash</code> ; un <em>coût</em> est un GE « Instant » qui retire du mana. Depuis UE 5.3, une partie des options des GE (tags accordés, conditions d'application…) se règle via des <em>GameplayEffect Components</em> : l'interface varie donc selon votre version.</p>
+
+  <div class="callout ue">
+    <p class="callout-title">Pour aller plus loin avec GAS</p>
+    <p>GAS a une courbe d'apprentissage raide et la documentation officielle reste succincte. Les deux références de la communauté : le projet <strong>Lyra</strong> (gratuit sur Fab / le Launcher), qui l'utilise de bout en bout, et le dépôt <strong>github.com/tranek/GASDocumentation</strong>, guide communautaire très complet avec un projet d'exemple. Lisez aussi la page « Gameplay Ability System » de la documentation d'Epic.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Avec GAS, quelle Duration Policy choisir pour un poison qui inflige 5 dégâts par seconde pendant 10 secondes ?</p>
+    <ul>
+      <li>Instant</li>
+      <li data-correct>Has Duration, avec une Period de 1 seconde</li>
+      <li>Infinite</li>
+      <li>Aucune : il faut un Tick dans la capacité</li>
+    </ul>
+    <p class="explain">Un effet à durée limitée qui s'applique à intervalles réguliers, c'est exactement « Has Duration » (10 s) avec une <em>Period</em> (1 s) : le modifier de -5 Health est exécuté à chaque période. Instant ne s'applique qu'une fois, Infinite ne s'arrête jamais seul.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Une clé et une porte verrouillée avec des Gameplay Tags</h4>
+    <p>Créez une porte qui ne s'ouvre que si le joueur possède dans son inventaire un objet portant le tag demandé par la porte (par exemple <code>Item.Key.Red</code>). La porte est interactive (interface <code>IInteractable</code>), et une option permet de consommer la clé à l'ouverture. Contraintes : aucune référence directe entre la porte et un asset de clé précis, et le tag requis doit être choisi dans une liste déroulante limitée aux clés.</p>
+    <details>
+      <summary>Voir la solution</summary>
+      <p><strong>1. Étiqueter les objets.</strong> Ajoutez un container de tags à <code>UItemData</code>, puis créez <code>DA_RedKey</code> avec <code>ItemTags = { Item.Key.Red }</code> :</p>
+<script type="text/plain" data-lang="cpp" data-file="ItemData.h (ajout)">
+// Nécessite "GameplayTags" dans le Build.cs et #include "GameplayTagContainer.h"
+UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item")
+FGameplayTagContainer ItemTags;
+</script>
+      <p><strong>2. Chercher par tag dans l'inventaire.</strong></p>
+<script type="text/plain" data-lang="cpp" data-file="InventoryComponent.cpp (ajout)">
+UItemData* UInventoryComponent::FindItemWithTag(FGameplayTag Tag) const
+{
+    for (const FInventorySlot& Slot : Slots)
+    {
+        if (Slot.Item && Slot.Item->ItemTags.HasTag(Tag))
+        {
+            return Slot.Item;
+        }
+    }
+    return nullptr;
+}
+</script>
+      <p><strong>3. La porte.</strong></p>
+<script type="text/plain" data-lang="cpp" data-file="LockedDoor.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "GameplayTagContainer.h"
+#include "Interactable.h"
+#include "LockedDoor.generated.h"
+
+UCLASS()
+class MYGAME_API ALockedDoor : public AActor, public IInteractable
+{
+    GENERATED_BODY()
+
+public:
+    virtual void Interact_Implementation(AActor* InteractingActor) override;
+
+protected:
+    // La liste déroulante ne propose que les tags sous Item.Key
+    UPROPERTY(EditAnywhere, Category = "Door", meta = (Categories = "Item.Key"))
+    FGameplayTag RequiredKeyTag;
+
+    UPROPERTY(EditAnywhere, Category = "Door")
+    bool bConsumeKey = false;
+
+    // Animation d'ouverture (Timeline) et son, faits en Blueprint
+    UFUNCTION(BlueprintImplementableEvent, Category = "Door")
+    void OnDoorOpened();
+
+    UFUNCTION(BlueprintImplementableEvent, Category = "Door")
+    void OnDoorLocked();
+
+private:
+    bool bIsOpen = false;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="LockedDoor.cpp">
+#include "LockedDoor.h"
+#include "InventoryComponent.h"
+
+void ALockedDoor::Interact_Implementation(AActor* InteractingActor)
+{
+    if (bIsOpen || !InteractingActor)
+    {
+        return;
+    }
+
+    UInventoryComponent* Inventory = InteractingActor->FindComponentByClass<UInventoryComponent>();
+    UItemData* Key = Inventory ? Inventory->FindItemWithTag(RequiredKeyTag) : nullptr;
+    if (!Key)
+    {
+        OnDoorLocked(); // bruit de poignée, message « Il faut la clé rouge »
+        return;
+    }
+
+    if (bConsumeKey)
+    {
+        Inventory->RemoveItem(Key, 1);
+    }
+
+    bIsOpen = true;
+    SetActorEnableCollision(false);
+    OnDoorOpened();
+}
+</script>
+      <p><strong>Pourquoi des tags ?</strong> La porte ne connaît aucun asset : on peut créer dix clés rouges différentes sans la toucher. Et grâce à la hiérarchie, une porte réglée sur <code>Item.Key</code> s'ouvre avec <em>n'importe quelle</em> clé, puisque <code>HasTag(Item.Key)</code> est vrai pour <code>Item.Key.Red</code>. Attention au sens : un passe-partout étiqueté seulement <code>Item.Key</code> n'ouvrira pas une porte qui exige <code>Item.Key.Red</code> (un parent ne correspond pas à un enfant) ; donnez-lui plutôt tous les tags de clés.</p>
+    </details>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Les dégâts passent par <code>ApplyDamage</code> / <code>ApplyPointDamage</code> / <code>ApplyRadialDamage</code> → <code>TakeDamage</code> → <code>OnTakeAnyDamage</code> : un <code>UHealthComponent</code> abonné à ce delegate sert tous vos acteurs.</li>
+      <li>Les delegates (<code>OnHealthChanged</code>, <code>OnDeath</code>, <code>OnInventoryChanged</code>) découplent la logique de l'interface et des règles.</li>
+      <li>Une classe de base abstraite (<code>APickup</code>) factorise le comportement ; les enfants ne redéfinissent que l'effet.</li>
+      <li>L'inventaire stocke des références vers des <strong>Data Assets</strong> partagés et des quantités ; les assets lourds sont référencés en <code>TSoftObjectPtr</code>.</li>
+      <li>Data Tables pour les listes homogènes, Curve Tables pour les progressions, .ini pour les réglages globaux.</li>
+      <li>Les <strong>Gameplay Tags</strong> sont hiérarchiques : <code>HasTag</code> inclut les parents, <code>HasTagExact</code> non.</li>
+      <li><code>USaveGame</code> sérialise les <code>UPROPERTY</code> dans un <code>.sav</code> : sauvegardez des identifiants, jamais des pointeurs, et versionnez vos fichiers.</li>
+      <li>Le GameMode arbitre victoire, défaite et réapparition (<code>RestartPlayer</code>) ; GAS est puissant mais réservé aux jeux riches en capacités.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

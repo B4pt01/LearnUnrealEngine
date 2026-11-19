@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Installation &amp; premier projet — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="installation">
+<article class="doc">
+
+  <h1>Installation &amp; premier projet</h1>
+  <p class="lead">Un environnement bien installé vous épargnera des heures de frustration. Dans ce chapitre, vous installez Unreal Engine 5 et un éditeur de code, vous créez votre premier projet C++, vous comprenez à quoi sert chacun de ses dossiers, puis vous le mettez sous gestion de versions. À la fin, vous aurez écrit et compilé votre première classe.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Installer UE5 avec l'<strong>Epic Games Launcher</strong> (ou depuis les sources GitHub) et choisir les bonnes options</li>
+      <li>Configurer <strong>Visual Studio 2022</strong>, <strong>Rider</strong> ou <strong>VS Code</strong> pour le C++ Unreal</li>
+      <li>Créer un projet à partir d'un <strong>template</strong> et comprendre l'arborescence d'un projet</li>
+      <li>Comprendre la chaîne de compilation : <strong>Unreal Build Tool</strong>, <strong>Unreal Header Tool</strong>, <strong>Live Coding</strong></li>
+      <li>Écrire votre première classe C++ et votre premier Blueprint</li>
+      <li>Versionner votre projet avec <strong>Git LFS</strong> ou <strong>Perforce</strong> et résoudre les problèmes classiques</li>
+    </ul>
+  </div>
+
+  <h2>Avant de commencer</h2>
+  <p>Unreal Engine est un logiciel lourd : l'éditeur compile des milliers de <em>shaders</em> (petits programmes exécutés par la carte graphique), manipule des textures de plusieurs centaines de mégaoctets et, si vous codez en C++, compile un projet de plusieurs millions de lignes. La machine compte donc davantage qu'avec un moteur plus léger.</p>
+
+  <table>
+    <thead><tr><th>Composant</th><th>Pour démarrer</th><th>Confortable</th><th>Pourquoi c'est important</th></tr></thead>
+    <tbody>
+      <tr><td>Processeur</td><td>4 cœurs récents</td><td>8 cœurs ou plus</td><td>La compilation C++ et celle des shaders se parallélisent sur tous les cœurs</td></tr>
+      <tr><td>Mémoire vive</td><td>16 Go</td><td>32 à 64 Go</td><td>L'éditeur, l'IDE et le compilateur tournent en même temps</td></tr>
+      <tr><td>Carte graphique</td><td>Compatible DirectX 12, 6 Go de VRAM</td><td>8 Go de VRAM ou plus, ray tracing matériel</td><td>Lumen, Nanite et les Virtual Shadow Maps sollicitent beaucoup le GPU</td></tr>
+      <tr><td>Stockage</td><td>SSD, 150 Go libres</td><td>SSD NVMe dédié, 500 Go et plus</td><td>Moteur, symboles de débogage, caches et projets se cumulent vite</td></tr>
+    </tbody>
+  </table>
+  <p class="small muted">Valeurs indicatives : consultez la page « Hardware and Software Specifications » de la documentation d'Epic pour les exigences officielles de votre version.</p>
+
+  <h2>Installer Unreal Engine</h2>
+
+  <h3>Compte Epic et Epic Games Launcher</h3>
+  <p>La méthode standard passe par l'<strong>Epic Games Launcher</strong>, l'application qui sert aussi de boutique de jeux. Il vous faut un compte Epic Games gratuit. Unreal Engine est gratuit à télécharger ; une redevance ne s'applique qu'au-delà d'un certain chiffre d'affaires par jeu (les conditions exactes sont détaillées dans le chapitre <a href="packaging.html">Packaging &amp; publication</a>).</p>
+
+  <ol class="steps">
+    <li><strong>Installer le Launcher</strong>Téléchargez-le depuis le site d'Unreal Engine, installez-le puis connectez-vous avec votre compte Epic.</li>
+    <li><strong>Ouvrir l'onglet Unreal Engine</strong>Dans la colonne de gauche, cliquez sur <em>Unreal Engine</em>, puis sur l'onglet <em>Library</em> en haut. La section <em>Engine Versions</em> liste les moteurs installés.</li>
+    <li><strong>Ajouter une version</strong>Cliquez sur le bouton <strong>+</strong> à côté de <em>Engine Versions</em>. Une vignette apparaît : choisissez la version dans sa liste déroulante. Prenez la dernière version stable (5.x la plus récente), sauf si un cours ou une équipe vous impose une version précise.</li>
+    <li><strong>Choisir les options</strong>Cliquez sur <em>Install</em>, choisissez un dossier sur un SSD, puis ouvrez <em>Options</em> pour sélectionner les composants (voir ci-dessous).</li>
+    <li><strong>Patienter</strong>Le téléchargement fait plusieurs dizaines de gigaoctets. Une fois terminé, le bouton <em>Launch</em> ouvre le <strong>Project Browser</strong>.</li>
+  </ol>
+
+  <h3>Les options d'installation</h3>
+  <p>Le bouton <em>Options</em> de la vignette du moteur permet d'ajouter ou de retirer des composants, même après l'installation. Voici ce qu'ils contiennent :</p>
+  <dl class="defs">
+    <dt>Core Components</dt><dd>Le moteur et l'éditeur. Obligatoire.</dd>
+    <dt>Starter Content</dt><dd>Quelques meshes, matériaux et sons de démonstration. Pratique pour prototyper, inutile en production.</dd>
+    <dt>Templates and Feature Packs</dt><dd>Les modèles de projets (Third Person, First Person…) et les packs ajoutables à un projet existant. Gardez-les : vous en aurez besoin pour créer vos projets.</dd>
+    <dt>Engine Source</dt><dd>Le code source C++ du moteur, en lecture. Très utile pour comprendre ce que fait une fonction en y naviguant depuis votre IDE.</dd>
+    <dt>Editor symbols for debugging</dt><dd>Les fichiers de symboles (<code>.pdb</code>) du moteur. Très volumineux (souvent plus de 50 Go), mais indispensables pour suivre un plantage ou poser un point d'arrêt <em>dans le code du moteur</em>. Sans eux, la pile d'appels d'un crash est illisible.</dd>
+    <dt>Target Platforms</dt><dd>Les plateformes vers lesquelles vous pourrez empaqueter votre jeu : Android, iOS, Linux… Windows est toujours inclus sur un PC Windows. N'ajoutez que ce dont vous avez besoin.</dd>
+  </dl>
+
+  <div class="callout tip">
+    <p class="callout-title">Le bon compromis pour débuter</p>
+    <p>Cochez <em>Starter Content</em>, <em>Templates and Feature Packs</em> et <em>Engine Source</em>. Ajoutez les <em>Editor symbols for debugging</em> dès que vous commencez vraiment le C++ et que l'espace disque le permet : le premier crash dans le moteur vous fera regretter de ne pas les avoir.</p>
+  </div>
+
+  <h3>Linux et macOS</h3>
+  <div class="tabs">
+    <div class="tab" data-label="Windows">
+      <p>C'est la plateforme de référence : toute la documentation, tous les outils et la plupart des tutoriels partent du principe que vous êtes sous Windows 10 ou 11 en 64 bits. Le Launcher installe tout, et Visual Studio fournit le compilateur.</p>
+    </div>
+    <div class="tab" data-label="macOS">
+      <p>Le Launcher existe sur macOS et UE5 fonctionne nativement sur les Mac à puce Apple Silicon. Vous devez installer <strong>Xcode</strong> depuis l'App Store : il fournit le compilateur Clang et les SDK Apple, indispensables pour compiler du C++ et pour cibler iOS. Certaines fonctionnalités de rendu dépendent du matériel et de la version : vérifiez les notes de version.</p>
+    </div>
+    <div class="tab" data-label="Linux">
+      <p>Il n'y a pas de Launcher officiel sous Linux. Deux solutions :</p>
+      <ul>
+        <li><strong>Les binaires précompilés</strong> : Epic publie une archive de l'éditeur sur <code>unrealengine.com/linux</code> (connexion à votre compte Epic requise). Décompressez-la, puis lancez <code>Engine/Binaries/Linux/UnrealEditor</code>. La chaîne de compilation Clang est fournie.</li>
+        <li><strong>Compiler depuis les sources</strong> (section suivante) : plus long, mais vous choisissez exactement la version et vous pouvez modifier le moteur.</li>
+      </ul>
+      <p>Comme éditeur de code, utilisez Rider ou VS Code. Les pilotes graphiques propriétaires (NVIDIA) ou Mesa récents (AMD) sont fortement recommandés, Vulkan étant l'API de rendu utilisée.</p>
+    </div>
+  </div>
+
+  <h2>Compiler le moteur depuis les sources</h2>
+  <p>Le code source complet d'Unreal Engine est disponible sur GitHub, dans un dépôt privé de l'organisation <strong>EpicGames</strong>. Il est gratuit, mais l'accès demande de lier vos comptes.</p>
+
+  <h3>Quand en avez-vous besoin ?</h3>
+  <ul>
+    <li><strong>Serveurs dédiés</strong> : la cible <em>Server</em> ne peut être compilée qu'avec un moteur construit depuis les sources.</li>
+    <li><strong>Modifier le moteur</strong> : corriger un bug d'Epic sans attendre la prochaine version, ajouter une fonctionnalité au rendu, adapter un outil.</li>
+    <li><strong>Utiliser une branche précise</strong> : une version de développement, ou une version patchée par votre studio.</li>
+    <li><strong>Linux</strong>, si vous ne voulez pas des binaires précompilés.</li>
+  </ul>
+  <p>Pour apprendre et pour la grande majorité des projets solo, la version du Launcher suffit amplement. Le moteur source coûte cher : plus de 150 Go d'espace et plusieurs heures de compilation initiale.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    subgraph LA["Epic Games Launcher"]
+        L1["Installer<br>le Launcher"] --> L2["Télécharger un<br>moteur précompilé"] --> L3["Créer un projet<br>et coder"]
+    end
+    subgraph SRC["Moteur compilé depuis les sources"]
+        S1["Lier le compte<br>Epic à GitHub"] --> S2["Cloner<br>EpicGames/UnrealEngine"] --> S3["Setup puis<br>GenerateProjectFiles"] --> S4["Compiler le moteur<br>plusieurs heures"] --> S5["Créer un projet<br>et coder"]
+    end
+</pre>
+    <figcaption>Deux chemins vers le même éditeur : le Launcher est immédiat, le moteur source est plus long mais modifiable.</figcaption>
+  </figure>
+
+  <h3>Les étapes</h3>
+  <ol class="steps">
+    <li><strong>Lier GitHub à votre compte Epic</strong>Sur le site d'Epic Games, ouvrez les paramètres de votre compte, section <em>Apps and Accounts</em> (applications et comptes), et connectez votre compte GitHub.</li>
+    <li><strong>Accepter l'invitation</strong>Vous recevez par e-mail une invitation à rejoindre l'organisation EpicGames sur GitHub. Tant que vous ne l'avez pas acceptée, l'adresse du dépôt <code>github.com/EpicGames/UnrealEngine</code> affiche une erreur 404.</li>
+    <li><strong>Cloner et préparer</strong>Clonez la branche voulue (<code>release</code> pour la dernière version stable), puis lancez les scripts qui téléchargent les dépendances binaires et génèrent la solution.
+<script type="text/plain" data-lang="console" data-file="Windows (invite de commandes)">
+git clone --depth 1 -b release https://github.com/EpicGames/UnrealEngine.git
+cd UnrealEngine
+Setup.bat
+GenerateProjectFiles.bat
+</script>
+<script type="text/plain" data-lang="console" data-file="Linux (terminal)">
+git clone --depth 1 -b release https://github.com/EpicGames/UnrealEngine.git
+cd UnrealEngine
+./Setup.sh
+./GenerateProjectFiles.sh
+make UnrealEditor
+</script>
+    </li>
+    <li><strong>Compiler</strong>Sous Windows, ouvrez <code>UE5.sln</code>, choisissez la configuration <em>Development Editor</em> et la plateforme <em>Win64</em>, puis compilez le projet <em>UE5</em>. Comptez une à plusieurs heures selon votre processeur.</li>
+  </ol>
+
+  <div class="callout warn">
+    <p class="callout-title">Projet et moteur doivent être compatibles</p>
+    <p>Un projet ouvert avec un moteur source est lié à <em>ce</em> moteur (le champ <code>EngineAssociation</code> du fichier <code>.uproject</code> contient alors un identifiant unique au lieu d'un numéro de version). Toute votre équipe doit utiliser le même moteur compilé, sinon chacun recompile le projet de son côté et les assets peuvent devenir incompatibles.</p>
+  </div>
+
+  <h2>Choisir et configurer un IDE</h2>
+  <p>Un <strong>IDE</strong> (environnement de développement intégré) regroupe un éditeur de texte, un compilateur, un débogueur et des outils de navigation. Pour le C++ Unreal, trois options dominent.</p>
+
+  <div class="cards">
+    <div class="card">
+      <span class="card-tag">Windows</span>
+      <h4>Visual Studio 2022</h4>
+      <p>L'IDE historique de Microsoft, gratuit en édition Community pour les particuliers et les petites structures. Il fournit aussi le compilateur MSVC dont le moteur a besoin sous Windows.</p>
+    </div>
+    <div class="card">
+      <span class="card-tag">Windows, macOS, Linux</span>
+      <h4>JetBrains Rider</h4>
+      <p>Excellent support d'Unreal : il comprend les macros <code>UPROPERTY</code>, les Blueprints dérivés, les fichiers <code>.ini</code>. Gratuit pour un usage non commercial depuis fin 2024.</p>
+    </div>
+    <div class="card">
+      <span class="card-tag">macOS, Linux</span>
+      <h4>VS Code et Xcode</h4>
+      <p>VS Code est léger et suffit avec les extensions C++. Sur macOS, Xcode est de toute façon nécessaire pour le compilateur, même si vous codez dans un autre éditeur.</p>
+    </div>
+  </div>
+
+  <h3>Installer Visual Studio 2022</h3>
+  <p>Dans le <strong>Visual Studio Installer</strong>, cochez les charges de travail (<em>workloads</em>) suivantes :</p>
+  <ul>
+    <li><strong>Développement Desktop en C++</strong> (<em>Desktop development with C++</em>) : le compilateur MSVC et les outils de build ;</li>
+    <li><strong>Développement de jeux en C++</strong> (<em>Game development with C++</em>), puis dans le panneau de droite le composant <strong>Programme d'installation d'Unreal Engine</strong> et l'intégration Unreal Engine (<em>IDE support for Unreal Engine</em>) qui ajoute la coloration des macros, l'affichage des Blueprints qui utilisent une classe et des tests ;</li>
+    <li>un <strong>Windows SDK</strong> récent (Windows 10 ou 11), normalement coché par défaut ;</li>
+    <li>selon votre version du moteur, le composant <strong>.NET</strong> demandé par Unreal Build Tool (le moteur embarque souvent son propre runtime .NET, mais les notes de version le précisent).</li>
+  </ul>
+
+  <div class="callout info">
+    <p class="callout-title">Quelle version du compilateur ?</p>
+    <p>Chaque version d'Unreal est testée avec une version précise du compilateur MSVC et du Windows SDK, indiquée dans ses notes de version (<em>Release Notes</em>, section <em>Platform SDK Upgrades</em>). Les versions récentes du moteur peuvent aussi supporter des éditions plus récentes de Visual Studio : vérifiez avant d'installer. Si une compilation échoue avec une erreur bizarre juste après une mise à jour de Visual Studio, c'est souvent la piste à suivre.</p>
+  </div>
+
+  <h3>Indiquer l'IDE à Unreal</h3>
+  <p>L'éditeur doit savoir quel programme ouvrir quand vous double-cliquez sur une classe C++. Dans <strong>Edit → Editor Preferences → General → Source Code</strong>, réglez <em>Source Code Editor</em> sur Visual Studio 2022, Rider, VS Code ou Xcode. Le menu <strong>Tools</strong> propose ensuite <em>Open Visual Studio</em> (ou l'équivalent) et <em>Refresh … Project</em> pour régénérer les fichiers de projet ; le libellé exact dépend de l'éditeur choisi.</p>
+
+  <div class="callout tip">
+    <p class="callout-title">Rider : ouvrez directement le .uproject</p>
+    <p>Rider sait ouvrir un fichier <code>.uproject</code> sans passer par la solution Visual Studio. Au premier lancement, acceptez l'installation du plugin <strong>RiderLink</strong> dans le projet ou dans le moteur : il permet à Rider de dialoguer avec l'éditeur (journaux, Blueprints dérivés, lancement du jeu).</p>
+  </div>
+
+  <h2>Créer votre premier projet</h2>
+  <p>Au lancement, l'éditeur affiche le <strong>Project Browser</strong>. À gauche, des catégories regroupent les modèles de projets (<em>templates</em>) par secteur d'activité : <em>Games</em>, <em>Film / Video &amp; Live Events</em>, <em>Architecture</em>, <em>Automotive</em> et <em>Simulation</em> (les intitulés exacts varient légèrement selon les versions). Pour faire un jeu, restez dans <strong>Games</strong>.</p>
+
+  <h3>Les templates de jeu</h3>
+  <table>
+    <thead><tr><th>Template</th><th>Contenu</th><th>Idéal pour</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Blank</strong></td><td>Un projet vide, sans personnage</td><td>Partir de zéro quand on sait ce qu'on fait</td></tr>
+      <tr><td><strong>First Person</strong></td><td>Personnage vu à la première personne, bras, arme qui tire des projectiles</td><td>FPS, jeux d'exploration</td></tr>
+      <tr><td><strong>Third Person</strong></td><td>Personnage animé avec caméra derrière l'épaule, saut, Enhanced Input configuré</td><td>Action, aventure, plateforme : le meilleur point de départ pour apprendre</td></tr>
+      <tr><td><strong>Top Down</strong></td><td>Caméra vue de dessus, déplacement au clic</td><td>Hack'n'slash, stratégie, RPG isométrique</td></tr>
+      <tr><td><strong>Vehicle</strong></td><td>Véhicules physiques Chaos et circuit d'essai</td><td>Jeux de course</td></tr>
+      <tr><td><strong>Handheld AR</strong></td><td>Réalité augmentée sur téléphone</td><td>Applications AR iOS et Android</td></tr>
+      <tr><td><strong>Virtual Reality</strong></td><td>Déplacement et interactions VR via OpenXR</td><td>Jeux en réalité virtuelle</td></tr>
+    </tbody>
+  </table>
+  <p>Selon votre version, certains templates proposent des <strong>variantes</strong> (par exemple une variante plateforme ou combat du Third Person dans les versions récentes). Un template n'est qu'un point de départ : vous pouvez ensuite ajouter le contenu d'un autre template avec <strong>Add → Add Feature or Content Pack</strong> dans le Content Browser.</p>
+
+  <h3>Les options du projet</h3>
+  <dl class="defs">
+    <dt>Blueprint / C++</dt><dd>En C++, le projet contient un dossier <code>Source</code> et un module compilé. Vous pourrez toujours utiliser des Blueprints. En Blueprint, vous pourrez ajouter du C++ plus tard (<em>Tools → New C++ Class</em> convertit le projet), mais autant partir en C++ si vous comptez coder.</dd>
+    <dt>Target Platform</dt><dd><em>Desktop</em> (PC, consoles) ou <em>Mobile</em>. Cela règle des paramètres de rendu par défaut ; ce n'est pas définitif.</dd>
+    <dt>Quality Preset</dt><dd><em>Maximum</em> active les fonctionnalités de rendu haut de gamme (Lumen, etc.) ; <em>Scalable</em> désactive les plus coûteuses pour viser du matériel modeste.</dd>
+    <dt>Starter Content</dt><dd>Copie le contenu de démonstration dans le projet. Pratique pour un prototype, mais il alourdit le projet.</dd>
+    <dt>Raytracing</dt><dd>Active le ray tracing matériel si votre carte le supporte. Laissez décoché pour débuter.</dd>
+  </dl>
+
+  <div class="callout warn">
+    <p class="callout-title">Bien nommer son projet</p>
+    <p>Le nom du projet devient le nom du module C++ et de nombreuses classes. Il doit commencer par une lettre, sans espaces, sans accents ni caractères spéciaux, et rester court (une vingtaine de caractères au plus) : <code>OrbRush</code>, <code>MyGame</code>. Placez aussi le projet dans un chemin court (<code>C:\Dev\OrbRush</code>) : sous Windows, les chemins de plus de 260 caractères provoquent des erreurs de compilation et de packaging difficiles à comprendre.</p>
+  </div>
+
+  <p><strong>Notre recommandation</strong> : template <strong>Third Person</strong>, projet <strong>C++</strong>, <em>Desktop</em>, <em>Maximum</em>, avec Starter Content. Le template fournit un personnage jouable et l'Enhanced Input déjà configuré, et la version C++ vous montre comment ce personnage est codé.</p>
+
+  <h2>L'anatomie d'un projet</h2>
+  <p>Un projet Unreal est un dossier dont la racine contient un fichier <code>.uproject</code>. Certains dossiers sont <strong>la source de vérité</strong> (à sauvegarder précieusement), d'autres sont <strong>générés</strong> et peuvent être supprimés sans risque.</p>
+
+  <ul class="tree">
+    <li><span class="node c-purple">MyGame/</span><span class="desc">Racine du projet</span>
+      <ul>
+        <li><span class="node c-purple">MyGame.uproject</span><span class="desc">Description du projet (JSON) : version du moteur, modules, plugins</span></li>
+        <li><span class="node c-red">MyGame.sln</span><span class="desc">Solution Visual Studio, générée</span></li>
+        <li><span class="node c-blue">Config/</span><span class="desc">Réglages du projet, versionnés</span>
+          <ul>
+            <li><span class="node">DefaultEngine.ini</span><span class="desc">Rendu, physique, carte de démarrage, collisions</span></li>
+            <li><span class="node">DefaultGame.ini</span><span class="desc">Informations du jeu, packaging</span></li>
+            <li><span class="node">DefaultInput.ini</span><span class="desc">Réglages d'entrées (les actions Enhanced Input sont, elles, des assets)</span></li>
+            <li><span class="node">DefaultEditor.ini</span><span class="desc">Réglages de l'éditeur partagés par l'équipe</span></li>
+          </ul>
+        </li>
+        <li><span class="node c-green">Content/</span><span class="desc">Tous les assets : <code>.uasset</code> (meshes, Blueprints, textures…) et <code>.umap</code> (niveaux)</span></li>
+        <li><span class="node c-orange">Source/</span><span class="desc">Le code C++</span>
+          <ul>
+            <li><span class="node">MyGame.Target.cs</span><span class="desc">Cible « jeu » (le jeu empaqueté)</span></li>
+            <li><span class="node">MyGameEditor.Target.cs</span><span class="desc">Cible « éditeur » (ce que vous compilez au quotidien)</span></li>
+            <li><span class="node c-orange">MyGame/</span><span class="desc">Le module principal</span>
+              <ul>
+                <li><span class="node">MyGame.Build.cs</span><span class="desc">Dépendances du module (Core, Engine, EnhancedInput…)</span></li>
+                <li><span class="node">MyGame.h / MyGame.cpp</span><span class="desc">Déclaration du module</span></li>
+                <li><span class="node">MyGameCharacter.h / .cpp</span><span class="desc">Vos classes (éventuellement rangées dans Public/ et Private/)</span></li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+        <li><span class="node c-teal">Plugins/</span><span class="desc">Plugins propres au projet (optionnel)</span></li>
+        <li><span class="node c-red">Binaries/</span><span class="desc">DLL et exécutables compilés, générés</span></li>
+        <li><span class="node c-red">Intermediate/</span><span class="desc">Fichiers temporaires de compilation et code généré par UHT</span></li>
+        <li><span class="node c-red">Saved/</span><span class="desc">Logs/, Autosaves/, Config/ (réglages locaux), Crashes/</span></li>
+        <li><span class="node c-red">DerivedDataCache/</span><span class="desc">Cache des données dérivées (shaders compilés, textures compressées). Selon la version et la configuration, ce cache peut aussi vivre dans un dossier partagé de votre profil utilisateur</span></li>
+      </ul>
+    </li>
+  </ul>
+  <p>En rouge, les éléments <strong>générés</strong> : <code>Binaries</code>, <code>Intermediate</code>, <code>Saved</code>, <code>DerivedDataCache</code> et le fichier <code>.sln</code> (ainsi que les dossiers cachés <code>.vs</code> ou <code>.idea</code> des IDE). Les supprimer règle beaucoup de problèmes de compilation « inexplicables ». Pour régénérer la solution, faites un clic droit sur le fichier <code>.uproject</code> → <strong>Generate Visual Studio project files</strong> (sous Windows, ce menu est installé avec le moteur), ou utilisez <em>Tools → Refresh … Project</em> dans l'éditeur.</p>
+
+  <div class="callout danger">
+    <p class="callout-title">Attention avant de supprimer Saved/</p>
+    <p><code>Saved/</code> contient aussi les sauvegardes automatiques (<code>Autosaves</code>) et, en développement, les fichiers <code>SaveGame</code> de votre jeu. Si vous venez de perdre un niveau suite à un crash, regardez dans <code>Saved/Autosaves</code> <em>avant</em> de faire le ménage.</p>
+  </div>
+
+  <h3>Le fichier .uproject</h3>
+  <p>C'est un simple fichier JSON. Double-cliquer dessus ouvre le projet dans l'éditeur. Clic droit → <em>Switch Unreal Engine version</em> permet de l'associer à un autre moteur installé.</p>
+
+<script type="text/plain" data-lang="json" data-file="MyGame.uproject" data-highlight="3,6-10">
+{
+    "FileVersion": 3,
+    "EngineAssociation": "5.4",
+    "Category": "",
+    "Description": "",
+    "Modules": [
+        {
+            "Name": "MyGame",
+            "Type": "Runtime",
+            "LoadingPhase": "Default",
+            "AdditionalDependencies": [ "Engine" ]
+        }
+    ],
+    "Plugins": [
+        {
+            "Name": "ModelingToolsEditorMode",
+            "Enabled": true,
+            "TargetAllowList": [ "Editor" ]
+        }
+    ]
+}
+</script>
+
+  <h3>Les fichiers .Build.cs et .Target.cs</h3>
+  <p>Ces fichiers sont écrits en <strong>C#</strong> : ils sont lus par Unreal Build Tool, lui-même écrit en C#. Le <code>.Build.cs</code> décrit un <strong>module</strong> (une bibliothèque de code compilée séparément) et surtout ses <strong>dépendances</strong> : si vous utilisez une classe d'un autre module (l'UI, l'IA, Niagara…), il faut ajouter ce module ici, sinon l'édition de liens échoue avec une erreur <em>unresolved external symbol</em>.</p>
+
+<script type="text/plain" data-lang="csharp" data-file="Source/MyGame/MyGame.Build.cs" data-highlight="9-10">
+using UnrealBuildTool;
+
+public class MyGame : ModuleRules
+{
+    public MyGame(ReadOnlyTargetRules Target) : base(Target)
+    {
+        PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+
+        PublicDependencyModuleNames.AddRange(new string[] {
+            "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput" });
+
+        // Exemple : décommentez pour utiliser UMG (interfaces) en C++
+        // PrivateDependencyModuleNames.AddRange(new string[] { "UMG", "Slate", "SlateCore" });
+    }
+}
+</script>
+
+<script type="text/plain" data-lang="csharp" data-file="Source/MyGameEditor.Target.cs">
+using UnrealBuildTool;
+using System.Collections.Generic;
+
+public class MyGameEditorTarget : TargetRules
+{
+    public MyGameEditorTarget(TargetInfo Target) : base(Target)
+    {
+        Type = TargetType.Editor;
+        // Ces deux valeurs suivent la version du moteur qui a créé le projet
+        DefaultBuildSettings = BuildSettingsVersion.V5;
+        IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_4;
+        ExtraModuleNames.Add("MyGame");
+    }
+}
+</script>
+
+  <h2>Comment le C++ est compilé</h2>
+  <p>Le C++ standard ne sait pas qu'une variable doit apparaître dans l'éditeur ou être accessible en Blueprint. Unreal ajoute donc une étape avant le compilateur : la <strong>génération de code</strong>.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    UBT["Unreal Build Tool<br>lit Build.cs et Target.cs"] -. "orchestre" .-> UHT
+    H["MyActor.h<br>UCLASS, UPROPERTY"] --> UHT["Unreal Header Tool<br>analyse les macros"]
+    UHT --> GEN["MyActor.generated.h<br>MyActor.gen.cpp"]
+    H --> CC["Compilateur C++<br>MSVC ou Clang"]
+    CPP["MyActor.cpp"] --> CC
+    GEN --> CC
+    UBT -. "orchestre" .-> CC
+    CC --> DLL["UnrealEditor-MyGame.dll<br>le module compilé"]
+    DLL --> ED["Éditeur<br>charge le module"]
+</pre>
+    <figcaption>La chaîne de compilation : UBT pilote tout, UHT génère le code de réflexion, le compilateur produit la DLL du module.</figcaption>
+  </figure>
+
+  <dl class="defs">
+    <dt>Unreal Build Tool</dt><dd>UBT, le chef d'orchestre. Il lit les fichiers <code>.Target.cs</code> et <code>.Build.cs</code>, détermine quels modules compiler, appelle UHT, puis le compilateur et l'éditeur de liens avec les bons paramètres.</dd>
+    <dt>Unreal Header Tool</dt><dd>UHT parcourt vos fichiers <code>.h</code> à la recherche des macros <code>UCLASS</code>, <code>UPROPERTY</code>, <code>UFUNCTION</code>… et génère le code qui décrit vos classes au moteur (le système de <strong>réflexion</strong>). C'est pourquoi chaque header se termine par <code>#include "MyActor.generated.h"</code>, qui doit rester le <em>dernier</em> include.</dd>
+    <dt>Module</dt><dd>Une unité de code compilée en une bibliothèque (une DLL dans l'éditeur). Votre jeu est un module ; le moteur en compte des centaines.</dd>
+  </dl>
+
+  <h3>Live Coding</h3>
+  <p><strong>Live Coding</strong> recompile votre code <em>pendant que l'éditeur est ouvert</em> et remplace à chaud les fonctions modifiées. Raccourci : <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>F11</kbd> dans l'éditeur, ou le bouton de compilation en bas à droite de la fenêtre. C'est idéal pour ajuster le corps d'une fonction et voir le résultat en quelques secondes.</p>
+  <p>Mais Live Coding a des limites : il gère mal les changements de <strong>structure</strong> d'une classe. Dans ces cas, fermez l'éditeur, compilez depuis l'IDE, puis relancez :</p>
+
+  <div class="compare">
+    <div class="good">
+      <h4>Live Coding suffit</h4>
+      <ul>
+        <li>Modifier le corps d'une fonction dans un <code>.cpp</code></li>
+        <li>Changer une valeur, une formule, un message de log</li>
+        <li>Ajouter une fonction non exposée (sans <code>UFUNCTION</code>) dans un <code>.cpp</code></li>
+      </ul>
+    </div>
+    <div class="bad">
+      <h4>Fermez l'éditeur et compilez</h4>
+      <ul>
+        <li>Ajouter ou modifier une <code>UPROPERTY</code> ou une <code>UFUNCTION</code></li>
+        <li>Créer une nouvelle classe, ajouter des variables membres</li>
+        <li>Changer les valeurs par défaut dans un constructeur</li>
+        <li>Modifier un <code>.Build.cs</code> ou les modules du <code>.uproject</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Compiler depuis l'IDE</h3>
+  <p>Dans Visual Studio, choisissez la configuration <strong>Development Editor</strong> et la plateforme <strong>Win64</strong> dans la barre d'outils, vérifiez que votre projet de jeu (et non <em>UE5</em>) est le projet de démarrage, puis appuyez sur <kbd>F5</kbd> : le projet est compilé et l'éditeur s'ouvre avec le débogueur attaché. Vos points d'arrêt fonctionnent alors directement.</p>
+  <table>
+    <thead><tr><th>Configuration</th><th>Usage</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Development Editor</strong></td><td>Le quotidien : éditeur avec votre code optimisé mais débogable</td></tr>
+      <tr><td><strong>DebugGame Editor</strong></td><td>Votre code sans optimisations (variables toutes visibles dans le débogueur), moteur optimisé</td></tr>
+      <tr><td><strong>Development</strong></td><td>Le jeu seul, sans éditeur (nécessite des assets « cookés », voir <a href="packaging.html">Packaging</a>)</td></tr>
+      <tr><td><strong>Shipping</strong></td><td>La version finale distribuée aux joueurs : rapide, sans console ni logs</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <p class="callout-title">« Unable to build while Live Coding is active »</p>
+    <p>Vous ne pouvez pas compiler depuis l'IDE tant que l'éditeur est ouvert avec Live Coding activé. Fermez l'éditeur, ou compilez avec <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>F11</kbd> depuis l'éditeur lui-même.</p>
+  </div>
+
+  <h2>Votre première classe C++</h2>
+  <p>Dans l'éditeur, ouvrez <strong>Tools → New C++ Class</strong>. Choisissez la classe parente <strong>Actor</strong>, cliquez sur <em>Next</em>, nommez la classe <code>MyActor</code> puis <em>Create Class</em>. L'éditeur génère deux fichiers dans <code>Source/MyGame/</code> et compile le module. Si la classe n'apparaît pas dans le Content Browser (dossier <em>C++ Classes</em>), fermez l'éditeur et compilez depuis l'IDE.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="MyActor.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "MyActor.generated.h"   // toujours le dernier include
+
+UCLASS()
+class MYGAME_API AMyActor : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    // Constructeur : valeurs par défaut et création des composants
+    AMyActor();
+
+protected:
+    // Appelé quand la partie commence pour cet Actor
+    virtual void BeginPlay() override;
+
+public:
+    // Appelé à chaque frame
+    virtual void Tick(float DeltaTime) override;
+};
+</script>
+
+<script type="text/plain" data-lang="cpp" data-file="MyActor.cpp">
+#include "MyActor.h"
+
+AMyActor::AMyActor()
+{
+    // Active Tick. Passez à false si vous n'en avez pas besoin : c'est plus performant.
+    PrimaryActorTick.bCanEverTick = true;
+}
+
+void AMyActor::BeginPlay()
+{
+    Super::BeginPlay();
+}
+
+void AMyActor::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+}
+</script>
+
+  <dl class="defs">
+    <dt>UCLASS()</dt><dd>Déclare la classe au système de réflexion : elle devient visible dans l'éditeur et peut servir de parent à un Blueprint.</dd>
+    <dt>MYGAME_API</dt><dd>Macro d'export du module (nom du module en majuscules suivi de <code>_API</code>) : elle rend la classe utilisable depuis d'autres modules.</dd>
+    <dt>GENERATED_BODY()</dt><dd>Insère le code généré par UHT. Obligatoire, en première ligne de la classe.</dd>
+    <dt>Super::BeginPlay()</dt><dd>Appelle la version de la classe parente. L'oublier casse des comportements du moteur (composants non initialisés, Blueprints dont le BeginPlay ne se déclenche pas).</dd>
+  </dl>
+  <p>Toutes ces notions sont détaillées dans le chapitre <a href="cpp-bases.html">C++ pour Unreal : les bases</a>.</p>
+
+  <h3>Hello World, en Blueprint et en C++</h3>
+  <p>Affichons un message au démarrage du jeu. En Blueprint, ouvrez un Blueprint d'Actor (ou le <em>Level Blueprint</em> via le bouton Blueprints de la barre d'outils) ; en C++, complétez le <code>BeginPlay</code> de <code>AMyActor</code>, puis glissez l'Actor dans le niveau et lancez <em>Play</em>.</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="Au démarrage, Print String affiche le message à l'écran et dans l'Output Log.">
+{
+  "nodes": [
+    { "id": "begin", "type": "event", "title": "Event BeginPlay", "x": 0, "y": 0, "out": [ { "type": "exec" } ] },
+    { "id": "print", "type": "function", "title": "Print String", "x": 230, "y": 0,
+      "in": [ { "type": "exec" },
+              { "name": "In String", "type": "string", "value": "Bonjour Unreal !" },
+              { "name": "Print to Screen", "type": "bool", "value": true },
+              { "name": "Print to Log", "type": "bool", "value": true },
+              { "name": "Duration", "type": "float", "value": "5.0" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [ [ "begin", 0, "print", 0 ] ]
+}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="MyActor.cpp" data-highlight="9-15">
+#include "MyActor.h"
+#include "Engine/Engine.h"   // pour GEngine
+
+void AMyActor::BeginPlay()
+{
+    Super::BeginPlay();
+
+    // Dans l'Output Log (catégorie LogTemp, niveau Warning = texte jaune)
+    UE_LOG(LogTemp, Warning, TEXT("Bonjour Unreal ! Je suis %s"), *GetName());
+
+    // À l'écran pendant 5 secondes. GEngine peut être nul : on vérifie toujours.
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, TEXT("Bonjour Unreal !"));
+    }
+}
+</script>
+    </div>
+  </div>
+
+  <div class="callout info">
+    <p class="callout-title">Où voir les messages ?</p>
+    <p>Ouvrez <strong>Window → Output Log</strong>. Les messages <code>UE_LOG</code> y apparaissent avec leur catégorie (<code>LogTemp</code>) ; ils sont aussi écrits dans <code>Saved/Logs/MyGame.log</code>. Les messages à l'écran disparaissent du jeu empaqueté en configuration Shipping : ils servent au débogage, pas à l'interface du joueur.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Vous venez d'ajouter une nouvelle <code>UPROPERTY</code> dans le header d'une classe. Quelle est la méthode la plus fiable pour la voir dans l'éditeur ?</p>
+    <ul>
+      <li>Appuyer sur <kbd>Ctrl</kbd> + <kbd>S</kbd> dans l'éditeur</li>
+      <li>Lancer Live Coding et espérer que ça passe</li>
+      <li data-correct>Fermer l'éditeur, compiler depuis l'IDE en Development Editor, puis relancer</li>
+      <li>Supprimer le dossier Content</li>
+    </ul>
+    <p class="explain">Une nouvelle <code>UPROPERTY</code> change la structure de la classe et le code généré par Unreal Header Tool. Live Coding est fait pour les modifications de corps de fonctions ; pour les headers, la recompilation complète éditeur fermé est la voie sûre. Et ne supprimez jamais <code>Content</code> : ce sont vos assets !</p>
+  </div>
+
+  <h2>Versionner son projet</h2>
+  <p>Un <strong>système de gestion de versions</strong> (<em>version control</em>, ou <em>revision control</em>) enregistre l'historique de chaque fichier. Même seul, c'est indispensable :</p>
+  <ul>
+    <li><strong>Sauvegarde</strong> : un disque qui lâche ou un niveau corrompu ne vous coûte plus des semaines de travail ;</li>
+    <li><strong>Historique</strong> : vous pouvez revenir à la version d'hier quand une modification casse tout ;</li>
+    <li><strong>Travail en équipe</strong> : plusieurs personnes modifient le projet sans s'écraser mutuellement.</li>
+  </ul>
+
+  <h3>Le problème des fichiers binaires</h3>
+  <p>Le code est du texte : si deux personnes modifient le même <code>.cpp</code>, l'outil sait <strong>fusionner</strong> (<em>merge</em>) leurs changements ligne par ligne. Mais les <code>.uasset</code> et <code>.umap</code> sont des fichiers <strong>binaires</strong> : impossible de les fusionner. Si deux personnes modifient le même Blueprint en parallèle, l'une des deux perdra son travail. La solution est le <strong>verrouillage</strong> (<em>file locking</em>) : avant de modifier un asset, on le verrouille, et personne d'autre ne peut le modifier tant qu'il n'est pas libéré.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    participant A as Alice level design
+    participant R as Dépôt distant
+    participant B as Bob programmeur
+    A->>R: Verrouille L_Village.umap
+    B->>R: Récupère les dernières modifications
+    A->>A: Modifie le niveau
+    B->>B: Code une nouvelle classe C++
+    B->>R: Envoie son code
+    B-->>R: Tente de verrouiller L_Village.umap
+    R-->>B: Refusé, verrouillé par Alice
+    A->>R: Envoie le niveau et libère le verrou
+    B->>R: Récupère le niveau à jour
+</pre>
+    <figcaption>Le verrouillage évite que deux personnes modifient le même asset binaire en même temps ; le code texte, lui, se fusionne.</figcaption>
+  </figure>
+
+  <h3>Git et Git LFS</h3>
+  <p><strong>Git</strong> est le standard du développement logiciel, mais il gère mal les gros fichiers binaires. <strong>Git LFS</strong> (<em>Large File Storage</em>) le complète : les gros fichiers sont stockés à part et Git ne garde qu'un petit pointeur. LFS apporte aussi le verrouillage. Les hébergeurs (GitHub, GitLab, Azure DevOps…) le supportent, avec des quotas de stockage LFS à surveiller.</p>
+
+<script type="text/plain" data-lang="text" data-file=".gitignore">
+# Dossiers générés par le moteur et les IDE
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+.vs/
+.idea/
+.vscode/
+
+# Fichiers de projet générés
+*.sln
+*.suo
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# Mêmes dossiers générés dans les plugins du projet
+Plugins/**/Binaries/
+Plugins/**/Intermediate/
+</script>
+
+<script type="text/plain" data-lang="text" data-file=".gitattributes">
+# Assets Unreal : stockés dans LFS et verrouillables
+*.uasset filter=lfs diff=lfs merge=lfs -text lockable
+*.umap   filter=lfs diff=lfs merge=lfs -text lockable
+
+# Fichiers sources d'assets
+*.fbx  filter=lfs diff=lfs merge=lfs -text
+*.glb  filter=lfs diff=lfs merge=lfs -text
+*.png  filter=lfs diff=lfs merge=lfs -text
+*.tga  filter=lfs diff=lfs merge=lfs -text
+*.exr  filter=lfs diff=lfs merge=lfs -text
+*.psd  filter=lfs diff=lfs merge=lfs -text
+*.wav  filter=lfs diff=lfs merge=lfs -text
+</script>
+
+<script type="text/plain" data-lang="console" data-file="Terminal, à la racine du projet">
+git init
+git lfs install                 # une seule fois par machine
+git add .gitignore .gitattributes
+git add .
+git commit -m "Projet initial"
+
+# Verrouiller un niveau avant de le modifier, puis le libérer
+git lfs lock Content/MyGame/Maps/L_Village.umap
+git lfs locks                   # qui a verrouillé quoi ?
+git lfs unlock Content/MyGame/Maps/L_Village.umap
+</script>
+
+  <div class="callout danger">
+    <p class="callout-title">Créez le .gitattributes avant le premier commit</p>
+    <p>Si vous commitez des <code>.uasset</code> avant d'avoir configuré LFS, ils entrent dans l'historique Git « normal » et y restent pour toujours, gonflant le dépôt. Les corriger après coup demande de réécrire l'historique (<code>git lfs migrate</code>), ce qui est délicat en équipe.</p>
+  </div>
+
+  <h3>Perforce et les autres options</h3>
+  <p><strong>Perforce</strong> (Helix Core, renommé P4) est le standard de l'industrie du jeu vidéo, et l'outil qu'Epic utilise en interne. Il est conçu pour les dépôts de plusieurs téraoctets et le verrouillage y est natif (<em>exclusive checkout</em> : un asset ouvert en modification est bloqué pour les autres). Il est gratuit pour les petites équipes, dans la limite de quelques utilisateurs (vérifiez les conditions actuelles). Son inconvénient : il faut héberger et administrer un serveur.</p>
+  <p>Autres solutions rencontrées : <strong>Unity Version Control</strong> (ex-Plastic SCM), <strong>Subversion</strong>, ou des outils récents pensés pour les artistes comme Anchorpoint ou Diversion.</p>
+
+  <h3>La gestion de versions dans l'éditeur</h3>
+  <p>L'éditeur intègre un module <strong>Revision Control</strong> (appelé <em>Source Control</em> dans les versions plus anciennes), accessible en bas à droite de la fenêtre. Une fois connecté à Perforce, Git ou Subversion, il affiche l'état de chaque asset dans le Content Browser (verrouillé par vous, par un collègue, modifié…) et propose de verrouiller automatiquement un asset quand vous le modifiez. Le plugin Git fourni par Epic est basique ; beaucoup d'équipes Git utilisent le plugin communautaire de Project Borealis, qui gère les verrous LFS.</p>
+
+  <h2>Dépannage</h2>
+  <p>Presque tout le monde rencontre au moins un de ces problèmes lors de sa première semaine. Voici les plus fréquents :</p>
+  <table>
+    <thead><tr><th>Problème</th><th>Cause probable</th><th>Solution</th></tr></thead>
+    <tbody>
+      <tr><td><em>« MyGame could not be compiled. Try rebuilding from source manually. »</em></td><td>Une erreur de compilation dans votre code ; l'éditeur ne vous dit pas laquelle</td><td>Ouvrez le <code>.sln</code> (ou le projet dans Rider), compilez en Development Editor et lisez la première erreur de la liste</td></tr>
+      <tr><td>Premier lancement très long, « Compiling Shaders » bloqué à des milliers</td><td>Compilation initiale de tous les shaders</td><td>Normal : cela peut prendre de longues minutes la première fois, puis le cache (DDC) accélère les lancements suivants</td></tr>
+      <tr><td>Compilation et chargement anormalement lents</td><td>L'antivirus analyse chaque fichier généré</td><td>Ajoutez des exclusions pour le dossier du moteur, vos projets et le cache DDC</td></tr>
+      <tr><td>Erreurs de shaders ou de textures après un crash</td><td>Cache de données dérivées corrompu</td><td>Fermez l'éditeur et supprimez le dossier <code>DerivedDataCache</code> du projet ; il sera reconstruit</td></tr>
+      <tr><td><em>« Windows SDK not installed »</em>, toolchain introuvable</td><td>Composants Visual Studio manquants</td><td>Relancez le Visual Studio Installer et ajoutez les workloads et le SDK listés plus haut</td></tr>
+      <tr><td>Erreur « Unable to build while Live Coding is active »</td><td>L'éditeur est ouvert</td><td>Fermez l'éditeur avant de compiler depuis l'IDE</td></tr>
+      <tr><td>Classe C++ absente de l'éditeur, erreurs IntelliSense rouges partout</td><td>Fichiers de projet pas à jour</td><td>Clic droit sur le <code>.uproject</code> → <em>Generate Visual Studio project files</em>, puis recompilez</td></tr>
+      <tr><td>Erreurs de chemin trop long au packaging</td><td>Projet rangé trop profondément</td><td>Déplacez le projet vers un chemin court (<code>C:\Dev\MyGame</code>)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout tip">
+    <p class="callout-title">Lisez la première erreur, pas la dernière</p>
+    <p>Une seule faute de frappe dans un header peut générer des dizaines d'erreurs en cascade. Dans Visual Studio, ouvrez la fenêtre <em>Output</em> (plus fiable que la liste <em>Error List</em>, qui mélange IntelliSense et vraies erreurs) et remontez à la toute première erreur du compilateur.</p>
+  </div>
+
+  <div class="callout ue">
+    <p class="callout-title">Documentation officielle</p>
+    <p>Dans la documentation d'Epic, cherchez « Installing Unreal Engine », « Setting Up Visual Studio for Unreal Engine », « Downloading Source Code » et « Live Coding ». Les <em>Release Notes</em> de chaque version listent les versions de compilateurs et de SDK supportées.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Quels dossiers d'un projet Unreal peut-on supprimer sans perdre de travail (le moteur les régénère) ?</p>
+    <ul>
+      <li>Content et Config</li>
+      <li>Source et Plugins</li>
+      <li data-correct>Binaries, Intermediate et DerivedDataCache</li>
+      <li>Le fichier .uproject et le dossier Content</li>
+    </ul>
+    <p class="explain"><code>Binaries</code> (code compilé), <code>Intermediate</code> (fichiers temporaires et code généré) et <code>DerivedDataCache</code> (cache) sont reconstruits à la prochaine compilation et au prochain lancement. <code>Content</code>, <code>Config</code>, <code>Source</code>, <code>Plugins</code> et le <code>.uproject</code> sont vos sources : ce sont eux qu'il faut versionner. Pour <code>Saved</code>, pensez d'abord aux sauvegardes automatiques qu'il contient.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Votre premier projet versionné</h4>
+    <p>Créez un projet <strong>Third Person</strong> en <strong>C++</strong> nommé <code>FirstSteps</code>. Ajoutez une classe C++ <code>AGreeterActor</code> (parent Actor) qui affiche à l'écran et dans l'Output Log « Bienvenue dans FirstSteps » au démarrage, sans utiliser Tick. Placez-la dans le niveau et vérifiez le message en jouant. Enfin, versionnez le projet avec Git et Git LFS.</p>
+    <details>
+      <summary>Voir la solution</summary>
+      <ol>
+        <li>Project Browser → <em>Games</em> → <em>Third Person</em> → <em>C++</em> → nom <code>FirstSteps</code> → <em>Create</em>.</li>
+        <li><em>Tools → New C++ Class</em> → <em>Actor</em> → nom <code>GreeterActor</code>. Fermez l'éditeur, remplacez le code par celui ci-dessous, compilez en Development Editor / Win64 et relancez avec <kbd>F5</kbd>.</li>
+        <li>Dans le Content Browser, dossier <em>C++ Classes → FirstSteps</em>, glissez <code>GreeterActor</code> dans le niveau, puis <em>Play</em>.</li>
+        <li>À la racine du projet, créez le <code>.gitignore</code> et le <code>.gitattributes</code> de ce chapitre <em>avant</em> le premier commit, puis lancez <code>git init</code>, <code>git lfs install</code>, <code>git add .</code> et <code>git commit</code>. Vérifiez avec <code>git lfs ls-files</code> que les <code>.uasset</code> sont bien gérés par LFS.</li>
+      </ol>
+<script type="text/plain" data-lang="cpp" data-file="GreeterActor.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "GreeterActor.generated.h"
+
+UCLASS()
+class FIRSTSTEPS_API AGreeterActor : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    AGreeterActor();
+
+protected:
+    virtual void BeginPlay() override;
+
+    // Modifiable dans le panneau Details pour chaque instance
+    UPROPERTY(EditAnywhere, Category = "Greeter")
+    FString Message = TEXT("Bienvenue dans FirstSteps");
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="GreeterActor.cpp">
+#include "GreeterActor.h"
+#include "Components/SceneComponent.h"
+#include "Engine/Engine.h"
+
+AGreeterActor::AGreeterActor()
+{
+    PrimaryActorTick.bCanEverTick = false; // pas de Tick : inutile ici
+
+    // Un Root Component pour pouvoir placer l'Actor dans le niveau
+    RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+}
+
+void AGreeterActor::BeginPlay()
+{
+    Super::BeginPlay();
+
+    UE_LOG(LogTemp, Log, TEXT("%s"), *Message);
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Cyan, Message);
+    }
+}
+</script>
+      <p>Notez la macro <code>FIRSTSTEPS_API</code> : elle reprend le nom du module, ici <code>FirstSteps</code>.</p>
+    </details>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Installez UE5 via l'<strong>Epic Games Launcher</strong> ; ajoutez <em>Engine Source</em> et, pour déboguer, les <em>Editor symbols</em>. Le moteur source (GitHub) n'est utile que pour les serveurs dédiés ou les modifications du moteur.</li>
+      <li>Sous Windows, <strong>Visual Studio 2022</strong> avec les workloads C++ Desktop et Jeux ; <strong>Rider</strong> est une excellente alternative sur toutes les plateformes.</li>
+      <li>Partez d'un template <strong>Third Person en C++</strong>, avec un nom court sans espaces dans un chemin court.</li>
+      <li><code>Content</code>, <code>Config</code>, <code>Source</code> et le <code>.uproject</code> sont vos sources ; <code>Binaries</code>, <code>Intermediate</code>, <code>Saved</code> et <code>DerivedDataCache</code> sont générés.</li>
+      <li>UBT orchestre la compilation, UHT génère le code de réflexion. <strong>Live Coding</strong> pour les <code>.cpp</code>, éditeur fermé pour les changements de headers.</li>
+      <li>Versionnez dès le premier jour : <strong>Git + LFS</strong> (avec verrous) ou <strong>Perforce</strong>, car les assets binaires ne se fusionnent pas.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

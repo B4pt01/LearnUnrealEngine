@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Réseau &amp; multijoueur — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="multijoueur">
+<article class="doc">
+
+  <h1>Réseau &amp; multijoueur</h1>
+  <p class="lead">Unreal a été conçu dès l'origine pour le jeu en réseau : ses classes savent se copier d'une machine à l'autre presque toutes seules. Mais « presque » est le mot clé. Pour écrire un jeu multijoueur fiable, il faut comprendre qui décide, qui possède quoi, et quelles données voyagent sur le réseau. Ce chapitre vous donne ce modèle mental, puis tous les outils pour l'appliquer.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Comprendre le modèle <strong>client-serveur</strong> et le rôle du serveur qui fait autorité</li>
+      <li>Savoir <strong>quelle classe existe sur quelle machine</strong></li>
+      <li>Répliquer des Actors, des propriétés (<code>Replicated</code>, <code>RepNotify</code>) et appeler des <strong>RPC</strong></li>
+      <li>Maîtriser l'<strong>ownership</strong>, l'<strong>autorité</strong> et les <strong>rôles réseau</strong></li>
+      <li>Tester en éditeur, créer des sessions en ligne, compiler un serveur dédié et éviter les pièges classiques</li>
+    </ul>
+  </div>
+
+  <h2>Le modèle client-serveur</h2>
+  <p>Dans un jeu en réseau, plusieurs ordinateurs doivent voir <em>le même</em> monde. Unreal utilise un modèle <strong>client-serveur</strong> : une machine, le <strong>serveur</strong>, détient la version officielle de la partie. Les autres, les <strong>clients</strong>, se connectent à lui, lui envoient les entrées de leur joueur et reçoivent en retour l'état du monde. Les clients ne se parlent jamais directement entre eux.</p>
+
+  <h3>Un serveur qui fait autorité</h3>
+  <p>On dit que le serveur <strong>fait autorité</strong> (<em>authoritative server</em>) : c'est lui, et lui seul, qui décide si un tir touche, combien de dégâts il inflige, si une porte s'ouvre ou si un joueur a gagné. Un client peut <em>demander</em> (« je tire dans cette direction »), jamais <em>imposer</em> (« j'ai tué ce joueur »). Deux raisons à cela :</p>
+  <dl class="defs">
+    <dt>Anti-triche</dt><dd>Le programme du client tourne sur la machine du joueur : il peut être modifié. Si le client décidait des dégâts, un tricheur n'aurait qu'à changer un chiffre. Le serveur, lui, est hors de portée du joueur (surtout s'il est dédié).</dd>
+    <dt>Cohérence</dt><dd>Avec une seule source de vérité, il n'y a jamais de désaccord : si deux joueurs ramassent le même objet au même moment, c'est le serveur qui tranche et tout le monde reçoit sa décision.</dd>
+  </dl>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TB
+    S["Serveur, fait autorité<br>simule le monde, applique les règles,<br>valide chaque demande"]
+    C1["Client 1<br>écran, son, entrées"]
+    C2["Client 2<br>écran, son, entrées"]
+    C3["Client 3<br>écran, son, entrées"]
+    C1 -- "entrées et RPC Server" --> S
+    C2 -- "entrées et RPC Server" --> S
+    C3 -- "entrées et RPC Server" --> S
+    S -. "état répliqué et RPC Client" .-> C1
+    S -. "état répliqué" .-> C2
+    S -. "état répliqué" .-> C3
+</pre>
+    <figcaption>Un serveur et trois clients : les demandes montent vers le serveur, l'état officiel redescend vers les clients.</figcaption>
+  </figure>
+
+  <h3>Listen server ou serveur dédié</h3>
+  <p>Le serveur peut prendre plusieurs formes, et un code bien écrit fonctionne avec toutes :</p>
+  <dl class="defs">
+    <dt>Listen server</dt><dd>L'un des joueurs est à la fois serveur et client : il joue sur la machine qui fait autorité. Simple et gratuit (coopération entre amis), mais l'hôte n'a aucune latence, et si son jeu se ferme, la partie s'arrête pour tous. Il n'y a pas de vrai pair-à-pair : même quand une plateforme parle de « P2P » (Steam par exemple), il s'agit de la façon d'établir la connexion, et l'un des joueurs reste le serveur.</dd>
+    <dt>Dedicated server</dt><dd>Un exécutable spécial, sans rendu, sans son ni joueur local, qui tourne sur une machine louée. Plus équitable et plus sûr (jeux compétitifs), mais il faut l'héberger et le compiler depuis le moteur source.</dd>
+    <dt>Standalone</dt><dd>Le jeu solo, sans réseau. La machine est son propre serveur : <code>HasAuthority()</code> y est toujours vrai. Un code multijoueur correct fonctionne aussi en solo sans modification.</dd>
+  </dl>
+
+  <h2>Qui existe où ?</h2>
+  <p>Le <a href="architecture.html">Gameplay Framework</a> prend tout son sens en réseau : chaque classe a été placée sur des machines précises. Se tromper sur ce point est la cause numéro un des « ça marche en solo mais pas en multi ».</p>
+
+  <table>
+    <thead><tr><th>Classe</th><th>Serveur</th><th>Client propriétaire</th><th>Autres clients</th><th>Remarque</th></tr></thead>
+    <tbody>
+      <tr><td><code>GameMode</code></td><td>Oui</td><td>Non</td><td>Non</td><td>Règles secrètes : sur un client, <code>GetAuthGameMode()</code> renvoie <code>nullptr</code></td></tr>
+      <tr><td><code>GameState</code></td><td>Oui</td><td>Oui</td><td>Oui</td><td>État public de la partie, répliqué à tous</td></tr>
+      <tr><td><code>PlayerState</code></td><td>Oui (tous)</td><td>Oui (tous)</td><td>Oui (tous)</td><td>Chaque machine voit les PlayerStates de tous les joueurs</td></tr>
+      <tr><td><code>PlayerController</code></td><td>Oui (tous)</td><td>Le sien uniquement</td><td>Non</td><td>Le client 2 n'a pas le PlayerController du client 1</td></tr>
+      <tr><td><code>Pawn</code> / <code>Character</code></td><td>Oui (tous)</td><td>Oui</td><td>S'il est pertinent</td><td>Répliqué aux clients pour qui il est <em>relevant</em> (assez proche)</td></tr>
+      <tr><td><code>AIController</code></td><td>Oui</td><td>Non</td><td>Non</td><td>L'IA ne réfléchit que sur le serveur</td></tr>
+      <tr><td><code>HUD</code> / Widgets</td><td>Seulement l'hôte d'un listen server</td><td>Les siens</td><td>Les siens</td><td>Purement local, jamais répliqué ; inexistant sur un serveur dédié</td></tr>
+      <tr><td><code>GameInstance</code></td><td>Oui</td><td>Oui</td><td>Oui</td><td>Une par machine, indépendantes, jamais répliquée</td></tr>
+    </tbody>
+  </table>
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    subgraph SRV["Serveur dédié"]
+        S_GM["GameMode"]
+        S_GS["GameState"]
+        S_PC["PlayerController 1 et 2"]
+        S_PW["PlayerStates et Pawns 1 et 2"]
+    end
+    subgraph CL1["Client 1"]
+        A_GS["GameState"]
+        A_PC["PlayerController 1"]
+        A_PW["PlayerStates et Pawns 1 et 2"]
+        A_UI["HUD et widgets du joueur 1"]
+    end
+    subgraph CL2["Client 2"]
+        B_GS["GameState"]
+        B_PC["PlayerController 2"]
+        B_PW["PlayerStates et Pawns 1 et 2"]
+        B_UI["HUD et widgets du joueur 2"]
+    end
+    S_PC -. "le 1 seulement" .-> A_PC
+    S_PC -. "le 2 seulement" .-> B_PC
+</pre>
+    <figcaption>Les copies présentes sur chaque machine. Le GameMode reste sur le serveur, chaque client ne reçoit que son propre PlayerController, et les widgets n'existent que localement.</figcaption>
+  </figure>
+  <div class="callout warn">
+    <p class="callout-title">Piège classique : appeler le GameMode depuis un widget</p>
+    <p>Un bouton « Prêt » dans un menu qui fait <code>GetGameMode → Cast</code> fonctionne chez l'hôte d'un listen server… et échoue chez tous les clients, car le GameMode n'existe pas chez eux. Le widget doit passer par son PlayerController, qui enverra un RPC Server ; c'est le serveur qui parlera au GameMode.</p>
+  </div>
+
+  <h2>Répliquer un Actor</h2>
+  <p>La <strong>réplication</strong> est le mécanisme par lequel le serveur copie un Actor et ses données vers les clients. Elle va <strong>toujours du serveur vers les clients</strong>, jamais l'inverse. Un Actor n'est pas répliqué par défaut : il faut le demander.</p>
+  <p>Avec <code>bReplicates = true</code> (dans le constructeur) ou <code>SetReplicates(true)</code> (à l'exécution), chaque client reçoit une copie de l'Actor quand le serveur le crée ; les Pawns et Characters sont déjà répliqués par défaut. <code>SetReplicateMovement(true)</code> envoie en plus la position, la rotation et la vitesse du Root Component (inutile pour un Character, dont le <code>CharacterMovementComponent</code> a son propre système, plus élaboré). Un composant se réplique avec <code>SetIsReplicatedByDefault(true)</code> dans son constructeur, à condition que son Actor soit lui aussi répliqué.</p>
+  <p>En Blueprint, tout cela se trouve dans <strong>Class Defaults → Replication</strong> : cases <em>Replicates</em>, <em>Replicate Movement</em>, et les réglages avancés décrits ci-dessous.</p>
+
+  <h3>Fréquence, priorité et pertinence</h3>
+  <p>La bande passante est limitée : le serveur ne peut pas tout envoyer à tout le monde à chaque frame. Plusieurs réglages lui indiquent quoi envoyer, à qui et à quel rythme :</p>
+  <dl class="defs">
+    <dt>Net Update Frequency</dt><dd>Nombre maximal de fois par seconde où le serveur vérifie si l'Actor a changé (100 par défaut). Un coffre qui change rarement peut descendre à 2 ou 5. Depuis UE 5.5 environ, on passe par <code>SetNetUpdateFrequency()</code> ; avant, on modifiait directement <code>NetUpdateFrequency</code>.</dd>
+    <dt>Net Priority</dt><dd>Quand la bande passante manque, les Actors de priorité plus élevée passent d'abord. Les Pawns ont une priorité plus haute que les Actors ordinaires.</dd>
+    <dt>Relevancy (pertinence)</dt><dd>Un Actor n'est envoyé qu'aux clients pour qui il est <em>pertinent</em>. Par défaut : s'il est à moins de <code>sqrt(NetCullDistanceSquared)</code> du joueur (150 mètres par défaut). Au-delà, le client détruit sa copie, et la recrée quand l'Actor redevient pertinent.</dd>
+    <dt>bAlwaysRelevant</dt><dd>Toujours envoyé à tous, quelle que soit la distance. Réservé aux objets globaux (un drapeau visible sur la mini-carte). <code>GameState</code> et <code>PlayerState</code> le sont déjà.</dd>
+    <dt>bOnlyRelevantToOwner</dt><dd>Envoyé uniquement au client propriétaire (voir ownership). C'est le cas du <code>PlayerController</code>.</dd>
+    <dt>Dormancy (dormance)</dt><dd>Un Actor <em>dormant</em> n'est plus du tout examiné par le serveur, ce qui économise du CPU. Idéal pour les centaines d'objets du décor qui ne changent presque jamais. On le réveille avec <code>FlushNetDormancy()</code> avant de modifier une de ses propriétés répliquées.</dd>
+  </dl>
+
+<script type="text/plain" data-lang="cpp" data-file="LootChest.cpp">
+#include "LootChest.h"
+
+ALootChest::ALootChest()
+{
+    bReplicates = true;                              // copié sur les clients
+    SetReplicateMovement(false);                     // un coffre ne bouge pas
+    SetNetUpdateFrequency(5.f);                      // UE 5.5+ ; avant : NetUpdateFrequency = 5.f;
+    NetCullDistanceSquared = FMath::Square(5000.f);  // pertinent jusqu'à 50 m (cm, au carré)
+    NetDormancy = DORM_DormantAll;                   // dort tant que personne n'y touche
+}
+// Pour l'ouvrir (serveur) : FlushNetDormancy(), puis bIsOpen = true, puis ForceNetUpdate()
+</script>
+  <p>Ces réglages sont des optimisations : pour un prototype à quatre joueurs, <code>bReplicates</code> suffit. Ils deviennent importants avec beaucoup de joueurs ou des milliers d'objets répliqués ; mesurez d'abord avec <code>stat net</code> et Networking Insights (voir <a href="optimisation.html">Débogage &amp; optimisation</a>).</p>
+
+  <h2>Répliquer des propriétés</h2>
+  <p>Un Actor répliqué existe sur les clients, mais ses variables n'y sont copiées que si vous le demandez, variable par variable. Le serveur compare régulièrement la valeur actuelle avec la dernière envoyée à chaque client et n'envoie <strong>que ce qui a changé</strong>.</p>
+
+  <h3>Replicated et ReplicatedUsing</h3>
+  <p>En C++, trois étapes : marquer la propriété, l'enregistrer dans <code>GetLifetimeReplicatedProps</code>, inclure <code>Net/UnrealNetwork.h</code>. Avec <code>ReplicatedUsing</code>, une fonction <strong>OnRep</strong> est appelée sur le client à chaque nouvelle valeur reçue : c'est là qu'on met à jour l'affichage, joue un son ou lance une animation. En Blueprint, c'est le réglage <em>Replication</em> de la variable : <em>Replicated</em> ou <em>RepNotify</em> (qui crée automatiquement une fonction <code>OnRep_NomDeLaVariable</code>).</p>
+
+<script type="text/plain" data-lang="cpp" data-file="ShooterCharacter.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Character.h"
+#include "ShooterCharacter.generated.h"
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHealthChanged, float, NewHealth, float, OldHealth);
+
+UCLASS()
+class MYGAME_API AShooterCharacter : public ACharacter
+{
+    GENERATED_BODY()
+
+public:
+    AShooterCharacter();
+    virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+    virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
+
+    UPROPERTY(BlueprintAssignable, Category = "Health")
+    FOnHealthChanged OnHealthChanged;     // l'UI s'y abonne, sur chaque machine
+
+protected:
+    UPROPERTY(ReplicatedUsing = OnRep_Health, BlueprintReadOnly, Category = "Health")
+    float Health = 100.f;
+    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Weapon")
+    int32 Ammo = 30;                      // utile au seul joueur qui contrôle ce personnage
+    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Cosmetic")
+    FLinearColor TeamColor = FLinearColor::White;   // fixée à l'apparition
+
+    UFUNCTION()
+    void OnRep_Health(float OldHealth);   // peut recevoir l'ancienne valeur en paramètre
+
+    void HandleHealthChanged(float OldHealth);
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="ShooterCharacter.cpp" data-highlight="2,13-15,27-28">
+#include "ShooterCharacter.h"
+#include "Net/UnrealNetwork.h"
+#include "Engine/DamageEvents.h"
+
+AShooterCharacter::AShooterCharacter()
+{
+    bReplicates = true; // déjà vrai pour un Character, indispensable pour un simple AActor
+}
+
+void AShooterCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+    Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+    DOREPLIFETIME(AShooterCharacter, Health);
+    DOREPLIFETIME_CONDITION(AShooterCharacter, Ammo, COND_OwnerOnly);
+    DOREPLIFETIME_CONDITION(AShooterCharacter, TeamColor, COND_InitialOnly);
+}
+
+float AShooterCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
+                                    AController* EventInstigator, AActor* DamageCauser)
+{
+    const float Applied = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+    if (!HasAuthority() || Applied <= 0.f)
+    {
+        return 0.f;
+    }
+    const float OldHealth = Health;
+    Health = FMath::Clamp(Health - Applied, 0.f, 100.f);
+    HandleHealthChanged(OldHealth); // C++ : OnRep n'est PAS appelée sur le serveur
+    return Applied;
+}
+
+void AShooterCharacter::OnRep_Health(float OldHealth)
+{
+    HandleHealthChanged(OldHealth);
+}
+
+void AShooterCharacter::HandleHealthChanged(float OldHealth)
+{
+    OnHealthChanged.Broadcast(Health, OldHealth);
+    // Si Health <= 0 : ragdoll, collisions désactivées... sur chaque machine
+}
+</script>
+
+  <h3>Conditions de réplication</h3>
+  <p>Par défaut, une propriété est envoyée à tous les clients pour qui l'Actor est pertinent. <code>DOREPLIFETIME_CONDITION</code> permet d'être plus sélectif, ce qui économise de la bande passante et évite de donner des informations inutiles (voire exploitables par un tricheur) :</p>
+  <table>
+    <thead><tr><th>Condition</th><th>Envoyée à</th><th>Exemple</th></tr></thead>
+    <tbody>
+      <tr><td><code>COND_None</code></td><td>Tous les clients (défaut de <code>DOREPLIFETIME</code>)</td><td>Points de vie visibles au-dessus des têtes</td></tr>
+      <tr><td><code>COND_OwnerOnly</code></td><td>Le client propriétaire uniquement</td><td>Munitions en réserve, inventaire, or</td></tr>
+      <tr><td><code>COND_SkipOwner</code></td><td>Tous sauf le propriétaire</td><td>Une valeur que le propriétaire calcule déjà lui-même (prédite localement)</td></tr>
+      <tr><td><code>COND_InitialOnly</code></td><td>Tous, uniquement au premier envoi</td><td>Couleur d'équipe, apparence choisie à l'apparition</td></tr>
+      <tr><td><code>COND_SimulatedOnly</code></td><td>Les clients qui voient l'Actor en <em>simulated proxy</em></td><td>Données de lissage d'animation des autres joueurs</td></tr>
+      <tr><td><code>COND_AutonomousOnly</code></td><td>Le client qui contrôle l'Actor (<em>autonomous proxy</em>)</td><td>Données utiles au seul joueur qui pilote</td></tr>
+    </tbody>
+  </table>
+  <p>Variante utile : <code>DOREPLIFETIME_CONDITION_NOTIFY(AShooterCharacter, Health, COND_None, REPNOTIFY_Always)</code> appelle la fonction OnRep même quand la valeur reçue est identique à la valeur locale (par défaut, OnRep n'est appelée que si la valeur change).</p>
+
+  <h3>OnRep : C++ contre Blueprint</h3>
+  <p>Une différence subtile entre les deux mondes provoque énormément de bugs. <strong>En C++</strong>, la fonction OnRep n'est appelée <strong>que sur les clients</strong>, quand ils reçoivent la nouvelle valeur ; sur le serveur, rien ne se passe, il faut appeler la logique à la main après avoir modifié la variable (c'est le rôle de <code>HandleHealthChanged</code> ci-dessus). <strong>En Blueprint</strong>, modifier une variable <em>RepNotify</em> avec le nœud <strong>Set w/ Notify</strong> appelle la fonction OnRep <strong>aussi sur la machine qui la modifie</strong>, donc sur le serveur. Pratique, mais ne transposez pas ce réflexe en C++.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    participant S as Serveur
+    participant C as Client 2
+    participant UI as Widget du client 2
+    Note over S: Une balle touche le joueur 2
+    S->>S: TakeDamage, Health passe de 100 à 80
+    S->>S: HandleHealthChanged (appel manuel)
+    Note over S,C: Au prochain envoi réseau de cet Actor,<br>Health a changé : la nouvelle valeur part
+    S-->>C: Health = 80
+    C->>C: OnRep_Health(OldHealth = 100)
+    C->>UI: OnHealthChanged.Broadcast(80, 100)
+    UI->>UI: La barre de vie descend
+</pre>
+    <figcaption>Le serveur modifie la valeur, la réplication la transporte, l'OnRep du client met à jour l'interface.</figcaption>
+  </figure>
+  <p>Retenez que la réplication de propriétés transporte un <strong>état</strong>, pas un historique : si <code>Health</code> passe de 100 à 90 puis à 80 entre deux envois, le client ne verra que 80. C'est aussi ce qui la rend robuste : un joueur qui arrive en cours de partie (ou pour qui l'Actor redevient pertinent) reçoit directement la valeur actuelle, et son OnRep est appelée si cette valeur diffère de la valeur par défaut.</p>
+
+  <div class="quiz">
+    <p class="q">En C++, le serveur exécute <code>Health = 50.f;</code> sur une propriété <code>ReplicatedUsing = OnRep_Health</code>. Où <code>OnRep_Health</code> est-elle appelée automatiquement ?</p>
+    <ul>
+      <li>Sur le serveur et sur tous les clients</li>
+      <li>Uniquement sur le serveur</li>
+      <li data-correct>Uniquement sur les clients qui reçoivent la nouvelle valeur</li>
+      <li>Nulle part tant qu'on n'appelle pas <code>ForceNetUpdate()</code></li>
+    </ul>
+    <p class="explain">En C++, OnRep est un callback de réception : seuls les clients reçoivent des valeurs, donc seuls eux l'exécutent. Le serveur (et l'hôte d'un listen server) doit appeler la même logique lui-même. En Blueprint, au contraire, Set w/ Notify appelle aussi l'OnRep localement.</p>
+  </div>
+
+  <h2>Les RPC</h2>
+  <p>Un <strong>RPC</strong> (<em>Remote Procedure Call</em>) est une fonction que l'on appelle sur une machine et qui s'exécute sur une autre. Là où la réplication transporte un état, les RPC transportent des <strong>événements ponctuels</strong> : « je veux tirer », « joue cet effet », « affiche ce marqueur de touche ». Ils sont le seul moyen pour un client d'envoyer quelque chose au serveur.</p>
+
+  <h3>Trois types de RPC</h3>
+  <table>
+    <thead><tr><th>Spécificateur C++</th><th>Option Blueprint</th><th>Direction</th><th>Usage typique</th></tr></thead>
+    <tbody>
+      <tr><td><code>Server</code></td><td>Run on Server</td><td>Client propriétaire → serveur</td><td>Demandes du joueur : tirer, interagir, acheter</td></tr>
+      <tr><td><code>Client</code></td><td>Run on owning Client</td><td>Serveur → client propriétaire</td><td>Marqueur de touche, message privé, ouverture d'un menu</td></tr>
+      <tr><td><code>NetMulticast</code></td><td>Multicast</td><td>Serveur → serveur et tous les clients pertinents</td><td>Effets visuels et sonores ponctuels (tir, explosion)</td></tr>
+    </tbody>
+  </table>
+  <p>En Blueprint, on crée un <strong>Custom Event</strong>, puis dans ses Details on choisit <em>Replicates</em> et on coche <em>Reliable</em> si besoin. En C++, on déclare la fonction avec le spécificateur et on écrit le corps dans une fonction suffixée <code>_Implementation</code> (le code d'envoi réseau est généré par Unreal Header Tool). Un RPC ne peut pas renvoyer de valeur : la réponse, s'il y en a une, arrive par un autre RPC ou par une propriété répliquée.</p>
+
+  <h3>Reliable ou Unreliable</h3>
+  <p>Un RPC <strong>Reliable</strong> arrive à coup sûr et dans l'ordre (il est renvoyé tant qu'il n'est pas confirmé) : pour ce qui compte vraiment, comme tirer, ramasser ou acheter. Un RPC <strong>Unreliable</strong> peut être perdu si le réseau est chargé : pour ce qui est cosmétique ou fréquent, comme les effets visuels, les sons ou des mises à jour qui seront de toute façon remplacées par la suivante.</p>
+  <div class="callout danger">
+    <p class="callout-title">Jamais de RPC Reliable dans Tick</p>
+    <p>Les RPC fiables sont mis en file d'attente jusqu'à confirmation. Un RPC Reliable envoyé à chaque frame remplit cette file plus vite qu'elle ne se vide : quand le tampon déborde, la connexion du client est <strong>fermée</strong>. Envoyez les données continues en Unreliable, ou mieux, répliquez une propriété.</p>
+  </div>
+  <p>Enfin, un RPC Server peut être déclaré avec <code>WithValidation</code> : vous écrivez alors une fonction <code>_Validate</code> qui renvoie un booléen, exécutée sur le serveur avant <code>_Implementation</code>. Si elle renvoie <code>false</code>, <strong>le client est déconnecté</strong>. Réservez-la donc à la triche évidente (tirer depuis l'autre bout de la carte). Une simple règle du jeu (plus de munitions) se vérifie au début de <code>_Implementation</code>, en ignorant la demande.</p>
+
+  <h3>Où s'exécute un RPC ?</h3>
+  <p>Le comportement dépend de deux choses : <strong>qui appelle</strong> (serveur ou client) et <strong>qui possède l'Actor</strong> (voir la section ownership). Voici la table de référence, adaptée de la documentation d'Epic :</p>
+  <table>
+    <thead><tr><th>Appelé depuis</th><th>Propriétaire de l'Actor</th><th>Server</th><th>Client</th><th>NetMulticast</th></tr></thead>
+    <tbody>
+      <tr><td>Serveur</td><td>Un client</td><td>Serveur</td><td>Ce client propriétaire</td><td>Serveur et tous les clients</td></tr>
+      <tr><td>Serveur</td><td>Le serveur ou personne</td><td>Serveur</td><td>Serveur</td><td>Serveur et tous les clients</td></tr>
+      <tr><td>Client</td><td>Ce même client</td><td>Serveur</td><td>Client appelant (local)</td><td>Client appelant seulement</td></tr>
+      <tr><td>Client</td><td>Un autre client</td><td><strong>Abandonné</strong></td><td>Client appelant (local)</td><td>Client appelant seulement</td></tr>
+      <tr><td>Client</td><td>Le serveur ou personne</td><td><strong>Abandonné</strong></td><td>Client appelant (local)</td><td>Client appelant seulement</td></tr>
+    </tbody>
+  </table>
+  <p>Deux lignes à graver dans votre mémoire : un RPC Server n'est accepté que <strong>sur un Actor possédé par le client qui l'appelle</strong> (sinon il est abandonné en silence, avec au mieux un avertissement dans le log), et un Multicast appelé par un client <strong>ne s'exécute que chez lui</strong>. Enfin, un Multicast n'atteint que les clients pour qui l'Actor est pertinent à cet instant, et il n'est pas « rejoué » pour ceux qui arrivent plus tard.</p>
+
+  <h3>Exemple complet : un tir</h3>
+  <p>Ajoutons le tir à notre <code>AShooterCharacter</code>. Le client ne fait que demander ; le serveur vérifie, calcule l'impact et applique les dégâts ; puis il prévient tout le monde pour les effets, et le tireur seul pour le marqueur de touche. L'input n'existe que sur le client propriétaire : il appelle l'événement <em>Run on Server</em>, qui fait le travail sur le serveur puis appelle l'événement <em>Multicast</em>.</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="Input sur le client, Custom Event « Run on Server » (Reliable), puis Multicast pour les effets.">
+{"nodes": [
+  {"id": "ia", "type": "event", "title": "EnhancedInputAction IA_Fire", "x": 0, "y": 0, "out": [{"name": "Triggered", "type": "exec"}, {"name": "Started", "type": "exec"}, {"name": "Action Value", "type": "bool"}]},
+  {"id": "call", "type": "function", "title": "Server Fire", "x": 330, "y": 0, "in": [{"type": "exec"}], "out": [{"type": "exec"}]},
+  {"id": "srv", "type": "custom", "title": "Server Fire", "subtitle": "Replicated To Server (if owning client)", "x": 0, "y": 170, "out": [{"type": "exec"}]},
+  {"id": "trace", "type": "function", "title": "Fire Weapon Trace", "x": 340, "y": 170, "in": [{"type": "exec"}], "out": [{"type": "exec"}, {"name": "Impact Point", "type": "vector"}]},
+  {"id": "mc", "type": "function", "title": "Multicast Fire FX", "x": 590, "y": 170, "in": [{"type": "exec"}, {"name": "Impact Point", "type": "vector"}], "out": [{"type": "exec"}]},
+  {"id": "mcev", "type": "custom", "title": "Multicast Fire FX", "subtitle": "Replicated To All (if server)", "x": 0, "y": 320, "out": [{"type": "exec"}, {"name": "Impact Point", "type": "vector"}]},
+  {"id": "fx", "type": "function", "title": "Spawn System at Location", "x": 330, "y": 320, "in": [{"type": "exec"}, {"name": "System Template", "type": "object", "value": "NS_Impact"}, {"name": "Location", "type": "vector"}], "out": [{"type": "exec"}, {"name": "Return Value", "type": "object"}]}
+ ],
+ "links": [["ia", 1, "call", 0], ["srv", 0, "trace", 0], ["trace", 0, "mc", 0], ["trace", 1, "mc", 1], ["mcev", 0, "fx", 0], ["mcev", 1, "fx", 2]]}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="ShooterCharacter.h (ajouts pour le tir)">
+class UNiagaraSystem; class USoundBase;
+
+// ... dans la classe AShooterCharacter :
+public:
+    void Fire(); // liée à IA_Fire dans SetupPlayerInputComponent : exécutée sur le client propriétaire
+
+protected:
+    UFUNCTION(Server, Reliable, WithValidation)
+    void ServerFire(FVector_NetQuantize TraceStart, FVector_NetQuantizeNormal TraceDir);
+    UFUNCTION(NetMulticast, Unreliable)
+    void MulticastPlayFireFX(FVector_NetQuantize ImpactPoint);
+    UFUNCTION(Client, Reliable)
+    void ClientShowHitMarker();
+
+    UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+    TObjectPtr<USoundBase> FireSound;
+    UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+    TObjectPtr<UNiagaraSystem> ImpactFX;
+</script>
+<script type="text/plain" data-lang="cpp" data-file="ShooterCharacter.cpp (ajouts pour le tir)">
+#include "Kismet/GameplayStatics.h"
+#include "GameFramework/DamageType.h"
+#include "NiagaraFunctionLibrary.h"   // module "Niagara" dans le Build.cs
+
+void AShooterCharacter::Fire()
+{
+    FVector EyeLocation;
+    FRotator EyeRotation;
+    GetActorEyesViewPoint(EyeLocation, EyeRotation);
+    ServerFire(EyeLocation, EyeRotation.Vector()); // le client demande, c'est tout
+}
+
+bool AShooterCharacter::ServerFire_Validate(FVector_NetQuantize TraceStart, FVector_NetQuantizeNormal TraceDir)
+{
+    // Triche évidente uniquement : false = le client est déconnecté
+    return FVector::DistSquared(TraceStart, GetActorLocation()) < FMath::Square(500.f);
+}
+
+void AShooterCharacter::ServerFire_Implementation(FVector_NetQuantize TraceStart, FVector_NetQuantizeNormal TraceDir)
+{
+    if (Ammo <= 0)
+    {
+        return; // règle du jeu : on ignore la demande, sans punir
+    }
+    --Ammo;     // répliqué au propriétaire seulement (COND_OwnerOnly)
+
+    const FVector TraceEnd = TraceStart + TraceDir * 10000.f;
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(ServerFire), false, this);
+    FHitResult Hit;
+    const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params);
+    if (bHit && Hit.GetActor())
+    {
+        UGameplayStatics::ApplyDamage(Hit.GetActor(), 20.f, GetController(), this, UDamageType::StaticClass());
+        if (Hit.GetActor()->IsA<AShooterCharacter>())
+        {
+            ClientShowHitMarker(); // ce personnage appartient au tireur : seul lui le reçoit
+        }
+    }
+    MulticastPlayFireFX(bHit ? FVector(Hit.ImpactPoint) : TraceEnd);
+}
+
+void AShooterCharacter::MulticastPlayFireFX_Implementation(FVector_NetQuantize ImpactPoint)
+{
+    if (IsNetMode(NM_DedicatedServer))
+    {
+        return; // ni écran ni haut-parleurs sur un serveur dédié
+    }
+    UGameplayStatics::PlaySoundAtLocation(this, FireSound, GetActorLocation());
+    UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, ImpactFX, ImpactPoint);
+}
+
+void AShooterCharacter::ClientShowHitMarker_Implementation()
+{
+    // Exécuté uniquement sur la machine du tireur : on peut toucher à l'UI
+}
+</script>
+    </div>
+  </div>
+
+  <figure class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    participant C1 as Client 1 (tireur)
+    participant S as Serveur
+    participant C2 as Client 2 (cible)
+    C1->>C1: Input IA_Fire, appel de Fire()
+    C1->>S: ServerFire(origine, direction)
+    S->>S: ServerFire_Validate puis _Implementation
+    S->>S: Line trace, ApplyDamage sur la cible
+    S-->>C1: ClientShowHitMarker()
+    S-->>C1: MulticastPlayFireFX(impact)
+    S-->>C2: MulticastPlayFireFX(impact)
+    S-->>C2: Health répliquée (80)
+    C2->>C2: OnRep_Health, la barre de vie baisse
+</pre>
+    <figcaption>Un tir en réseau : demande du client, décision du serveur, puis état répliqué et événements cosmétiques.</figcaption>
+  </figure>
+  <p>Avec ce code, le tireur entend son coup de feu après un aller-retour réseau (le ping). Les jeux d'action jouent donc le son et l'éclair du canon <strong>immédiatement en local</strong> dans <code>Fire()</code>, puis ignorent le Multicast sur la machine du tireur (<code>if (IsLocallyControlled()) return;</code>). Seuls les effets sont prédits : les dégâts restent décidés par le serveur.</p>
+
+  <h2>Ownership : qui possède quoi</h2>
+  <p>Chaque Actor peut avoir un <strong>propriétaire</strong> (<em>Owner</em>). En réseau, ce lien sert à une chose essentielle : savoir <strong>à quelle connexion</strong> appartient un Actor. Le moteur remonte la chaîne des propriétaires jusqu'à trouver un PlayerController, lui-même rattaché à la connexion réseau d'un client. Si la chaîne n'aboutit à aucun PlayerController, l'Actor n'appartient à aucun client.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    NC["Connexion réseau<br>du client 1"] -- "possède" --> PC["PlayerController 1"]
+    PC -- "Owner" --> PS["PlayerState 1"]
+    PC -- "Owner, fixé par Possess" --> PW["Character 1"]
+    PW -- "Owner, fixé par SetOwner" --> WP["Arme équipée"]
+    PW -- "ServerInteract(Porte)<br>RPC accepté" --> SV["Serveur : vérifie la distance<br>puis Porte.SetOpen(true)"]
+    DR["Porte placée dans le niveau<br>aucun Owner"] -- "ServerOpen() appelé<br>par un client : abandonné" --> NOP["Rien ne se passe"]
+</pre>
+    <figcaption>La chaîne de propriété mène à la connexion du client 1 : un RPC Server appelé sur son Character ou son arme est accepté. La porte n'appartient à personne : un RPC Server appelé directement sur elle par un client est abandonné.</figcaption>
+  </figure>
+  <p>Le <strong>PlayerController</strong> est possédé par la connexion de son joueur, et le <strong>PlayerState</strong> a pour Owner ce PlayerController. Le <strong>Pawn</strong> reçoit le PlayerController comme Owner automatiquement lors de <code>Possess()</code>. Pour un Actor que vous créez (arme, projectile), passez l'Owner dans <code>FActorSpawnParameters::Owner</code> ou appelez <code>SetOwner()</code>, <strong>sur le serveur</strong>. On retrouve le propriétaire avec <code>GetOwner()</code> et la connexion avec <code>GetNetConnection()</code>.</p>
+
+  <h3>Le piège de la porte</h3>
+  <p>Scénario classique : vous ajoutez à une porte placée dans le niveau un événement « Run on Server » appelé quand le joueur appuie sur <kbd>E</kbd>. Chez l'hôte, ça marche. Chez les clients, rien. La raison : la porte n'appartient à aucun client, donc le RPC Server est abandonné (ligne « Client / le serveur ou personne » de la table). La solution, visible sur le schéma ci-dessus, est de faire passer la demande par un Actor que le client <strong>possède</strong> : son Character ou son PlayerController. Le serveur modifie ensuite l'état répliqué de la porte, et l'OnRep l'anime chez tous les clients.</p>
+  <p>Pour éviter un RPC par type d'objet, créez un seul <code>ServerInteract(AActor* Target)</code> dans votre Character, qui appelle sur le serveur une interface <code>IInteractable</code> implémentée par les portes, les leviers et les coffres. Passer un pointeur d'Actor dans un RPC fonctionne si cet Actor est répliqué ou placé dans le niveau.</p>
+
+  <h2>Autorité et rôles</h2>
+  <p>Votre code s'exécute sur toutes les machines : un même <code>BeginPlay</code> tourne sur le serveur et sur chaque client. Il faut donc souvent demander « sur quelle machine suis-je, et quelle copie de cet Actor ai-je entre les mains ? ». Chaque copie d'un Actor a un <strong>rôle local</strong> (<code>GetLocalRole()</code>) et un <strong>rôle distant</strong> (<code>GetRemoteRole()</code>, le rôle de la copie à l'autre bout) :</p>
+  <dl class="defs">
+    <dt>ROLE_Authority</dt><dd>Cette copie fait autorité. C'est le cas sur le serveur… et pour tout Actor non répliqué créé localement sur un client.</dd>
+    <dt>ROLE_AutonomousProxy</dt><dd>Copie contrôlée par le joueur local : votre propre personnage, sur votre machine. Il envoie ses entrées et prédit ses mouvements.</dd>
+    <dt>ROLE_SimulatedProxy</dt><dd>Copie qui se contente de suivre ce que le serveur envoie : les personnages des autres joueurs, les portes, les projectiles.</dd>
+  </dl>
+  <p>Prenons le personnage du joueur A dans une partie avec serveur dédié et deux clients, A et B :</p>
+  <table>
+    <thead><tr><th></th><th>Sur le serveur</th><th>Sur le client A (propriétaire)</th><th>Sur le client B</th></tr></thead>
+    <tbody>
+      <tr><td><code>GetLocalRole()</code></td><td><code>ROLE_Authority</code></td><td><code>ROLE_AutonomousProxy</code></td><td><code>ROLE_SimulatedProxy</code></td></tr>
+      <tr><td><code>GetRemoteRole()</code></td><td><code>ROLE_AutonomousProxy</code></td><td><code>ROLE_Authority</code></td><td><code>ROLE_Authority</code></td></tr>
+      <tr><td><code>HasAuthority()</code></td><td>true</td><td>false</td><td>false</td></tr>
+      <tr><td><code>IsLocallyControlled()</code></td><td>false (vrai seulement pour le pawn de l'hôte d'un listen server)</td><td>true</td><td>false</td></tr>
+    </tbody>
+  </table>
+  <p>Pour savoir quel type de machine exécute le code, utilisez <code>GetNetMode()</code> (ou <code>IsNetMode()</code>) qui renvoie <code>NM_Standalone</code>, <code>NM_DedicatedServer</code>, <code>NM_ListenServer</code> ou <code>NM_Client</code>. En Blueprint, le test le plus courant est le macro <strong>Switch Has Authority</strong>, qui divise l'exécution entre la copie qui fait autorité et les autres :</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="Switch Has Authority : la sortie Authority s'exécute sur le serveur, Remote sur les clients.">
+{"nodes": [
+  {"id": "begin", "type": "event", "title": "Event BeginPlay", "x": 0, "y": 0, "out": [{"type": "exec"}]},
+  {"id": "sw", "type": "macro", "title": "Switch Has Authority", "x": 230, "y": 0, "in": [{"type": "exec"}], "out": [{"name": "Authority", "type": "exec"}, {"name": "Remote", "type": "exec"}]},
+  {"id": "p1", "type": "function", "title": "Print String", "x": 500, "y": 0, "in": [{"type": "exec"}, {"name": "In String", "type": "string", "value": "Je suis le serveur"}], "out": [{"type": "exec"}]},
+  {"id": "p2", "type": "function", "title": "Print String", "x": 500, "y": 125, "in": [{"type": "exec"}, {"name": "In String", "type": "string", "value": "Je suis un client"}], "out": [{"type": "exec"}]}
+ ],
+ "links": [["begin", 0, "sw", 0], ["sw", 0, "p1", 0], ["sw", 1, "p2", 0]]}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="ShooterCharacter.cpp (tests de rôle)">
+void AShooterCharacter::BeginPlay()
+{
+    Super::BeginPlay();
+    if (HasAuthority())                          // sortie Authority
+    {
+        UE_LOG(LogTemp, Log, TEXT("Je suis le serveur")); // donner l'arme de départ...
+    }
+    else                                         // sortie Remote
+    {
+        UE_LOG(LogTemp, Log, TEXT("Je suis un client"));
+    }
+}
+</script>
+    </div>
+  </div>
+  <div class="callout warn">
+    <p class="callout-title">IsLocallyControlled() dans BeginPlay</p>
+    <p>Sur un client, le <code>BeginPlay</code> du personnage peut s'exécuter <em>avant</em> que l'information de possession ne soit arrivée : <code>IsLocallyControlled()</code> y renvoie alors faux. Placez le code propre au joueur local dans <code>NotifyControllerChanged()</code> (utilisé par les templates récents) ou <code>PawnClientRestart()</code>, et le code serveur de possession dans <code>PossessedBy()</code>.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Sur la machine du joueur B, quel est le rôle local (<code>GetLocalRole()</code>) du personnage du joueur A ?</p>
+    <ul>
+      <li><code>ROLE_Authority</code></li>
+      <li><code>ROLE_AutonomousProxy</code></li>
+      <li data-correct><code>ROLE_SimulatedProxy</code></li>
+      <li><code>ROLE_None</code></li>
+    </ul>
+    <p class="explain">Le joueur B ne contrôle pas ce personnage et ne fait pas autorité : sa copie se contente de reproduire ce que le serveur envoie, c'est un simulated proxy. Seul le client A le voit en autonomous proxy, et seul le serveur en a l'autorité.</p>
+  </div>
+
+  <h2>Mouvement et prédiction</h2>
+  <p>Si un client attendait la réponse du serveur avant de bouger son personnage, chaque pas aurait le retard du ping (50 à 150 ms) : injouable. Le <code>CharacterMovementComponent</code> utilise donc la <strong>prédiction côté client</strong> avec <strong>correction par le serveur</strong> :</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    participant C as Client propriétaire
+    participant S as Serveur
+    participant O as Autres clients
+    C->>C: Applique le mouvement tout de suite (prédiction)<br>et le mémorise dans une liste de SavedMoves
+    C->>S: Envoie le move : entrées, horodatage, position obtenue
+    S->>S: Rejoue le même mouvement avec ses propres données
+    alt Même résultat, à une tolérance près
+        S-->>C: Accusé de réception (ClientAckGoodMove)
+        C->>C: Retire les moves confirmés
+    else Écart trop grand
+        S-->>C: Correction (ClientAdjustPosition)
+        C->>C: Se replace, puis rejoue les moves non confirmés
+    end
+    S-->>O: Position répliquée, lissée chez les simulated proxies
+</pre>
+    <figcaption>Prédiction et réconciliation du CharacterMovementComponent. Les noms internes des RPC varient selon la version, le principe reste celui-ci.</figcaption>
+  </figure>
+  <p>Une correction visible à l'écran s'appelle un <strong>rubber banding</strong> (effet élastique) : le personnage est ramené en arrière. Il apparaît dès que le client et le serveur ne simulent pas la même chose. L'exemple typique : un sprint qui modifie <code>MaxWalkSpeed</code> seulement sur le client. Le client avance plus vite que ce que calcule le serveur, et il est corrigé en permanence. Un RPC Server qui change la vitesse ne suffit pas non plus, car le changement n'est pas synchronisé avec les moves déjà prédits.</p>
+  <p>La solution robuste, avancée, consiste à étendre le <code>CharacterMovementComponent</code> : une classe dérivée de <code>FSavedMove_Character</code> transporte l'état « sprint » dans chaque move (via les <em>compressed flags</em>), pour que client et serveur simulent exactement la même chose. Pour des capacités plus riches, le <strong>Gameplay Ability System</strong> intègre aussi la prédiction (voir <a href="systemes-gameplay.html">Systèmes de gameplay</a>). Enfin, Epic prépare un successeur, le plugin <strong>Mover</strong>, introduit à titre expérimental dans UE 5.4 et bâti sur un framework de prédiction plus générique ; selon votre version il peut encore être expérimental, et pour un projet à livrer le <code>CharacterMovementComponent</code> reste la valeur sûre.</p>
+
+  <h2>Tester dans l'éditeur</h2>
+  <p>Inutile d'avoir plusieurs ordinateurs : l'éditeur peut lancer plusieurs fenêtres de jeu connectées entre elles (<em>Play In Editor</em> multijoueur).</p>
+  <ol class="steps">
+    <li><strong>Choisir le nombre de joueurs</strong>Cliquez sur les trois points à côté du bouton Play. Dans la section <em>Multiplayer Options</em>, réglez <strong>Number of Players</strong> (par exemple 3).</li>
+    <li><strong>Choisir le Net Mode</strong><strong>Play Offline</strong> : pas de réseau. <strong>Play As Listen Server</strong> : la première fenêtre est l'hôte. <strong>Play As Client</strong> : un serveur dédié est lancé en arrière-plan et toutes les fenêtres sont des clients. Testez régulièrement en Play As Client : aucun joueur n'y a l'autorité, c'est le mode qui révèle le plus de bugs.</li>
+    <li><strong>Un ou plusieurs processus</strong>Dans <em>Editor Preferences → Level Editor → Play</em>, l'option <strong>Run Under One Process</strong> fait tourner toutes les instances dans l'éditeur (rapide). Désactivée, chaque joueur est un processus séparé : plus lent, mais plus proche de la réalité.</li>
+    <li><strong>Simuler un mauvais réseau</strong>Dans les mêmes préférences, activez l'émulation réseau (<em>Enable Network Emulation</em>, avec des profils de latence et de perte de paquets ; les libellés exacts varient selon la version). Un jeu testé uniquement avec 0 ms de ping cache presque toujours des bugs.</li>
+  </ol>
+  <p>Les messages de <code>Print String</code> sont préfixés par la machine qui les affiche, par exemple <code>Server: Je suis le serveur</code> et <code>Client 1: Je suis un client</code> (la numérotation peut varier selon la version). Dans l'Output Log, cherchez ces mêmes préfixes. Quelques commandes console utiles :</p>
+
+<script type="text/plain" data-lang="console" data-file="Console">
+stat net                      # bande passante, paquets, nombre d'Actors répliqués
+NetEmulation.PktLag 150       # ajoute 150 ms de latence
+NetEmulation.PktLoss 5        # perd 5 % des paquets
+open MyMap?listen             # héberger une partie sur la carte MyMap
+open 127.0.0.1                # se connecter à un serveur local (port 7777 par défaut)
+</script>
+
+  <h2>Sessions et jeu en ligne</h2>
+  <p>Se connecter par adresse IP suffit en réseau local, mais un vrai jeu a besoin de <strong>trouver</strong> des parties : liste de serveurs, invitations d'amis, matchmaking. C'est le rôle de l'<strong>Online Subsystem</strong> (OSS), une couche d'abstraction : votre code utilise la même interface, et un fichier de configuration choisit la plateforme.</p>
+  <dl class="defs">
+    <dt>OnlineSubsystemNull</dt><dd>Implémentation par défaut, sans service en ligne : sessions en réseau local (LAN), parfait pour développer.</dd>
+    <dt>OnlineSubsystemSteam</dt><dd>Sessions, amis, invitations et succès via Steam.</dd>
+    <dt>OnlineSubsystemEOS</dt><dd>Epic Online Services : gratuit et multiplateforme (Steam, consoles, Epic Games Store).</dd>
+    <dt>Online Services</dt><dd>La nouvelle génération d'API en ligne d'Epic, apparue avec UE 5.1, pensée d'abord pour EOS. L'OSS « classique » reste le plus documenté et le plus utilisé par la communauté ; vérifiez l'état des deux pour votre version.</dd>
+  </dl>
+
+  <h3>Créer, trouver, rejoindre</h3>
+  <p>En Blueprint, quatre nœuds asynchrones suffisent pour un premier menu multijoueur : <strong>Create Session</strong> (nombre de places, LAN ou non), <strong>Find Sessions</strong> (renvoie une liste de résultats), <strong>Join Session</strong> (rejoint un résultat et voyage automatiquement vers l'hôte) et <strong>Destroy Session</strong> (en quittant). Après Create Session, l'hôte ouvre la carte de jeu avec l'option <code>listen</code> (nœud <em>Open Level</em>, champ <em>Options</em>).</p>
+
+  <p>Pour Steam, activez le plugin <strong>Online Subsystem Steam</strong> puis configurez <code>DefaultEngine.ini</code>. L'App ID <strong>480</strong> est celui de <em>Spacewar</em>, le jeu de test public de Valve : il permet de tester avant d'avoir votre propre App ID. Le client Steam doit être lancé, et Steam ne s'initialise en général pas en PIE : testez en <em>Standalone</em> ou en build packagé.</p>
+
+<script type="text/plain" data-lang="ini" data-file="Config/DefaultEngine.ini">
+[/Script/Engine.GameEngine]
++NetDriverDefinitions=(DefName="GameNetDriver",DriverClassName="OnlineSubsystemSteam.SteamNetDriver",DriverClassNameFallback="OnlineSubsystemUtils.IpNetDriver")
+
+[OnlineSubsystem]
+DefaultPlatformService=Steam
+
+[OnlineSubsystemSteam]
+bEnabled=true
+SteamDevAppId=480
+
+[/Script/OnlineSubsystemSteam.SteamNetDriver]
+NetConnectionClassName="OnlineSubsystemSteam.SteamNetConnection"
+</script>
+
+  <p>Ce bloc suit la documentation officielle de l'OSS Steam, mais certaines versions récentes recommandent plutôt le net driver du plugin <em>SteamSockets</em> : vérifiez la page « Online Subsystem Steam » de votre version. Si vous appelez l'OSS en C++, ajoutez <code>OnlineSubsystem</code> et <code>OnlineSubsystemUtils</code> aux dépendances du <code>Build.cs</code>. Les nœuds de session natifs exposent peu d'options (pas de nom de serveur personnalisé, par exemple). Le plugin communautaire gratuit <strong>Advanced Sessions</strong> en ajoute beaucoup en Blueprint : paramètres de session personnalisés, amis Steam, avatars. Il est très répandu dans les projets 100 % Blueprint.</p>
+
+  <h3>Changer de carte : ServerTravel</h3>
+  <ul>
+    <li><code>GetWorld()-&gt;ServerTravel(TEXT("/Game/Maps/Arena?listen"))</code> : appelé sur le serveur, il change de carte <strong>et emmène tous les clients</strong> avec lui (lobby vers partie, partie vers carte suivante).</li>
+    <li><code>PlayerController-&gt;ClientTravel(Adresse, TRAVEL_Absolute)</code> : déplace un seul client, par exemple pour rejoindre un autre serveur.</li>
+    <li><strong>Seamless travel</strong> : activez <code>bUseSeamlessTravel</code> dans le GameMode. Les clients restent connectés pendant le voyage (via une petite <em>Transition Map</em> réglée dans Project Settings → Maps &amp; Modes), et PlayerControllers et PlayerStates peuvent survivre. Sans lui, chaque client se déconnecte puis se reconnecte. Historiquement mal pris en charge en PIE : testez-le en Standalone.</li>
+  </ul>
+
+  <h2>Compiler un serveur dédié</h2>
+  <p>Un serveur dédié est une <strong>cible de compilation</strong> à part : un exécutable sans rendu ni son, compilé avec <code>UE_SERVER</code> défini à 1. La version du moteur installée par l'Epic Games Launcher ne permet pas de compiler cette cible : il faut <a href="installation.html">un moteur compilé depuis les sources</a> (GitHub). On ajoute ensuite un fichier Target à côté de ceux du jeu et de l'éditeur :</p>
+
+<script type="text/plain" data-lang="csharp" data-file="Source/MyGameServer.Target.cs">
+using UnrealBuildTool;
+
+public class MyGameServerTarget : TargetRules
+{
+    public MyGameServerTarget(TargetInfo Target) : base(Target)
+    {
+        Type = TargetType.Server;
+        DefaultBuildSettings = BuildSettingsVersion.V5;
+        IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_4;
+        ExtraModuleNames.Add("MyGame");
+    }
+}
+</script>
+
+  <p>Après avoir régénéré les fichiers de projet, une configuration <em>Development Server</em> apparaît dans l'IDE. Pour produire un serveur packagé, choisissez la cible <code>MyGameServer</code> dans le menu <strong>Platforms</strong> de l'éditeur (selon votre version) ou utilisez <code>RunUAT BuildCookRun</code> avec les options <code>-server -noclient</code>. On le lance ensuite avec, par exemple, <code>MyGameServer.exe /Game/Maps/Arena -log -port=7777</code>.</p>
+
+  <h2>Pièges courants</h2>
+  <table>
+    <thead><tr><th>Symptôme</th><th>Cause</th><th>Solution</th></tr></thead>
+    <tbody>
+      <tr><td>Un objet existe en double, ou chez un seul client</td><td>Actor répliqué créé avec <code>SpawnActor</code> sur un client, souvent dans un <code>BeginPlay</code>, qui s'exécute sur <strong>chaque machine</strong></td><td>Ne créer les Actors répliqués que sur le serveur (<code>HasAuthority()</code>) : les clients les reçoivent tout seuls</td></tr>
+      <tr><td>Crash ou erreur en créant un widget sur le serveur dédié</td><td>Code d'interface exécuté sur une machine sans écran</td><td>Créer l'UI seulement pour le joueur local (<code>IsLocallyControlled()</code>, PlayerController local)</td></tr>
+      <tr><td>Le mauvais joueur reçoit l'action</td><td><code>GetPlayerController(0)</code> : sur un serveur, c'est le premier contrôleur de la liste, pas « le joueur concerné »</td><td>Remonter depuis l'Actor : <code>GetController()</code>, <code>GetOwner()</code>, <code>GetInstigatorController()</code></td></tr>
+      <tr><td>Chaque joueur voit un résultat aléatoire différent</td><td><code>FMath::RandRange</code> appelé sur chaque machine</td><td>Tirer au sort sur le serveur et répliquer le résultat (ou une graine pour un <code>FRandomStream</code>)</td></tr>
+      <tr><td>RPC Server ignoré en silence, ou déconnexions sous charge</td><td>Actor non possédé par le client ou non répliqué ; ou RPC Reliable envoyé dans <code>Tick</code></td><td>Passer par le Character / PlayerController et vérifier <code>bReplicates</code> ; passer en Unreliable ou répliquer une propriété</td></tr>
+      <tr><td>Une propriété ne se met jamais à jour</td><td><code>bReplicates</code> oublié, propriété absente de <code>GetLifetimeReplicatedProps</code>, ou modifiée sur un client</td><td>Vérifier les trois ; ne modifier l'état que sur le serveur</td></tr>
+      <tr><td>Un joueur arrivé en retard voit la porte fermée</td><td>État transmis par un Multicast (non rejoué)</td><td>Tout état durable passe par une propriété répliquée avec OnRep</td></tr>
+      <tr><td>Tout marche chez l'hôte, rien chez les clients</td><td>Tests uniquement en listen server, où l'hôte a l'autorité</td><td>Tester en <em>Play As Client</em> avec de la latence simulée</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Réplication à grande échelle</h2>
+  <p>Pour un jeu à 4 ou 16 joueurs, le système standard suffit largement. Avec des dizaines de joueurs et des milliers d'Actors répliqués, le coût CPU du serveur explose. Trois outils existent :</p>
+  <dl class="defs">
+    <dt>Replication Graph</dt><dd>Plugin qui remplace le test de pertinence Actor par Actor par des « nœuds » (grille spatiale, Actors toujours pertinents, par équipe…). Utilisé par Fortnite ; demande une configuration en C++.</dd>
+    <dt>Push model</dt><dd>Au lieu de comparer chaque propriété à chaque envoi, vous signalez vous-même les changements avec <code>MARK_PROPERTY_DIRTY_FROM_NAME</code>, sur les propriétés déclarées avec <code>bIsPushBased</code>. Gain de CPU serveur important.</dd>
+    <dt>Iris</dt><dd>Nouveau système de réplication d'Epic, apparu à titre expérimental avec UE 5.1 et à activer explicitement. Son statut évolue à chaque version : consultez les notes de version de la vôtre avant de l'adopter.</dd>
+  </dl>
+  <div class="callout ue">
+    <p class="callout-title">Pour aller plus loin</p>
+    <p>Dans la documentation d'Epic, lisez « Networking Overview », « Actor Replication » et « Remote Procedure Calls ». Le <em>Network Compendium</em> de Cedric Neukirchen (eXi), gratuit, reste une référence très appréciée, et le projet <strong>Lyra</strong> montre une architecture multijoueur complète.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Une porte répliquée que n'importe quel joueur peut ouvrir</h4>
+    <p>Créez une porte placée dans le niveau. Quand un joueur est devant elle et appuie sur la touche d'interaction, la porte s'ouvre (ou se referme) en pivotant, chez tous les joueurs. Un joueur qui se connecte après l'ouverture doit la voir ouverte. Contraintes : la porte n'appartient à aucun joueur, le serveur fait autorité, et un client ne doit pas pouvoir ouvrir une porte à l'autre bout de la carte.</p>
+    <details>
+      <summary>Voir la solution</summary>
+      <p>Le principe : le Character (possédé par le client) relaie la demande via un RPC Server ; le serveur vérifie la distance puis modifie <code>bIsOpen</code>, une propriété répliquée avec OnRep. Chaque machine anime la porte localement dans son OnRep. Comme <code>bIsOpen</code> est un état répliqué, un joueur arrivé en retard reçoit <code>true</code> et son OnRep ouvre la porte.</p>
+      <p>En Blueprint, la même architecture donne : <code>BP_Door</code> avec <em>Replicates</em> coché (mais pas <em>Replicate Movement</em>), un booléen <code>bIsOpen</code> en <em>RepNotify</em> dont l'OnRep joue une Timeline ; une interface <code>BPI_Door</code> dont la fonction <code>Toggle Door</code> fait un <em>Set w/ Notify</em> ; et dans le Character, un Custom Event <code>Server Interact</code> (Run on Server, Reliable, paramètre <code>Door</code>) appelé par l'input, qui vérifie la distance puis appelle <code>Toggle Door</code>. La version C++ complète :</p>
+<script type="text/plain" data-lang="cpp" data-file="ReplicatedDoor.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "ReplicatedDoor.generated.h"
+
+UCLASS()
+class MYGAME_API AReplicatedDoor : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    AReplicatedDoor();
+    virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+    virtual void Tick(float DeltaSeconds) override;
+
+    void SetOpen(bool bNewOpen);          // serveur uniquement
+    bool IsOpen() const { return bIsOpen; }
+
+protected:
+    UPROPERTY(VisibleAnywhere, Category = "Door")
+    TObjectPtr<UStaticMeshComponent> DoorMesh;   // attaché à une racine placée sur la charnière
+    UPROPERTY(EditAnywhere, Category = "Door")
+    float OpenYaw = 90.f;
+    UPROPERTY(ReplicatedUsing = OnRep_IsOpen)
+    bool bIsOpen = false;
+
+    UFUNCTION()
+    void OnRep_IsOpen();
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="ReplicatedDoor.cpp">
+#include "ReplicatedDoor.h"
+#include "Components/StaticMeshComponent.h"
+#include "Net/UnrealNetwork.h"
+
+AReplicatedDoor::AReplicatedDoor()
+{
+    bReplicates = true;
+    SetReplicateMovement(false);                     // chaque machine anime sa copie
+    PrimaryActorTick.bCanEverTick = true;
+    PrimaryActorTick.bStartWithTickEnabled = false;  // Tick seulement pendant l'animation
+    RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Hinge"));
+    DoorMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DoorMesh"));
+    DoorMesh->SetupAttachment(RootComponent);
+}
+
+void AReplicatedDoor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+    Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+    DOREPLIFETIME(AReplicatedDoor, bIsOpen);
+}
+
+void AReplicatedDoor::SetOpen(bool bNewOpen)
+{
+    if (HasAuthority() && bIsOpen != bNewOpen)
+    {
+        bIsOpen = bNewOpen;
+        OnRep_IsOpen(); // C++ : appel manuel côté serveur
+    }
+}
+
+void AReplicatedDoor::OnRep_IsOpen()
+{
+    SetActorTickEnabled(true); // le Tick anime jusqu'à la nouvelle position
+}
+
+void AReplicatedDoor::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+    const float TargetYaw = bIsOpen ? OpenYaw : 0.f;
+    const float NewYaw = FMath::FInterpConstantTo(DoorMesh->GetRelativeRotation().Yaw, TargetYaw, DeltaSeconds, 180.f);
+    DoorMesh->SetRelativeRotation(FRotator(0.f, NewYaw, 0.f));
+    if (FMath::IsNearlyEqual(NewYaw, TargetYaw))
+    {
+        SetActorTickEnabled(false);
+    }
+}
+</script>
+<script type="text/plain" data-lang="cpp" data-file="ShooterCharacter.cpp (interaction)">
+#include "ReplicatedDoor.h"
+// Dans le .h : void Interact();  (liée à IA_Interact)
+//              UFUNCTION(Server, Reliable) void ServerInteract(AReplicatedDoor* Door);
+
+void AShooterCharacter::Interact()
+{
+    FVector EyeLocation;
+    FRotator EyeRotation;
+    GetActorEyesViewPoint(EyeLocation, EyeRotation);
+    const FVector End = EyeLocation + EyeRotation.Vector() * 250.f;
+    FHitResult Hit;
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(Interact), false, this);
+    if (GetWorld()->LineTraceSingleByChannel(Hit, EyeLocation, End, ECC_Visibility, Params))
+    {
+        if (AReplicatedDoor* Door = Cast<AReplicatedDoor>(Hit.GetActor()))
+        {
+            ServerInteract(Door); // RPC sur MON personnage : accepté
+        }
+    }
+}
+
+void AShooterCharacter::ServerInteract_Implementation(AReplicatedDoor* Door)
+{
+    // Ne jamais croire le client : la porte doit être à portée
+    if (IsValid(Door) && FVector::Dist(Door->GetActorLocation(), GetActorLocation()) < 400.f)
+    {
+        Door->SetOpen(!Door->IsOpen());
+    }
+}
+</script>
+      <p>Points clés : le RPC est sur le Character et non sur la porte (ownership) ; l'état est une propriété répliquée et non un Multicast (joueurs arrivés en retard) ; la distance est vérifiée sur le serveur (anti-triche) ; <code>OnRep_IsOpen</code> est appelée à la main sur le serveur (règle du C++).</p>
+    </details>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Un coffre ouvert doit apparaître ouvert pour un joueur qui rejoint la partie dix minutes plus tard. Quelle technique choisir ?</p>
+    <ul>
+      <li>Un RPC NetMulticast Reliable « OuvrirCoffre »</li>
+      <li>Un RPC Client envoyé à chaque joueur</li>
+      <li data-correct>Une propriété <code>bIsOpen</code> répliquée avec RepNotify</li>
+      <li>Une variable dans la GameInstance du serveur</li>
+    </ul>
+    <p class="explain">Les RPC sont des événements ponctuels : un joueur absent au moment de l'appel ne le recevra jamais. Une propriété répliquée est un état : tout nouveau client (ou tout client pour qui l'Actor redevient pertinent) reçoit la valeur actuelle, et l'OnRep met l'affichage à jour. La GameInstance n'est jamais répliquée.</p>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Le <strong>serveur fait autorité</strong> : les clients demandent, le serveur décide et réplique le résultat.</li>
+      <li>Le <strong>GameMode</strong> n'existe que sur le serveur, chaque client n'a que <strong>son</strong> PlayerController, l'UI est toujours locale.</li>
+      <li>La <strong>réplication</strong> (serveur vers clients) transporte un état ; <code>ReplicatedUsing</code> déclenche un OnRep, qui n'est pas appelé sur le serveur en C++.</li>
+      <li>Les <strong>RPC</strong> transportent des événements : Server (demandes), Client (réponses privées), NetMulticast (effets). Reliable avec parcimonie.</li>
+      <li>Un RPC Server n'est accepté que sur un Actor <strong>possédé</strong> par le client : passez par le Character ou le PlayerController.</li>
+      <li>Utilisez <code>HasAuthority()</code>, <code>IsLocallyControlled()</code> et <code>GetNetMode()</code> pour savoir où vous êtes, et testez en <em>Play As Client</em> avec de la latence.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

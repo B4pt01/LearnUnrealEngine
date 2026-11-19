@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interfaces avec UMG — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="ui">
+<article class="doc">
+
+  <h1>Interfaces avec UMG</h1>
+  <p class="lead">Barre de vie, munitions, menu principal, écran de pause, inventaire : l'interface est ce que le joueur regarde le plus. Unreal la construit avec <strong>UMG</strong> (Unreal Motion Graphics), un éditeur visuel de widgets utilisable en Blueprint comme en C++. Ce chapitre vous apprend à concevoir des écrans qui s'adaptent à toutes les résolutions, à les relier proprement au gameplay et à gérer menus et entrées.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Comprendre les <strong>Widget Blueprints</strong> et la relation entre UMG et Slate</li>
+      <li>Choisir les bons <strong>panneaux</strong> et maîtriser les <strong>ancres</strong> et la mise à l'échelle DPI</li>
+      <li>Créer, afficher et retirer des widgets en Blueprint et en C++</li>
+      <li>Mettre à jour l'interface par <strong>événements</strong> plutôt que par bindings</li>
+      <li>Écrire des widgets C++ avec <code>BindWidget</code></li>
+      <li>Construire un menu principal et un menu pause, gérer les <strong>modes d'entrée</strong></li>
+      <li>Découvrir animations, UI dans le monde, listes, Common UI, localisation et MVVM</li>
+    </ul>
+  </div>
+
+  <h2>UMG et Slate</h2>
+  <p>Un écran d'interface est un <strong>Widget Blueprint</strong>, un asset créé par clic droit → <em>User Interface</em> → <em>Widget Blueprint</em>, puis le choix de la classe parente <code>UserWidget</code>. La convention est de le préfixer par <code>WBP_</code> : <code>WBP_HUD</code>, <code>WBP_MainMenu</code>, <code>WBP_InventorySlot</code>. Son éditeur a deux modes, sélectionnés en haut à droite :</p>
+  <dl class="defs">
+    <dt>Designer</dt><dd>La mise en page visuelle. La <strong>Palette</strong> liste les widgets disponibles, la <strong>Hierarchy</strong> montre l'arbre des widgets imbriqués, le panneau <strong>Details</strong> règle le widget sélectionné (texte, couleurs, ancres, taille), et le panneau <strong>Animations</strong> en bas permet d'animer leurs propriétés.</dd>
+    <dt>Graph</dt><dd>Un Event Graph classique (voir <a href="blueprints.html">Blueprints</a>) : on y réagit aux clics, on y met à jour les textes. Chaque widget marqué <em>Is Variable</em> dans le Designer y devient une variable.</dd>
+  </dl>
+
+  <p>Sous le capot, UMG est une couche « confortable » au-dessus de <strong>Slate</strong>, le framework d'interface bas niveau d'Unreal, écrit en C++ pur (c'est aussi lui qui dessine tout l'éditeur). Chaque widget UMG (<code>UWidget</code>, un UObject éditable et utilisable en Blueprint) crée et pilote un widget Slate (<code>SWidget</code>) qui fait le vrai travail de mise en page et de rendu.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TB
+    WBP["Widget Blueprint<br>WBP_HUD"] -- "hérite de" --> UW["UUserWidget<br>votre classe C++ optionnelle"]
+    UW -- "contient un arbre de" --> UWG["UWidget<br>UTextBlock, UButton, UCanvasPanel"]
+    UWG -- "crée et pilote" --> SW["Slate : SWidget<br>STextBlock, SButton"]
+    SW -- "mise en page et dessin" --> R["Rendu à l'écran"]
+</pre>
+    <figcaption>Les couches de l'interface : vous travaillez dans UMG, Slate fait le travail bas niveau. On n'écrit du Slate directement que pour des outils d'éditeur ou des widgets très spécifiques.</figcaption>
+  </figure>
+
+  <ul class="tree">
+    <li><span class="node c-purple">UVisual</span><span class="desc">Base commune des éléments d'interface UMG</span>
+      <ul>
+        <li><span class="node c-blue">UWidget</span><span class="desc">Tout élément d'UMG : visibilité, transformation, infobulle</span>
+          <ul>
+            <li><span class="node c-teal">UUserWidget</span><span class="desc">Un écran ou composant réutilisable : la classe parente des Widget Blueprints</span></li>
+            <li><span class="node c-green">UPanelWidget</span><span class="desc">Contient des enfants et les dispose</span>
+              <ul>
+                <li><span class="node c-green">UCanvasPanel, UOverlay, UVerticalBox…</span><span class="desc">plusieurs enfants</span></li>
+                <li><span class="node c-green">UContentWidget</span><span class="desc">un seul enfant : UButton, UBorder, USizeBox, UScaleBox</span></li>
+              </ul>
+            </li>
+            <li><span class="node c-orange">UTextBlock, UImage, UProgressBar, USlider…</span><span class="desc">widgets « feuilles » qui affichent ou saisissent</span></li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+  </ul>
+
+  <h2>Panneaux et widgets</h2>
+  <p>Une interface est un arbre : des <strong>panneaux</strong> (layout) qui disposent leurs enfants, et des <strong>widgets</strong> qui affichent quelque chose. Bien choisir ses panneaux est la clé d'une interface qui se redimensionne correctement.</p>
+
+  <h3>Les panneaux</h3>
+  <table>
+    <thead><tr><th>Panneau</th><th>Disposition</th><th>Usage typique</th></tr></thead>
+    <tbody>
+      <tr><td>Canvas Panel</td><td>Positions libres avec ancres</td><td>La racine d'un écran plein (HUD), et seulement là</td></tr>
+      <tr><td>Overlay</td><td>Enfants empilés les uns sur les autres</td><td>Texte par-dessus une barre, icône sur un fond</td></tr>
+      <tr><td>Horizontal / Vertical Box</td><td>Enfants alignés en ligne ou en colonne (taille <em>Auto</em> ou <em>Fill</em>)</td><td>Boutons d'un menu, icône + texte</td></tr>
+      <tr><td>Grid Panel / Uniform Grid Panel</td><td>Grille (cases de tailles variables / identiques)</td><td>Grille d'inventaire, clavier virtuel</td></tr>
+      <tr><td>Size Box</td><td>Impose une largeur/hauteur à son enfant</td><td>Bouton de taille fixe, minimap carrée</td></tr>
+      <tr><td>Scale Box</td><td>Agrandit ou réduit son enfant pour remplir l'espace</td><td>Logo, image qui garde ses proportions</td></tr>
+      <tr><td>Scroll Box</td><td>Contenu défilant</td><td>Liste d'options, crédits</td></tr>
+      <tr><td>Wrap Box</td><td>Ligne qui revient à la ligne quand elle est pleine</td><td>Liste d'icônes de buffs, tags</td></tr>
+      <tr><td>Border</td><td>Un enfant avec un fond (couleur, image) et des marges</td><td>Cadre de panneau, fond semi-transparent</td></tr>
+      <tr><td>Spacer</td><td>Espace vide de taille fixe</td><td>Écart entre deux boutons</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Les widgets courants</h3>
+  <div class="cards">
+    <div class="card"><span class="card-tag">Affichage</span><h4>Text, Image, Progress Bar</h4><p>Texte (en <code>FText</code>, donc traduisible), image ou matériau, barre de progression (vie, chargement, cooldown).</p></div>
+    <div class="card"><span class="card-tag">Interaction</span><h4>Button, Check Box, Slider</h4><p>Bouton cliquable (contient un autre widget, souvent un texte), case à cocher, curseur de valeur (volume, sensibilité).</p></div>
+    <div class="card"><span class="card-tag">Saisie</span><h4>Editable Text, Combo Box</h4><p>Champ de saisie (pseudo, recherche) et liste déroulante (résolution, langue).</p></div>
+    <div class="card"><span class="card-tag">Listes</span><h4>List View, Tile View</h4><p>Listes et grilles virtualisées : seuls les éléments visibles existent, même pour des milliers d'entrées.</p></div>
+  </div>
+
+  <p>Voici la hiérarchie d'un HUD de jeu de tir simple, telle qu'elle apparaît dans le panneau Hierarchy :</p>
+  <ul class="tree">
+    <li><span class="node c-teal">WBP_HUD</span><span class="desc">UserWidget</span>
+      <ul>
+        <li><span class="node c-green">CanvasPanel</span><span class="desc">racine plein écran</span>
+          <ul>
+            <li><span class="node c-green">HealthBlock</span><span class="desc">Overlay, ancré en haut à gauche</span>
+              <ul>
+                <li><span class="node c-orange">HealthBar</span><span class="desc">ProgressBar</span></li>
+                <li><span class="node c-orange">HealthText</span><span class="desc">TextBlock centré par-dessus</span></li>
+              </ul>
+            </li>
+            <li><span class="node c-green">MinimapBox</span><span class="desc">SizeBox 200 × 200, ancré en haut à droite</span>
+              <ul><li><span class="node c-orange">MinimapImage</span><span class="desc">Image</span></li></ul>
+            </li>
+            <li><span class="node c-orange">AmmoText</span><span class="desc">TextBlock, ancré en bas à droite</span></li>
+            <li><span class="node c-orange">Crosshair</span><span class="desc">Image, ancrée au centre</span></li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+  </ul>
+
+  <h2>Ancres et mise à l'échelle</h2>
+  <p>Votre jeu tournera en 1920 × 1080, en 2560 × 1440, en 21:9 ou sur un Steam Deck en 16:10. Les <strong>ancres</strong> (<em>Anchors</em>) indiquent à chaque enfant d'un Canvas Panel à quel point de l'écran il est accroché. Sa position (<em>Position X/Y</em>) est alors un décalage par rapport à cette ancre, et son <em>Alignment</em> (de 0 à 1) indique quel point du widget lui-même est placé à cette position. Une minimap ancrée en haut à droite reste collée au coin quel que soit le format :</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 770 320" width="770" role="img" aria-label="Le même HUD sur un écran 16:9 et un écran 4:3 : chaque élément reste accroché à son ancre">
+      <g fill="none" stroke="currentColor" stroke-opacity="0.6" stroke-width="2">
+        <rect x="20" y="40" width="400" height="225" rx="4"/>
+        <rect x="460" y="40" width="300" height="225" rx="4"/>
+      </g>
+      <g fill="currentColor" fill-opacity="0.04">
+        <rect x="20" y="40" width="400" height="225"/>
+        <rect x="460" y="40" width="300" height="225"/>
+      </g>
+      <g stroke="#ffd866" stroke-width="1.5" stroke-dasharray="3 3">
+        <line x1="20" y1="40" x2="32" y2="52"/>
+        <line x1="420" y1="40" x2="408" y2="52"/>
+        <line x1="420" y1="265" x2="408" y2="253"/>
+        <line x1="460" y1="40" x2="472" y2="52"/>
+        <line x1="760" y1="40" x2="748" y2="52"/>
+        <line x1="760" y1="265" x2="748" y2="253"/>
+      </g>
+      <g fill="#ffd866">
+        <circle cx="20" cy="40" r="4.5"/><circle cx="420" cy="40" r="4.5"/><circle cx="420" cy="265" r="4.5"/><circle cx="220" cy="152.5" r="4.5"/>
+        <circle cx="460" cy="40" r="4.5"/><circle cx="760" cy="40" r="4.5"/><circle cx="760" cy="265" r="4.5"/><circle cx="610" cy="152.5" r="4.5"/>
+      </g>
+      <rect x="32" y="52" width="110" height="12" rx="2" fill="none" stroke="#ff6b6b" stroke-width="1.5"/>
+      <rect x="32" y="52" width="76" height="12" rx="2" fill="#ff6b6b" fill-opacity="0.8"/>
+      <rect x="472" y="52" width="110" height="12" rx="2" fill="none" stroke="#ff6b6b" stroke-width="1.5"/>
+      <rect x="472" y="52" width="76" height="12" rx="2" fill="#ff6b6b" fill-opacity="0.8"/>
+      <circle cx="380" cy="80" r="28" fill="#4ade80" fill-opacity="0.2" stroke="#4ade80" stroke-width="1.5"/>
+      <circle cx="720" cy="80" r="28" fill="#4ade80" fill-opacity="0.2" stroke="#4ade80" stroke-width="1.5"/>
+      <text x="380" y="84" text-anchor="middle" font-size="11" fill="currentColor">minimap</text>
+      <text x="720" y="84" text-anchor="middle" font-size="11" fill="currentColor">minimap</text>
+      <text x="408" y="250" text-anchor="end" font-size="14" font-weight="700" fill="#5aa9ff">30 / 90</text>
+      <text x="748" y="250" text-anchor="end" font-size="14" font-weight="700" fill="#5aa9ff">30 / 90</text>
+      <g stroke="currentColor" stroke-width="2">
+        <line x1="210" y1="152.5" x2="216" y2="152.5"/><line x1="224" y1="152.5" x2="230" y2="152.5"/>
+        <line x1="220" y1="142.5" x2="220" y2="148.5"/><line x1="220" y1="156.5" x2="220" y2="162.5"/>
+        <line x1="600" y1="152.5" x2="606" y2="152.5"/><line x1="614" y1="152.5" x2="620" y2="152.5"/>
+        <line x1="610" y1="142.5" x2="610" y2="148.5"/><line x1="610" y1="156.5" x2="610" y2="162.5"/>
+      </g>
+      <text x="220" y="26" text-anchor="middle" font-size="14" font-weight="600" fill="currentColor">16:9</text>
+      <text x="610" y="26" text-anchor="middle" font-size="14" font-weight="600" fill="currentColor">4:3</text>
+      <circle cx="40" cy="296" r="4.5" fill="#ffd866"/>
+      <text x="52" y="300" font-size="13" fill="currentColor">ancre (coin, ou centre pour le viseur)</text>
+      <line x1="320" y1="296" x2="344" y2="296" stroke="#ffd866" stroke-width="1.5" stroke-dasharray="3 3"/>
+      <text x="352" y="300" font-size="13" fill="currentColor">décalage identique sur les deux écrans</text>
+    </svg>
+    <figcaption>Barre de vie ancrée en haut à gauche, minimap en haut à droite, munitions en bas à droite, viseur au centre : chaque élément garde la même distance à son ancre, quel que soit le format d'écran.</figcaption>
+  </figure>
+
+  <p>Les ancres peuvent aussi s'étirer : une ancre « pleine largeur » en haut de l'écran (minimum X = 0, maximum X = 1) fait suivre la largeur de l'écran à une bannière. Le sélecteur d'ancres du panneau Details propose les 16 préréglages les plus courants ; maintenez <kbd>Ctrl</kbd> et <kbd>Shift</kbd> en cliquant sur un préréglage pour déplacer aussi le widget et son pivot à cet endroit.</p>
+
+  <h3>La mise à l'échelle DPI</h3>
+  <p>Les ancres règlent les <em>positions</em> ; reste la <em>taille</em>. Un bouton de 200 pixels conçu en 1080p paraîtrait minuscule en 4K. Unreal applique donc une <strong>échelle DPI</strong> globale à toute l'interface, réglée dans <em>Project Settings</em> → <em>Engine</em> → <em>User Interface</em> : la <em>DPI Scale Rule</em> (par défaut, <em>Shortest Side</em> : on regarde le plus petit côté de l'écran) et la <em>DPI Curve</em>, qui associe à ce côté un facteur d'échelle. Par défaut, l'échelle vaut 1 pour un petit côté de 1080 pixels et suit à peu près une droite : environ 0,67 en 720p, 2 en 2160p. Concevez donc vos écrans en 1920 × 1080 (sélecteur de résolution en haut du Designer) et laissez la courbe faire le reste.</p>
+
+  <h3>La safe zone</h3>
+  <p>Sur une télévision, les bords de l'image peuvent être rognés ; sur un téléphone, une encoche ou des coins arrondis masquent une partie de l'écran. Enveloppez le contenu de vos écrans dans un widget <strong>Safe Zone</strong> : il ajoute automatiquement les marges nécessaires selon la plateforme. Pour tester sur PC, les variables console <code>r.DebugSafeZone.TitleRatio</code> et <code>r.DebugSafeZone.Mode</code> simulent une zone réduite.</p>
+
+  <div class="callout warn">
+    <p class="callout-title">Piège courant : des Canvas Panels partout</p>
+    <p>Le Canvas Panel est le seul panneau à positions absolues : c'est tentant de l'utiliser pour tout. Mais imbriquer des Canvas dans des boutons, des lignes de liste ou des petits composants rend la mise en page fragile (rien ne s'adapte au contenu) et coûte plus cher à dessiner. Règle simple : <strong>un Canvas Panel à la racine des écrans plein écran</strong>, et des Overlay, Horizontal/Vertical Box et Size Box partout ailleurs, notamment dans les widgets réutilisables.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Votre minimap est placée en haut à droite dans le Designer en 1920 × 1080. En 21:9 (2560 × 1080), elle se retrouve au milieu de l'écran. Que faut-il corriger ?</p>
+    <ul>
+      <li>Augmenter la DPI Curve</li>
+      <li data-correct>Ancrer la minimap en haut à droite au lieu de l'ancre par défaut en haut à gauche</li>
+      <li>Mettre la minimap dans une Scale Box</li>
+      <li>Créer un deuxième widget pour le format 21:9</li>
+    </ul>
+    <p class="explain">Avec l'ancre par défaut (haut gauche), la position est un décalage depuis le coin gauche : environ 1700 pixels, ce qui tombe au milieu d'un écran plus large. Ancrée en haut à droite, sa position devient un décalage depuis le coin droit, qui reste valable quelle que soit la largeur.</p>
+  </div>
+
+  <h2>Créer et afficher un widget</h2>
+  <p>Un Widget Blueprint n'apparaît pas tout seul : il faut le <strong>créer</strong> (instancier) puis l'<strong>ajouter au viewport</strong>. L'endroit naturel est le <strong>PlayerController</strong> local, qui représente le joueur devant son écran (voir <a href="architecture.html">Architecture du moteur</a>), ou la classe <code>AHUD</code>, historiquement prévue pour ça.</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="Dans BP_MyPlayerController : créer WBP_HUD au démarrage puis l'ajouter au viewport. En pratique, faites un clic droit sur Return Value → Promote to Variable pour garder une référence au widget.">
+{
+  "nodes": [
+    { "id": "begin", "type": "event", "title": "Event BeginPlay", "x": 0, "y": 0, "out": [ { "type": "exec" } ] },
+    { "id": "pc", "type": "pure", "title": "Get Player Controller", "x": 0, "y": 150,
+      "in": [ { "name": "Player Index", "type": "int", "value": "0" } ],
+      "out": [ { "name": "Return Value", "type": "object" } ] },
+    { "id": "create", "type": "function", "title": "Create WBP HUD Widget", "x": 300, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Class", "type": "class", "value": "WBP_HUD" }, { "name": "Owning Player", "type": "object" } ],
+      "out": [ { "type": "exec" }, { "name": "Return Value", "type": "object" } ] },
+    { "id": "add", "type": "function", "title": "Add to Viewport", "x": 620, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object" }, { "name": "ZOrder", "type": "int", "value": "0" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [ [ "begin", 0, "create", 0 ], [ "pc", 0, "create", 2 ], [ "create", 0, "add", 0 ], [ "create", 1, "add", 1 ] ]
+}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="MyPlayerController.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/PlayerController.h"
+#include "MyPlayerController.generated.h"
+
+class UMyHUDWidget;
+
+UCLASS()
+class MYGAME_API AMyPlayerController : public APlayerController
+{
+    GENERATED_BODY()
+
+protected:
+    virtual void BeginPlay() override;
+
+    // WBP_HUD, choisi dans le Blueprint enfant du contrôleur
+    UPROPERTY(EditDefaultsOnly, Category = "UI")
+    TSubclassOf<UMyHUDWidget> HUDClass;
+
+    // Garder une référence : on pourra le cacher ou le retirer plus tard
+    UPROPERTY()
+    TObjectPtr<UMyHUDWidget> HUDWidget;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="MyPlayerController.cpp" data-highlight="8,10,13">
+#include "MyPlayerController.h"
+#include "MyHUDWidget.h"
+
+void AMyPlayerController::BeginPlay()
+{
+    Super::BeginPlay();
+
+    if (IsLocalController() && HUDClass)
+    {
+        HUDWidget = CreateWidget<UMyHUDWidget>(this, HUDClass);
+        if (HUDWidget)
+        {
+            HUDWidget->AddToViewport(); // ZOrder 0 ; plus grand = dessiné par-dessus
+        }
+    }
+}
+</script>
+    </div>
+  </div>
+
+  <ul>
+    <li><strong>Le propriétaire</strong> (<em>Owning Player</em>) est le PlayerController à qui appartient le widget : <code>GetOwningPlayer()</code> et <code>GetOwningPlayerPawn()</code> le retrouvent depuis le widget.</li>
+    <li><strong><code>IsLocalController()</code></strong> est indispensable en multijoueur : sur le serveur, il existe un PlayerController par joueur connecté, mais seul le contrôleur local a un écran.</li>
+    <li><strong>Retirer un widget</strong> : <code>RemoveFromParent()</code> (nœud <em>Remove from Parent</em>). Pour le masquer temporairement sans le détruire, préférez <code>SetVisibility(ESlateVisibility::Collapsed)</code>.</li>
+  </ul>
+
+  <div class="callout warn">
+    <p class="callout-title">Piège courant : créer le HUD dans le personnage</p>
+    <p>Créé dans le <code>BeginPlay</code> du Character, le HUD est recréé à chaque réapparition (et les anciens restent affichés si personne ne les retire), et en multijoueur chaque personnage visible en crée un sur votre écran. Le PlayerController local, lui, survit à la mort du personnage et n'existe qu'une fois.</p>
+  </div>
+
+  <h2>Mettre à jour l'interface</h2>
+  <p>Afficher la vie du joueur, c'est relier une valeur du gameplay à un widget. UMG propose une solution immédiate, les <strong>property bindings</strong> : à côté de la propriété <em>Percent</em> d'une Progress Bar, le menu <em>Bind</em> crée une fonction qui renvoie la valeur. Pratique, mais cette fonction est <strong>appelée à chaque frame</strong>, même quand rien ne change. Avec quelques dizaines de bindings, le coût devient sensible.</p>
+  <p>La bonne approche est <strong>événementielle</strong> : le gameplay diffuse un événement quand la valeur change (le delegate <code>OnHealthChanged</code> du composant de santé vu dans <a href="systemes-gameplay.html">Systèmes de gameplay</a>), et le widget ne se met à jour qu'à ce moment-là.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TB
+    subgraph POLL["Property binding : interrogation"]
+        direction LR
+        F1["Chaque frame<br>60 fois par seconde"] --> G1["GetHealthPercent()<br>appelée"] --> P1["Progress Bar<br>Percent"]
+    end
+    subgraph PUSH["Événementiel : notification"]
+        direction LR
+        D["Dégâts subis<br>de temps en temps"] --> HC["HealthComponent<br>OnHealthChanged"] --> W["Widget<br>SetPercent()"]
+    end
+    POLL ~~~ PUSH
+</pre>
+    <figcaption>À gauche, le widget demande la valeur en permanence ; à droite, le gameplay le prévient uniquement quand elle change.</figcaption>
+  </figure>
+
+  <p>En Blueprint, on s'abonne au delegate dans <strong>Event Construct</strong> (appelé quand le widget est ajouté à l'écran) :</p>
+
+<script type="application/json" class="bp-graph" data-caption="WBP_HUD : à la construction, on récupère le HealthComponent du Pawn du joueur et on lie l'événement HandleHealthChanged à son delegate OnHealthChanged. À chaque changement, la barre est mise à jour.">
+{
+  "nodes": [
+    { "id": "pawn", "type": "pure", "title": "Get Owning Player Pawn", "x": 0, "y": 0,
+      "in": [ { "name": "Target", "type": "object", "value": "self" } ],
+      "out": [ { "name": "Return Value", "type": "object" } ] },
+    { "id": "comp", "type": "pure", "title": "Get Component by Class", "x": 270, "y": 0,
+      "in": [ { "name": "Target", "type": "object" }, { "name": "Component Class", "type": "class", "value": "HealthComponent" } ],
+      "out": [ { "name": "Return Value", "type": "object" } ] },
+    { "id": "construct", "type": "event", "title": "Event Construct", "x": 0, "y": 150, "out": [ { "type": "exec" } ] },
+    { "id": "bind", "type": "function", "title": "Bind Event to On Health Changed", "x": 545, "y": 140,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object" }, { "name": "Event", "type": "delegate" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "handler", "type": "custom", "title": "HandleHealthChanged", "x": 0, "y": 290,
+      "out": [ { "type": "delegate" }, { "type": "exec" }, { "name": "Health Component", "type": "object" },
+               { "name": "New Health", "type": "float" }, { "name": "Delta", "type": "float" } ] },
+    { "id": "pct", "type": "pure", "title": "Get Health Percent", "x": 250, "y": 405,
+      "in": [ { "name": "Target", "type": "object" } ], "out": [ { "name": "Return Value", "type": "float" } ] },
+    { "id": "bar", "type": "var", "title": "Health Bar", "x": 300, "y": 500, "out": [ { "type": "object" } ] },
+    { "id": "setp", "type": "function", "title": "Set Percent", "subtitle": "Target is Progress Bar", "x": 545, "y": 300,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object" }, { "name": "In Percent", "type": "float" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "pawn", 0, "comp", 0 ], [ "construct", 0, "bind", 0 ], [ "comp", 0, "bind", 1 ], [ "handler", 0, "bind", 2 ],
+    [ "handler", 1, "setp", 0 ], [ "handler", 2, "pct", 0 ], [ "pct", 0, "setp", 2 ], [ "bar", 0, "setp", 1 ]
+  ]
+}
+</script>
+
+  <div class="callout perf">
+    <p class="callout-title">Performance : le Tick des widgets</p>
+    <p>Au-delà des bindings, évitez la logique dans l'<em>Event Tick</em> des widgets. Un widget qui ne fait rien à chaque frame ne coûte presque rien. Si une valeur change vraiment en continu (un chronomètre), mettez-la à jour avec un timer à 10 Hz plutôt qu'à chaque image : l'œil ne verra pas la différence.</p>
+  </div>
+
+  <h2>Widgets en C++</h2>
+  <p>La méthode recommandée pour les projets C++ est hybride : une classe C++ dérivée de <code>UUserWidget</code> contient la logique, et le Widget Blueprint qui en hérite contient la mise en page. Le lien entre les deux se fait par le <strong>nom</strong> des widgets grâce au spécificateur <code>meta = (BindWidget)</code>.</p>
+  <dl class="defs">
+    <dt>BindWidget</dt><dd>Le Widget Blueprint <strong>doit</strong> contenir un widget de ce nom et de ce type, sinon il refuse de compiler (« A required widget binding … was not found »). Le pointeur est rempli automatiquement.</dd>
+    <dt>BindWidgetOptional</dt><dd>Même chose, mais facultatif : le pointeur vaut <code>nullptr</code> si le designer n'a pas créé le widget. Testez-le toujours avant usage.</dd>
+    <dt>BindWidgetAnim</dt><dd>Lie une animation du Widget Blueprint (même nom) à une propriété <code>UWidgetAnimation*</code>, qui doit être marquée <code>Transient</code>.</dd>
+    <dt>NativeConstruct / NativeDestruct</dt><dd>Équivalents C++ d'Event Construct et Event Destruct : appelés à chaque ajout et retrait de l'écran. <code>NativeOnInitialized</code> n'est appelé qu'une fois, à la création.</dd>
+    <dt>NativeTick</dt><dd>Le Tick du widget, <code>NativeTick(const FGeometry&amp; MyGeometry, float InDeltaTime)</code>. À éviter autant que possible.</dd>
+  </dl>
+
+<script type="text/plain" data-lang="cpp" data-file="HealthBarWidget.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Blueprint/UserWidget.h"
+#include "HealthBarWidget.generated.h"
+
+class UProgressBar;
+class UTextBlock;
+class UWidgetAnimation;
+class UHealthComponent;
+
+UCLASS(Abstract)
+class MYGAME_API UHealthBarWidget : public UUserWidget
+{
+    GENERATED_BODY()
+
+protected:
+    virtual void NativeConstruct() override;
+    virtual void NativeDestruct() override;
+
+    // Doivent exister dans le Widget Blueprint, avec ces noms exacts
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UProgressBar> HealthBar;
+
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UTextBlock> HealthText;
+
+    // Facultatif : le designer peut l'omettre
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UTextBlock> PlayerNameText;
+
+    // Animation « DamageFlash » créée dans le panneau Animations
+    UPROPERTY(Transient, meta = (BindWidgetAnim))
+    TObjectPtr<UWidgetAnimation> DamageFlash;
+
+private:
+    UFUNCTION()
+    void HandleHealthChanged(UHealthComponent* HealthComponent, float NewHealth, float Delta);
+
+    TWeakObjectPtr<UHealthComponent> ObservedHealth;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="HealthBarWidget.cpp" data-highlight="19-20,26-28">
+#include "HealthBarWidget.h"
+#include "Components/ProgressBar.h"
+#include "Components/TextBlock.h"
+#include "Animation/WidgetAnimation.h"
+#include "GameFramework/Pawn.h"
+#include "HealthComponent.h"
+
+void UHealthBarWidget::NativeConstruct()
+{
+    Super::NativeConstruct();
+
+    APawn* Pawn = GetOwningPlayerPawn();
+    UHealthComponent* Health = Pawn ? Pawn->FindComponentByClass<UHealthComponent>() : nullptr;
+    if (!Health)
+    {
+        return;
+    }
+    ObservedHealth = Health;
+    Health->OnHealthChanged.AddDynamic(this, &UHealthBarWidget::HandleHealthChanged);
+    HandleHealthChanged(Health, Health->GetHealth(), 0.f); // affichage initial
+}
+
+void UHealthBarWidget::NativeDestruct()
+{
+    // Se désabonner : le composant pourrait survivre au widget
+    if (UHealthComponent* Health = ObservedHealth.Get())
+    {
+        Health->OnHealthChanged.RemoveDynamic(this, &UHealthBarWidget::HandleHealthChanged);
+    }
+    Super::NativeDestruct();
+}
+
+void UHealthBarWidget::HandleHealthChanged(UHealthComponent* HealthComponent, float NewHealth, float Delta)
+{
+    HealthBar->SetPercent(HealthComponent->GetHealthPercent());
+    HealthText->SetText(FText::Format(NSLOCTEXT("HUD", "HealthFormat", "{0} / {1}"),
+        FText::AsNumber(FMath::RoundToInt(NewHealth)),
+        FText::AsNumber(FMath::RoundToInt(HealthComponent->GetMaxHealth()))));
+
+    if (Delta < 0.f && DamageFlash)
+    {
+        PlayAnimation(DamageFlash); // flash rouge quand on perd de la vie
+    }
+}
+</script>
+
+  <p>Dans l'éditeur, créez un Widget Blueprint dont la classe parente est <code>HealthBarWidget</code> (bouton <em>Graph</em> → <em>Class Settings</em> → <em>Parent Class</em>, ou directement à la création), puis ajoutez une Progress Bar nommée <code>HealthBar</code> et un Text nommé <code>HealthText</code>. Le C++ doit déclarer les modules d'interface dans le <code>.Build.cs</code> :</p>
+
+<script type="text/plain" data-lang="csharp" data-file="MyGame.Build.cs (extrait)">
+PublicDependencyModuleNames.AddRange(new string[] {
+    "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "UMG"
+});
+
+// Nécessaires dès que vous touchez aux types Slate (FGeometry, SWidget, styles)
+PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
+</script>
+
+  <div class="callout tip">
+    <p class="callout-title">Si le joueur réapparaît</p>
+    <p>Le widget s'abonne au composant du Pawn présent à sa construction. Quand le joueur meurt et reçoit un nouveau Pawn, il faut se réabonner au nouveau composant : par exemple en exposant une fonction <code>SetObservedPawn</code> appelée par le PlayerController depuis son <code>OnPossess</code>.</p>
+  </div>
+
+  <h2>Menus</h2>
+  <p>Un jeu complet enchaîne plusieurs écrans. Le menu principal vit généralement dans son propre niveau (<code>L_MainMenu</code>), avec un GameMode et un PlayerController dédiés qui affichent <code>WBP_MainMenu</code> et le curseur dès le <code>BeginPlay</code>. Le menu pause, lui, s'affiche par-dessus le niveau de jeu.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    MM["Menu principal<br>niveau L_MainMenu"] -- "Jouer" --> G["Jeu<br>niveau L_Game"]
+    MM -- "Options" --> O1["Options"]
+    O1 -- "Retour" --> MM
+    MM -- "Quitter" --> Q["Fermeture du jeu"]
+    G -- "Échap" --> P["Menu pause<br>jeu figé"]
+    P -- "Reprendre" --> G
+    P -- "Options" --> O2["Options"]
+    O2 -- "Retour" --> P
+    P -- "Quitter vers le menu" --> MM
+</pre>
+    <figcaption>Le flux des écrans : changer de niveau (OpenLevel) pour passer du menu au jeu, superposer des widgets pour la pause et les options.</figcaption>
+  </figure>
+
+  <h3>Le menu principal</h3>
+  <p>Chaque bouton expose l'événement <em>On Clicked</em> (sélectionnez le bouton, puis le <strong>+</strong> à côté de <em>On Clicked</em> dans le panneau Details). En C++, on lie ce delegate avec <code>AddDynamic</code> dans <code>NativeOnInitialized</code> :</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="WBP_MainMenu : Jouer ouvre le niveau de jeu, Quitter ferme l'application.">
+{
+  "nodes": [
+    { "id": "play", "type": "event", "title": "On Clicked (PlayButton)", "x": 0, "y": 0, "out": [ { "type": "exec" } ] },
+    { "id": "open", "type": "function", "title": "Open Level (by Name)", "x": 300, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Level Name", "type": "name", "value": "L_Game" },
+              { "name": "Absolute", "type": "bool", "value": "true" }, { "name": "Options", "type": "string" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "quitev", "type": "event", "title": "On Clicked (QuitButton)", "x": 0, "y": 190, "out": [ { "type": "exec" } ] },
+    { "id": "owner", "type": "pure", "title": "Get Owning Player", "x": 230, "y": 295,
+      "in": [ { "name": "Target", "type": "object", "value": "self" } ],
+      "out": [ { "name": "Return Value", "type": "object" } ] },
+    { "id": "quit", "type": "function", "title": "Quit Game", "x": 530, "y": 190,
+      "in": [ { "type": "exec" }, { "name": "Specific Player", "type": "object" },
+              { "name": "Quit Preference", "type": "enum", "value": "Quit" },
+              { "name": "Ignore Platform Restrictions", "type": "bool", "value": "false" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [ [ "play", 0, "open", 0 ], [ "quitev", 0, "quit", 0 ], [ "owner", 0, "quit", 1 ] ]
+}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="MainMenuWidget.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Blueprint/UserWidget.h"
+#include "MainMenuWidget.generated.h"
+
+class UButton;
+
+UCLASS(Abstract)
+class MYGAME_API UMainMenuWidget : public UUserWidget
+{
+    GENERATED_BODY()
+
+protected:
+    virtual void NativeOnInitialized() override;
+
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UButton> PlayButton;
+
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UButton> QuitButton;
+
+private:
+    UFUNCTION()
+    void HandlePlayClicked();
+
+    UFUNCTION()
+    void HandleQuitClicked();
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="MainMenuWidget.cpp">
+#include "MainMenuWidget.h"
+#include "Components/Button.h"
+#include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetSystemLibrary.h"
+
+void UMainMenuWidget::NativeOnInitialized()
+{
+    Super::NativeOnInitialized();
+
+    // Une seule fois par widget : pas de double abonnement s'il est réaffiché
+    PlayButton->OnClicked.AddDynamic(this, &UMainMenuWidget::HandlePlayClicked);
+    QuitButton->OnClicked.AddDynamic(this, &UMainMenuWidget::HandleQuitClicked);
+}
+
+void UMainMenuWidget::HandlePlayClicked()
+{
+    UGameplayStatics::OpenLevel(this, TEXT("L_Game"));
+}
+
+void UMainMenuWidget::HandleQuitClicked()
+{
+    UKismetSystemLibrary::QuitGame(this, GetOwningPlayer(), EQuitPreference::Quit, false);
+}
+</script>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <p class="callout-title">Piège courant : AddDynamic dans NativeConstruct</p>
+    <p><code>NativeConstruct</code> est rappelé chaque fois que le widget est ajouté à l'écran. Si vous y liez un bouton et que le menu est affiché deux fois, <code>AddDynamic</code> détecte le doublon et déclenche une erreur (ou, avec <code>AddUniqueDynamic</code>, masque le problème). Liez les boutons dans <code>NativeOnInitialized</code>, appelé une seule fois.</p>
+  </div>
+
+  <h3>Le menu pause</h3>
+  <p>Un menu pause réunit trois ingrédients, qu'il faut défaire dans l'ordre inverse en le fermant :</p>
+  <ol class="steps">
+    <li><strong>Figer le jeu</strong><code>UGameplayStatics::SetGamePaused(this, true)</code> (nœud <em>Set Game Paused</em>). Les acteurs ne tickent plus, mais l'interface continue de fonctionner.</li>
+    <li><strong>Changer le mode d'entrée</strong><code>SetInputMode(FInputModeGameAndUI())</code> ou <code>FInputModeUIOnly</code>, pour que les clics atteignent les boutons (voir le tableau ci-dessous).</li>
+    <li><strong>Afficher le curseur</strong><code>SetShowMouseCursor(true)</code> sur le PlayerController (variable <em>Show Mouse Cursor</em> en Blueprint).</li>
+  </ol>
+
+  <div class="callout danger">
+    <p class="callout-title">Le menu pause qui ne se ferme plus</p>
+    <p>Une fois le jeu en pause, les Input Actions ne se déclenchent plus… y compris celle qui devait rouvrir le jeu avec <kbd>Échap</kbd>. Cochez <strong>Trigger when Paused</strong> sur l'Input Action de pause (voir <a href="input-personnage.html">Enhanced Input &amp; personnage</a>), et utilisez le mode <code>GameAndUI</code> pour que le PlayerController continue de recevoir cette touche. En mode <code>UIOnly</code>, c'est le widget qui doit gérer la touche (en surchargeant <code>NativeOnKeyDown</code>).</p>
+  </div>
+
+  <h2>Modes d'entrée et focus</h2>
+  <p>Le <strong>mode d'entrée</strong> du PlayerController décide qui reçoit le clavier, la souris et la manette : le jeu, l'interface, ou les deux.</p>
+  <table>
+    <thead><tr><th>Mode</th><th>Entrées de jeu</th><th>Interface</th><th>Usage</th></tr></thead>
+    <tbody>
+      <tr><td><code>FInputModeGameOnly</code><br><em>Set Input Mode Game Only</em></td><td>Oui</td><td>Pas de focus clavier ; la souris est capturée par le viewport</td><td>En jeu, HUD purement informatif</td></tr>
+      <tr><td><code>FInputModeUIOnly</code><br><em>Set Input Mode UI Only</em></td><td>Non</td><td>Oui, focus sur le widget indiqué</td><td>Menu principal, écrans plein écran</td></tr>
+      <tr><td><code>FInputModeGameAndUI</code><br><em>Set Input Mode Game And UI</em></td><td>Oui</td><td>Oui : l'interface traite d'abord, le reste va au jeu</td><td>Menu pause, inventaire ouvert pendant le jeu, jeu de stratégie</td></tr>
+    </tbody>
+  </table>
+  <p>Les modes UI acceptent un widget à focaliser (<code>SetWidgetToFocus</code>) et un comportement de verrouillage de la souris dans la fenêtre (<code>SetLockMouseToViewportBehavior</code>). Le <strong>focus</strong>, c'est le widget qui reçoit le clavier et la manette : pour qu'un menu soit utilisable à la manette, donnez le focus à son premier bouton à l'ouverture (<code>SetUserFocus</code> ou <code>SetKeyboardFocus</code>) ; les flèches et le stick déplacent ensuite le focus d'un bouton à l'autre. Un UserWidget ne peut recevoir le focus que si son option <em>Is Focusable</em> est cochée.</p>
+
+  <h2>Aller plus loin</h2>
+
+  <h3>Animations de widgets</h3>
+  <p>Le panneau <strong>Animations</strong> du Designer crée des pistes qui animent les propriétés des widgets dans le temps (opacité, <em>Render Transform</em>, couleur), avec des images clés comme dans Sequencer. On les joue avec <code>PlayAnimation(Anim)</code> (nœud <em>Play Animation</em>), à l'envers avec <code>PlayAnimationReverse</code>, et on peut être prévenu de leur fin avec <code>BindToAnimationFinished</code>. Animez de préférence le <em>Render Transform</em> et l'opacité : ils ne déclenchent pas de recalcul de la mise en page, contrairement à la taille ou aux marges.</p>
+
+  <h3>Interface dans le monde : UWidgetComponent</h3>
+  <p>Pour une barre de vie au-dessus d'un ennemi ou un écran d'ordinateur dans le décor, ajoutez à l'acteur un <code>UWidgetComponent</code> et choisissez sa <em>Widget Class</em>. Son réglage <em>Space</em> change tout :</p>
+  <div class="compare">
+    <div class="neutral">
+      <h4>Space : Screen</h4>
+      <p>Le widget est dessiné par-dessus l'image, toujours face à la caméra et à taille constante, à la position projetée de l'acteur. Idéal pour les barres de vie et les noms au-dessus des personnages.</p>
+    </div>
+    <div class="alt">
+      <h4>Space : World</h4>
+      <p>Le widget est un vrai plan 3D (taille réglée par <em>Draw Size</em>), masqué par le décor et vu en perspective. Idéal pour les écrans diégétiques et la réalité virtuelle (interaction avec un <code>UWidgetInteractionComponent</code>).</p>
+    </div>
+  </div>
+  <p>En C++, le widget instancié se récupère avec <code>WidgetComponent-&gt;GetUserWidgetObject()</code>, à caster vers votre classe.</p>
+
+  <h3>Listes : List View et Tile View</h3>
+  <p>Pour un inventaire ou une liste de serveurs, n'ajoutez pas des centaines de widgets à une Scroll Box : utilisez une <strong>List View</strong> (ou une Tile View pour une grille). Elle reçoit des <em>éléments</em> (des UObjects, par exemple vos <code>UItemData</code>) via <code>AddItem</code> ou <code>SetListItems</code>, et ne crée que les widgets visibles, qu'elle <strong>recycle</strong> pendant le défilement. Le widget de ligne (<em>Entry Widget Class</em>) doit implémenter l'interface <code>IUserObjectListEntry</code> : en C++, surchargez <code>NativeOnListItemObjectSet(UObject* ListItemObject)</code> ; en Blueprint, ajoutez l'interface <em>User Object List Entry</em> dans les Class Settings et implémentez <em>On List Item Object Set</em>. Comme les widgets sont recyclés, cette fonction doit réinitialiser <strong>tout</strong> l'affichage de la ligne.</p>
+
+  <h3>Common UI</h3>
+  <p>Le plugin <strong>Common UI</strong> résout les problèmes des interfaces multiplateformes, et c'est ce qu'utilise <em>Lyra</em>. Il apporte :</p>
+  <ul>
+    <li>des <strong>piles d'écrans activables</strong> (<code>UCommonActivatableWidget</code> dans un <code>UCommonActivatableWidgetStack</code>) : ouvrir les options par-dessus la pause, revenir en arrière avec « Retour » ;</li>
+    <li>un <strong>routage des entrées</strong> : seul l'écran actif au sommet de la pile reçoit les entrées, fini les clics qui traversent ;</li>
+    <li>une <strong>navigation manette</strong> robuste et des icônes de touches qui changent selon le périphérique utilisé (clavier, manette Xbox, PlayStation).</li>
+  </ul>
+  <p>Sa mise en place demande quelques réglages (notamment la classe de <em>Game Viewport Client</em> dans les Project Settings) : suivez la page « Common UI » de la documentation d'Epic et inspirez-vous de Lyra.</p>
+
+  <h3>Localisation</h3>
+  <p>Tout texte affiché au joueur doit être un <code>FText</code>, jamais un <code>FString</code> : seul <code>FText</code> est traduisible. Les textes saisis dans le Designer le sont automatiquement. En C++, on les déclare avec <code>NSLOCTEXT("Espace", "Clé", "Texte")</code>, ou avec <code>LOCTEXT("Clé", "Texte")</code> après avoir défini <code>#define LOCTEXT_NAMESPACE "MonEspace"</code> (et <code>#undef LOCTEXT_NAMESPACE</code> en fin de fichier). Le <strong>Localization Dashboard</strong> (<em>Tools</em> → <em>Localization Dashboard</em>) collecte ensuite tous ces textes, permet de les traduire ou de les exporter vers vos traducteurs, puis compile les traductions. Pour assembler des phrases, utilisez <code>FText::Format</code> avec des arguments, jamais une concaténation : l'ordre des mots change d'une langue à l'autre.</p>
+
+  <h3>Matériaux d'interface</h3>
+  <p>Une <em>Image</em> peut afficher un matériau dont le <em>Material Domain</em> est <strong>User Interface</strong>. C'est la technique des jauges circulaires (cooldown, rechargement) : un paramètre scalaire <code>Percent</code>, comparé à l'angle de chaque pixel autour du centre calculé depuis les UV, masque une portion du cercle. Côté code, on modifie le paramètre sur l'instance dynamique de l'image :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="AbilitySlotWidget.cpp (extrait)">
+#include "Components/Image.h"
+#include "Materials/MaterialInstanceDynamic.h"
+
+// CooldownImage : UPROPERTY(meta = (BindWidget)) TObjectPtr<UImage>
+if (UMaterialInstanceDynamic* Material = CooldownImage->GetDynamicMaterial())
+{
+    Material->SetScalarParameterValue(TEXT("Percent"), RemainingTime / CooldownDuration);
+}
+</script>
+
+  <h3>MVVM : séparer données et affichage</h3>
+  <p>Le plugin <strong>UMG Viewmodel</strong> (apparu en bêta avec UE 5.1, son statut et son interface évoluent selon votre version) applique le modèle MVVM : un <em>Viewmodel</em> (classe dérivée de <code>UMVVMViewModelBase</code>) expose des propriétés notifiantes (spécificateur <code>FieldNotify</code>), et les widgets s'y lient dans un panneau dédié du Designer. Les liaisons ne sont réévaluées que quand une propriété notifie un changement : on obtient le confort des bindings avec les performances de l'approche événementielle. Pour débuter, maîtrisez d'abord les delegates vus plus haut.</p>
+
+  <div class="quiz">
+    <p class="q">Pourquoi déconseille-t-on les property bindings (menu Bind) pour une barre de vie ?</p>
+    <ul>
+      <li>Ils ne fonctionnent pas en C++</li>
+      <li data-correct>La fonction liée est évaluée à chaque frame, même quand la vie ne change pas</li>
+      <li>Ils empêchent la traduction des textes</li>
+      <li>Ils ne sont pas compatibles avec les Progress Bars</li>
+    </ul>
+    <p class="explain">Un binding interroge sa fonction à chaque image. Une approche événementielle (s'abonner à <code>OnHealthChanged</code>) ne met à jour la barre qu'au moment où la vie change réellement, ce qui coûte quasiment zéro le reste du temps.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Vous liez <code>OnClicked</code> d'un bouton dans <code>NativeConstruct</code>. Le menu est ouvert, fermé avec RemoveFromParent, puis rouvert. Que se passe-t-il ?</p>
+    <ul>
+      <li>Rien de particulier, c'est l'endroit recommandé</li>
+      <li>Le bouton ne répond plus</li>
+      <li data-correct>Le widget tente de lier la même fonction une deuxième fois, ce qui provoque une erreur de doublon</li>
+      <li>Le menu ne peut plus être rouvert</li>
+    </ul>
+    <p class="explain"><code>NativeConstruct</code> s'exécute à chaque ajout à l'écran, alors que le widget (et ses liaisons) survit au retrait. Le second <code>AddDynamic</code> détecte le doublon. <code>NativeOnInitialized</code>, appelé une seule fois, est le bon endroit.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Un menu pause avec Reprendre et Quitter</h4>
+    <p>Créez <code>WBP_PauseMenu</code> avec deux boutons, <em>Reprendre</em> et <em>Quitter vers le menu</em>. La touche <kbd>Échap</kbd> (Input Action <code>IA_Pause</code>) ouvre et ferme le menu ; à l'ouverture le jeu est figé, le curseur apparaît et le premier bouton a le focus (pour la manette) ; à la fermeture, tout revient comme avant. Écrivez la logique en C++ (ou en Blueprint si vous préférez).</p>
+    <details>
+      <summary>Voir la solution</summary>
+      <p><strong>1. L'Input Action</strong> : <code>IA_Pause</code> (type bool), avec <strong>Trigger when Paused</strong> coché, ajoutée au Mapping Context avec la touche Échap (et Start à la manette). Liez-la à <code>TogglePauseMenu</code> dans le <code>SetupInputComponent</code> du PlayerController.</p>
+      <p><strong>2. Le widget</strong> : les boutons ne font que prévenir le contrôleur, qui reste seul responsable de l'état de pause.</p>
+<script type="text/plain" data-lang="cpp" data-file="PauseMenuWidget.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Blueprint/UserWidget.h"
+#include "PauseMenuWidget.generated.h"
+
+class UButton;
+
+UCLASS(Abstract)
+class MYGAME_API UPauseMenuWidget : public UUserWidget
+{
+    GENERATED_BODY()
+
+public:
+    UButton* GetResumeButton() const { return ResumeButton; }
+
+protected:
+    virtual void NativeOnInitialized() override;
+
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UButton> ResumeButton;
+
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UButton> QuitButton;
+
+private:
+    UFUNCTION()
+    void HandleResumeClicked();
+
+    UFUNCTION()
+    void HandleQuitClicked();
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="PauseMenuWidget.cpp">
+#include "PauseMenuWidget.h"
+#include "Components/Button.h"
+#include "Kismet/GameplayStatics.h"
+#include "MyPlayerController.h"
+
+void UPauseMenuWidget::NativeOnInitialized()
+{
+    Super::NativeOnInitialized();
+    ResumeButton->OnClicked.AddDynamic(this, &UPauseMenuWidget::HandleResumeClicked);
+    QuitButton->OnClicked.AddDynamic(this, &UPauseMenuWidget::HandleQuitClicked);
+}
+
+void UPauseMenuWidget::HandleResumeClicked()
+{
+    if (AMyPlayerController* PC = GetOwningPlayer<AMyPlayerController>())
+    {
+        PC->SetPauseMenuVisible(false);
+    }
+}
+
+void UPauseMenuWidget::HandleQuitClicked()
+{
+    // OpenLevel recrée tout le monde : inutile de « dé-pauser » avant
+    UGameplayStatics::OpenLevel(this, TEXT("L_MainMenu"));
+}
+</script>
+      <p><strong>3. Le contrôleur</strong> : il crée le menu à la première ouverture, puis se contente de l'ajouter et de le retirer.</p>
+<script type="text/plain" data-lang="cpp" data-file="MyPlayerController.cpp (pause)">
+#include "PauseMenuWidget.h"
+#include "Components/Button.h"
+#include "Kismet/GameplayStatics.h"
+
+void AMyPlayerController::TogglePauseMenu()
+{
+    SetPauseMenuVisible(!IsPaused());
+}
+
+void AMyPlayerController::SetPauseMenuVisible(bool bVisible)
+{
+    if (bVisible)
+    {
+        if (!PauseMenu && PauseMenuClass)
+        {
+            PauseMenu = CreateWidget<UPauseMenuWidget>(this, PauseMenuClass);
+        }
+        if (!PauseMenu) return;
+
+        PauseMenu->AddToViewport(10); // au-dessus du HUD
+
+        FInputModeGameAndUI InputMode; // le contrôleur reçoit encore Échap
+        InputMode.SetWidgetToFocus(PauseMenu->GetResumeButton()->TakeWidget());
+        InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+        SetInputMode(InputMode);
+        SetShowMouseCursor(true);
+        UGameplayStatics::SetGamePaused(this, true);
+    }
+    else
+    {
+        if (PauseMenu)
+        {
+            PauseMenu->RemoveFromParent();
+        }
+        SetInputMode(FInputModeGameOnly());
+        SetShowMouseCursor(false);
+        UGameplayStatics::SetGamePaused(this, false);
+    }
+}
+</script>
+      <p>Dans <code>MyPlayerController.h</code> : <code>UPROPERTY(EditDefaultsOnly) TSubclassOf&lt;UPauseMenuWidget&gt; PauseMenuClass;</code>, <code>UPROPERTY() TObjectPtr&lt;UPauseMenuWidget&gt; PauseMenu;</code> et les deux fonctions publiques. <strong>Points de vigilance</strong> : sans <em>Trigger when Paused</em>, Échap ne referme pas le menu ; sans le focus initial, la manette ne peut rien sélectionner ; et le menu étant gardé en mémoire (référence <code>UPROPERTY</code>), les boutons ne sont liés qu'une fois grâce à <code>NativeOnInitialized</code>.</p>
+    </details>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Un écran est un <strong>Widget Blueprint</strong> (<code>WBP_</code>) : Designer pour la mise en page, Graph pour la logique ; UMG s'appuie sur Slate.</li>
+      <li>Un <strong>Canvas Panel</strong> à la racine, des Overlay et Box ailleurs ; les <strong>ancres</strong> accrochent les éléments aux bords, la <strong>DPI Curve</strong> gère la taille.</li>
+      <li>Créez les widgets dans le <strong>PlayerController local</strong> (<code>CreateWidget</code> puis <code>AddToViewport</code>), retirez-les avec <code>RemoveFromParent</code>.</li>
+      <li>Préférez les <strong>événements</strong> (delegates) aux property bindings évalués à chaque frame.</li>
+      <li>En C++, <code>meta = (BindWidget)</code> relie vos pointeurs aux widgets du Blueprint par leur nom ; liez les boutons dans <code>NativeOnInitialized</code>.</li>
+      <li>Un menu pause = <code>SetGamePaused</code> + mode d'entrée + curseur, et une Input Action marquée <em>Trigger when Paused</em>.</li>
+      <li>Pour aller plus loin : <code>UWidgetComponent</code> pour l'UI dans le monde, List View pour les longues listes, Common UI pour le multiplateforme, <code>FText</code> pour la traduction.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

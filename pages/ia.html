@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Intelligence artificielle — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="ia">
+<article class="doc">
+
+  <h1>Intelligence artificielle</h1>
+  <p class="lead">Un garde qui patrouille, un monstre qui vous traque, un compagnon qui vous suit : Unreal fournit une boîte à outils complète pour l'IA de vos personnages. Ce chapitre vous apprend à assembler ses pièces (contrôleur, navigation, Behavior Trees, perception, EQS) pour construire un ennemi crédible, puis à le déboguer.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Comprendre le rôle de l'<strong>AIController</strong> et comment il possède un Pawn</li>
+      <li>Générer et régler le <strong>NavMesh</strong> pour que l'IA trouve son chemin</li>
+      <li>Concevoir un <strong>Behavior Tree</strong> avec son <strong>Blackboard</strong>, et maîtriser les <em>observer aborts</em></li>
+      <li>Écrire des tâches et services en C++ et en Blueprint</li>
+      <li>Donner des sens à l'IA avec l'<strong>AI Perception</strong> (vue, ouïe)</li>
+      <li>Découvrir l'<strong>EQS</strong> et <strong>StateTree</strong>, et déboguer avec les outils du moteur</li>
+    </ul>
+  </div>
+
+  <h2>Vue d'ensemble</h2>
+  <p>L'IA d'Unreal reprend l'idée centrale du Gameplay Framework (voir <a href="architecture.html">Architecture du moteur</a>) : on sépare le <strong>cerveau</strong> du <strong>corps</strong>. Le corps est un Pawn ou un Character, exactement le même type de classe que le personnage du joueur. Le cerveau est un <code>AAIController</code>, qui possède ce Pawn comme un PlayerController le ferait, mais prend ses décisions seul.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TB
+    AIC["AIController<br>le cerveau"] -- "possède" --> P["Pawn / Character<br>le corps"]
+    AIC -- "exécute" --> BT["Behavior Tree<br>la logique de décision"]
+    BT -- "lit et écrit" --> BB["Blackboard<br>la mémoire"]
+    PER["AIPerception<br>vue, ouïe, dégâts"] -- "met à jour" --> BB
+    AIC -- "possède un" --> PER
+    BT -- "Move To" --> NAV["Navigation System<br>NavMesh et chemins"]
+    BT -- "Run EQS Query" --> EQS["EQS<br>choisir le meilleur endroit"]
+    NAV -- "déplace" --> P
+</pre>
+    <figcaption>Les briques de l'IA d'Unreal : le contrôleur exécute un Behavior Tree qui s'appuie sur un Blackboard, alimenté par la perception ; le système de navigation calcule les déplacements.</figcaption>
+  </figure>
+
+  <p>Ce chapitre se concentre sur ce trio classique, utilisé dans la grande majorité des jeux Unreal. Epic propose aussi des alternatives plus récentes, que vous croiserez dans les projets d'exemple :</p>
+  <div class="cards">
+    <div class="card">
+      <span class="card-tag">Plugin</span>
+      <h4>StateTree</h4>
+      <p>Une machine à états hiérarchique, alternative aux Behavior Trees, de plus en plus mise en avant par Epic. Présentée en fin de chapitre.</p>
+    </div>
+    <div class="card">
+      <span class="card-tag">Plugin</span>
+      <h4>Smart Objects</h4>
+      <p>Des objets du décor qui « annoncent » une activité (s'asseoir sur ce banc, utiliser ce comptoir). L'IA réserve un emplacement libre puis joue le comportement associé.</p>
+    </div>
+    <div class="card">
+      <span class="card-tag">Plugin</span>
+      <h4>Mass</h4>
+      <p>Un framework orienté données (ECS) pour simuler des milliers d'entités : foules, trafic. Chaque agent est bien plus léger qu'un Actor avec son AIController.</p>
+    </div>
+  </div>
+
+  <div class="callout info">
+    <p class="callout-title">Modules à ajouter pour le C++</p>
+    <p>Dans le <code>.Build.cs</code>, ajoutez <code>"AIModule"</code> (contrôleur, Behavior Trees, perception), <code>"NavigationSystem"</code> (requêtes de navigation) et <code>"GameplayTasks"</code> (les tâches de Behavior Tree en dépendent) à <code>PublicDependencyModuleNames</code>.</p>
+  </div>
+
+  <h2>L'AIController</h2>
+  <p>Chaque Pawn possède deux réglages (section <em>Pawn</em> de ses Class Defaults) qui décident s'il sera contrôlé par une IA :</p>
+  <dl class="defs">
+    <dt>AI Controller Class</dt><dd>La classe de contrôleur à créer (<code>AIControllerClass</code> en C++). Par défaut, <code>AAIController</code> ; vous mettrez la vôtre, par exemple <code>BP_EnemyController</code>.</dd>
+    <dt>Auto Possess AI</dt><dd>Quand créer ce contrôleur automatiquement (<code>AutoPossessAI</code>) : <code>Disabled</code>, <code>PlacedInWorld</code> (seulement pour les Pawns posés dans le niveau, valeur par défaut), <code>Spawned</code> (seulement pour ceux créés en cours de jeu) ou <code>PlacedInWorldOrSpawned</code>.</dd>
+  </dl>
+
+  <div class="callout warn">
+    <p class="callout-title">Piège courant : l'ennemi spawné qui ne bouge pas</p>
+    <p>Avec la valeur par défaut <code>PlacedInWorld</code>, un ennemi créé par <code>SpawnActor</code> (une vague, un générateur) n'a <strong>aucun contrôleur</strong> : il reste planté. Réglez <em>Auto Possess AI</em> sur <code>PlacedInWorldOrSpawned</code>, ou appelez <code>SpawnDefaultController()</code> juste après le spawn.</p>
+  </div>
+
+  <h3>Se déplacer et regarder</h3>
+  <p>Même sans Behavior Tree, un AIController sait déplacer son Pawn sur le NavMesh avec <code>MoveToActor</code> (suivre un acteur, la destination est mise à jour s'il bouge) ou <code>MoveToLocation</code> (aller à un point fixe). La fin du trajet est signalée par <code>OnMoveCompleted</code>. <code>SetFocus</code> oriente le contrôleur vers un acteur, pour qu'un ennemi garde les yeux rivés sur le joueur même en se déplaçant de côté.</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="Dans le Blueprint de l'ennemi : au démarrage, AI MoveTo vers le personnage du joueur. Les sorties On Success et On Fail se déclenchent à la fin du trajet.">
+{
+  "nodes": [
+    { "id": "begin", "type": "event", "title": "Event BeginPlay", "x": 0, "y": 0, "out": [ { "type": "exec" } ] },
+    { "id": "self", "type": "var", "title": "Self", "x": 150, "y": 100, "out": [ { "type": "object" } ] },
+    { "id": "player", "type": "pure", "title": "Get Player Character", "x": 0, "y": 170,
+      "in": [ { "name": "Player Index", "type": "int", "value": "0" } ],
+      "out": [ { "name": "Return Value", "type": "object" } ] },
+    { "id": "move", "type": "function", "title": "AI MoveTo", "x": 330, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Pawn", "type": "object" }, { "name": "Destination", "type": "vector" },
+              { "name": "Target Actor", "type": "object" }, { "name": "Acceptance Radius", "type": "float", "value": "80.0" },
+              { "name": "Stop on Overlap", "type": "bool", "value": "true" } ],
+      "out": [ { "type": "exec" }, { "name": "On Success", "type": "exec" }, { "name": "On Fail", "type": "exec" },
+               { "name": "Movement Result", "type": "enum" } ] }
+  ],
+  "links": [ [ "begin", 0, "move", 0 ], [ "self", 0, "move", 1 ], [ "player", 0, "move", 3 ] ]
+}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="ZombieController.cpp">
+#include "ZombieController.h"
+#include "Kismet/GameplayStatics.h"
+#include "Navigation/PathFollowingComponent.h"
+
+void AZombieController::OnPossess(APawn* InPawn)
+{
+    Super::OnPossess(InPawn);
+
+    if (APawn* Player = UGameplayStatics::GetPlayerPawn(this, 0))
+    {
+        MoveToActor(Player, 80.f); // rayon d'acceptation : 80 cm
+        SetFocus(Player);          // tourne le regard vers le joueur
+    }
+}
+
+void AZombieController::OnMoveCompleted(FAIRequestID RequestID, const FPathFollowingResult& Result)
+{
+    Super::OnMoveCompleted(RequestID, Result);
+
+    if (Result.IsSuccess())
+    {
+        // Arrivé au contact : lancer l'attaque
+    }
+}
+</script>
+    </div>
+  </div>
+
+  <div class="callout tip">
+    <p class="callout-title">SetFocus ne tourne pas le personnage ?</p>
+    <p><code>SetFocus</code> modifie la rotation du <em>contrôleur</em>. Pour que le Character la suive, activez <em>Use Controller Rotation Yaw</em> sur le Pawn, ou <em>Use Controller Desired Rotation</em> dans le Character Movement (en désactivant <em>Orient Rotation to Movement</em>).</p>
+  </div>
+
+  <h2>La navigation</h2>
+  <p>Pour se déplacer intelligemment, l'IA a besoin de savoir où elle peut marcher. Unreal précalcule pour cela un <strong>NavMesh</strong> (maillage de navigation) : un ensemble de polygones convexes qui recouvrent les surfaces praticables. Pour aller d'un point à un autre, le moteur cherche une suite de polygones (algorithme A*), puis lisse le trajet en ne gardant que les coins nécessaires.</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 680 380" width="680" role="img" aria-label="Vue de dessus d'un NavMesh : polygones verts autour de deux obstacles et chemin bleu qui les contourne">
+      <defs>
+        <marker id="ia-nav-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0 0 L10 5 L0 10 Z" fill="#5aa9ff"/>
+        </marker>
+      </defs>
+      <rect x="20" y="20" width="640" height="300" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.5" stroke-width="2"/>
+      <g fill="#4ade80" fill-opacity="0.16" stroke="#4ade80" stroke-opacity="0.75" stroke-width="1.2" stroke-linejoin="round">
+        <polygon points="35,35 185,35 35,215"/>
+        <polygon points="185,35 185,215 35,215"/>
+        <polygon points="35,215 185,215 220,305 35,305"/>
+        <polygon points="185,215 315,215 405,305 220,305"/>
+        <polygon points="315,215 405,215 405,305"/>
+        <polygon points="315,35 405,35 315,215"/>
+        <polygon points="405,35 405,215 315,215"/>
+        <polygon points="405,35 535,35 535,125 405,125"/>
+        <polygon points="535,35 645,35 645,125 535,125"/>
+        <polygon points="535,125 645,125 645,305"/>
+        <polygon points="535,125 645,305 535,305"/>
+      </g>
+      <g fill="currentColor" fill-opacity="0.22" stroke="currentColor" stroke-opacity="0.55" stroke-width="1.5">
+        <rect x="200" y="20" width="100" height="180"/>
+        <rect x="420" y="140" width="100" height="180"/>
+      </g>
+      <text x="250" y="112" text-anchor="middle" font-size="13" fill="currentColor">Obstacle</text>
+      <text x="470" y="236" text-anchor="middle" font-size="13" fill="currentColor">Obstacle</text>
+      <line x1="262" y1="200" x2="262" y2="215" stroke="#ffb15c" stroke-width="2"/>
+      <line x1="255" y1="200" x2="269" y2="200" stroke="#ffb15c" stroke-width="1.5"/>
+      <line x1="255" y1="215" x2="269" y2="215" stroke="#ffb15c" stroke-width="1.5"/>
+      <text x="275" y="254" font-size="12" fill="#ffb15c">marge = Agent Radius</text>
+      <polyline points="90,260 315,215 405,125 594,82" fill="none" stroke="#5aa9ff" stroke-width="3" stroke-linejoin="round" marker-end="url(#ia-nav-arrow)"/>
+      <circle cx="315" cy="215" r="4" fill="#5aa9ff"/>
+      <circle cx="405" cy="125" r="4" fill="#5aa9ff"/>
+      <circle cx="90" cy="260" r="11" fill="#ff6b6b"/>
+      <text x="90" y="264.5" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">IA</text>
+      <circle cx="604" cy="80" r="9" fill="none" stroke="#ffd866" stroke-width="3"/>
+      <text x="604" y="60" text-anchor="middle" font-size="12" fill="currentColor">Destination</text>
+      <rect x="40" y="342" width="16" height="12" fill="#4ade80" fill-opacity="0.3" stroke="#4ade80"/>
+      <text x="62" y="352" font-size="13" fill="currentColor">NavMesh (polygones praticables)</text>
+      <rect x="290" y="342" width="16" height="12" fill="currentColor" fill-opacity="0.25"/>
+      <text x="312" y="352" font-size="13" fill="currentColor">Obstacle</text>
+      <line x1="400" y1="348" x2="430" y2="348" stroke="#5aa9ff" stroke-width="3"/>
+      <text x="438" y="352" font-size="13" fill="currentColor">Chemin calculé (coins lissés)</text>
+    </svg>
+    <figcaption>Vue de dessus : le NavMesh s'arrête à une distance des obstacles égale au rayon de l'agent, et le chemin passe par les coins des polygones.</figcaption>
+  </figure>
+
+  <h3>Générer le NavMesh</h3>
+  <ol class="steps">
+    <li><strong>Placer un Nav Mesh Bounds Volume</strong>Panneau <em>Place Actors</em> → <em>Volumes</em> → <em>Nav Mesh Bounds Volume</em>. Étirez-le pour englober toute la zone où l'IA doit circuler. Un acteur <code>RecastNavMesh-Default</code> apparaît dans l'Outliner : il contient le maillage généré.</li>
+    <li><strong>Afficher le résultat</strong>Appuyez sur <kbd>P</kbd> dans le viewport (ou <em>Show</em> → <em>Navigation</em>) : les surfaces praticables s'affichent en vert. Un trou dans le vert est une zone que l'IA ne pourra jamais atteindre.</li>
+    <li><strong>Régler l'agent</strong><em>Project Settings</em> → <em>Navigation Mesh</em> (ou l'acteur RecastNavMesh) : <em>Agent Radius</em> et <em>Agent Height</em> doivent correspondre à la capsule de vos personnages, <em>Agent Max Slope</em> et <em>Agent Max Step Height</em> aux pentes et marches franchissables.</li>
+  </ol>
+
+  <p>Le réglage <em>Runtime Generation</em> (Project Settings → Navigation Mesh → Runtime) décide si le NavMesh peut changer en cours de partie :</p>
+  <table>
+    <thead><tr><th>Mode</th><th>Comportement</th><th>Quand l'utiliser</th></tr></thead>
+    <tbody>
+      <tr><td><code>Static</code></td><td>Calculé dans l'éditeur, figé en jeu</td><td>Décor immobile : le moins coûteux</td></tr>
+      <tr><td><code>Dynamic Modifiers Only</code></td><td>Maillage figé, mais les Nav Modifiers peuvent changer les zones</td><td>Portes qui s'ouvrent, zones qui deviennent dangereuses</td></tr>
+      <tr><td><code>Dynamic</code></td><td>Les tuiles concernées sont reconstruites quand la géométrie bouge</td><td>Obstacles déplaçables, constructions du joueur, mondes générés</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Affiner les déplacements</h3>
+  <dl class="defs">
+    <dt>Nav Modifier Volume</dt><dd>Change la <em>zone</em> (Area Class) d'une région. <code>NavArea_Null</code> la rend infranchissable, <code>NavArea_Obstacle</code> la rend coûteuse (l'IA l'évite si elle peut). Créez vos propres zones en dérivant de <code>UNavArea</code> et en réglant leur <code>DefaultCost</code> : un marécage de coût 5 sera contourné s'il existe un détour moins de 5 fois plus long.</dd>
+    <dt>Nav Link Proxy</dt><dd>Relie deux zones séparées du NavMesh : sauter d'un rebord, enjamber un trou. Les deux extrémités se placent dans le viewport, avec un sens (dans les deux sens ou dans un seul). Les <em>Smart Links</em> déclenchent un événement pour jouer une animation de saut.</dd>
+    <dt>Navigation Invokers</dt><dd>Pour les très grands mondes : au lieu de tout précalculer, le NavMesh n'est généré qu'autour des acteurs portant un <code>UNavigationInvokerComponent</code>. Nécessite <em>Runtime Generation</em> en <code>Dynamic</code> et l'option <em>Generate Navigation Only Around Navigation Invokers</em> dans Project Settings → Navigation System.</dd>
+  </dl>
+
+  <h2>Les Behavior Trees</h2>
+  <p>Un <strong>Behavior Tree</strong> (arbre de comportement) décrit les décisions de l'IA sous forme d'arbre. Chaque nœud renvoie un résultat (réussite ou échec) à son parent, qui décide quoi faire ensuite. L'exécution part de la racine et parcourt les enfants <strong>de gauche à droite, de haut en bas</strong> : plus une branche est à gauche, plus elle est prioritaire. Contrairement à un script qui réévalue tout à chaque frame, les Behavior Trees d'Unreal sont <strong>événementiels</strong> : ils ne réagissent qu'aux changements (une tâche qui se termine, une valeur du Blackboard qui change).</p>
+
+  <ul class="tree">
+    <li><span class="node c-purple">Root</span><span class="desc">Point d'entrée, relié au Blackboard de l'arbre</span>
+      <ul>
+        <li><span class="node c-yellow">Composites</span><span class="desc">Décident dans quel ordre exécuter leurs enfants</span>
+          <ul>
+            <li><span class="node c-yellow">Selector</span><span class="desc">Essaie ses enfants un par un jusqu'à ce que l'un <strong>réussisse</strong> (un « OU »)</span></li>
+            <li><span class="node c-yellow">Sequence</span><span class="desc">Exécute ses enfants dans l'ordre et s'arrête au premier <strong>échec</strong> (un « ET »)</span></li>
+            <li><span class="node c-yellow">Simple Parallel</span><span class="desc">Une tâche principale et un sous-arbre exécuté en arrière-plan en même temps</span></li>
+          </ul>
+        </li>
+        <li><span class="node c-teal">Tasks</span><span class="desc">Les feuilles : elles agissent (Move To, Wait, Rotate to face BB entry, Run EQS Query, vos tâches)</span></li>
+        <li><span class="node c-blue">Decorators</span><span class="desc">Conditions attachées à un nœud (Blackboard, Cooldown, Loop, Time Limit, Is At Location…)</span></li>
+        <li><span class="node c-green">Services</span><span class="desc">Logique exécutée à intervalle régulier tant que leur branche est active (mettre à jour une distance)</span></li>
+      </ul>
+    </li>
+  </ul>
+
+  <h3>L'arbre d'un ennemi typique</h3>
+  <p>Voici l'arbre d'un ennemi qui attaque si le joueur est à portée, le poursuit s'il le connaît, et patrouille sinon. Grâce au Selector, il suffit de lire l'arbre de gauche à droite pour connaître ses priorités :</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TD
+    ROOT["ROOT"] --> SEL["Selector"]
+    SEL --> ATK["Sequence : Attaquer<br>si IsInAttackRange<br>aborts : Both"]
+    SEL --> CHS["Sequence : Poursuivre<br>si TargetActor Is Set<br>aborts : Both"]
+    SEL --> PAT["Sequence :<br>Patrouiller"]
+    ATK --> A1["Rotate to<br>face BB entry"]
+    ATK --> A2["Attack<br>(custom)"]
+    CHS --> C1["Move To<br>TargetActor"]
+    PAT --> P1["Find Random<br>Location"]
+    PAT --> P2["Move To<br>PatrolLocation"]
+    PAT --> P3["Wait<br>2 s"]
+    SVC["Service<br>UpdateAttackRange"] -.-> SEL
+</pre>
+    <figcaption>Behavior Tree d'un ennemi : trois branches par ordre de priorité. Le service met à jour la clé IsInAttackRange tant que l'arbre tourne.</figcaption>
+  </figure>
+
+  <h3>Les observer aborts</h3>
+  <p>Un décorateur Blackboard n'est pas qu'une condition d'entrée : il peut aussi <strong>surveiller</strong> sa clé et interrompre l'exécution quand elle change. C'est le réglage <em>Observer aborts</em> :</p>
+  <table>
+    <thead><tr><th>Valeur</th><th>Effet quand la condition change</th></tr></thead>
+    <tbody>
+      <tr><td><code>None</code></td><td>Rien : la condition n'est testée qu'au moment d'entrer dans la branche</td></tr>
+      <tr><td><code>Self</code></td><td>Si la condition devient fausse pendant que <strong>cette branche</strong> s'exécute, elle est interrompue</td></tr>
+      <tr><td><code>Lower Priority</code></td><td>Si la condition devient vraie pendant qu'une branche <strong>plus à droite</strong> s'exécute, celle-ci est interrompue au profit de cette branche</td></tr>
+      <tr><td><code>Both</code></td><td>Les deux à la fois</td></tr>
+    </tbody>
+  </table>
+  <p>Suivez le scénario sur l'arbre ci-dessus. L'ennemi patrouille et attend 2 secondes (tâche <em>Wait</em>). Le joueur entre dans son champ de vision : la perception écrit <code>TargetActor</code>. Le décorateur de « Poursuivre » observe cette clé avec <em>Lower Priority</em> inclus : la patrouille, moins prioritaire, est <strong>immédiatement interrompue</strong> et l'ennemi part en chasse sans finir son attente. Plus tard, le joueur se cache et la perception efface <code>TargetActor</code> : grâce à <em>Self</em> (inclus dans <em>Both</em>), la poursuite s'arrête et l'arbre retombe sur la patrouille. Avec <em>None</em>, l'ennemi aurait fini sa pause avant de réagir, puis aurait poursuivi un joueur qu'il ne voit plus jusqu'au bout du trajet.</p>
+
+  <div class="quiz">
+    <p class="q">Une Sequence a trois tâches enfants. La deuxième échoue. Que se passe-t-il ?</p>
+    <ul>
+      <li>La troisième tâche s'exécute quand même</li>
+      <li data-correct>La Sequence échoue immédiatement, sans exécuter la troisième tâche</li>
+      <li>La Sequence recommence la deuxième tâche jusqu'à ce qu'elle réussisse</li>
+      <li>La Sequence réussit, car la première tâche a réussi</li>
+    </ul>
+    <p class="explain">Une Sequence est un « ET » : elle ne réussit que si tous ses enfants réussissent, et s'arrête au premier échec. Son parent (souvent un Selector) passe alors à la branche suivante.</p>
+  </div>
+
+  <h2>Le Blackboard</h2>
+  <p>Le <strong>Blackboard</strong> est la mémoire de l'IA : un dictionnaire de clés typées, créé comme un asset (clic droit → <em>Artificial Intelligence</em> → <em>Blackboard</em>) et associé au Behavior Tree. Les tâches, décorateurs et services lisent et écrivent ces clés ; chaque IA possède ses propres valeurs.</p>
+  <table>
+    <thead><tr><th>Clé</th><th>Type</th><th>Rôle</th></tr></thead>
+    <tbody>
+      <tr><td><code>TargetActor</code></td><td>Object (Base Class : Actor)</td><td>Le joueur repéré, vide sinon</td></tr>
+      <tr><td><code>PatrolLocation</code></td><td>Vector</td><td>Prochaine destination de patrouille</td></tr>
+      <tr><td><code>LastKnownLocation</code></td><td>Vector</td><td>Où le joueur a été vu pour la dernière fois</td></tr>
+      <tr><td><code>IsInAttackRange</code></td><td>Bool</td><td>Écrit par le service, lu par le décorateur d'attaque</td></tr>
+      <tr><td><code>HomeLocation</code></td><td>Vector</td><td>Position de départ, pour revenir à son poste</td></tr>
+    </tbody>
+  </table>
+  <p>Depuis le contrôleur (ou n'importe quel code qui y a accès), on manipule les clés par leur nom :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="EnemyAIController.cpp (extrait)">
+#include "BehaviorTree/BlackboardComponent.h"
+
+if (UBlackboardComponent* BB = GetBlackboardComponent())
+{
+    BB->SetValueAsObject(TEXT("TargetActor"), Player);                        // un UObject
+    BB->SetValueAsVector(TEXT("LastKnownLocation"), Player->GetActorLocation()); // un FVector
+    BB->ClearValue(TEXT("TargetActor"));                                      // remet la clé à « non définie »
+
+    const bool bInRange = BB->GetValueAsBool(TEXT("IsInAttackRange"));
+}
+</script>
+
+  <div class="callout tip">
+    <p class="callout-title">Évitez les noms de clés en dur partout</p>
+    <p>Une faute de frappe dans <code>TEXT("TargetActr")</code> ne provoque aucune erreur de compilation : la clé est simplement introuvable. Regroupez les noms dans des constantes (<code>namespace BBKeys { const FName TargetActor = TEXT("TargetActor"); }</code>), et dans les nœuds réutilisables exposez plutôt un <code>FBlackboardKeySelector</code>, choisi dans une liste déroulante.</p>
+  </div>
+
+  <h2>Écrire ses propres tâches</h2>
+  <p>Les tâches fournies (Move To, Wait…) ne suffisent jamais longtemps. Une tâche personnalisée hérite de <code>UBTTaskNode</code> et redéfinit <code>ExecuteTask</code>, qui renvoie un <code>EBTNodeResult</code> : <code>Succeeded</code>, <code>Failed</code>, ou <code>InProgress</code> pour une tâche qui dure (elle appellera plus tard <code>FinishLatentTask</code>). Voici une tâche qui choisit un point accessible au hasard autour de l'IA :</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+      <p>Créez un Blueprint de classe parente <code>BTTask_BlueprintBase</code> (nommé <code>BTT_FindRandomLocation</code>), ajoutez une variable <code>PatrolLocationKey</code> de type <em>Blackboard Key Selector</em> marquée <em>Instance Editable</em>, puis :</p>
+<script type="application/json" class="bp-graph" data-caption="BTT_FindRandomLocation : un point accessible au hasard dans un rayon de 1000 cm, écrit dans le Blackboard. Finish Execute renvoie le succès de la recherche.">
+{
+  "nodes": [
+    { "id": "ev", "type": "event", "title": "Event Receive Execute AI", "x": 0, "y": 0,
+      "out": [ { "type": "exec" }, { "name": "Owner Controller", "type": "object" }, { "name": "Controlled Pawn", "type": "object" } ] },
+    { "id": "key", "type": "var", "title": "Patrol Location Key", "x": 70, "y": -70, "out": [ { "type": "struct" } ] },
+    { "id": "loc", "type": "pure", "title": "Get Actor Location", "x": 0, "y": 215,
+      "in": [ { "name": "Target", "type": "object" } ], "out": [ { "name": "Return Value", "type": "vector" } ] },
+    { "id": "rand", "type": "pure", "title": "GetRandomReachablePointInRadius", "x": 250, "y": 215,
+      "in": [ { "name": "Origin", "type": "vector" }, { "name": "Radius", "type": "float", "value": "1000.0" } ],
+      "out": [ { "name": "Random Location", "type": "vector" }, { "name": "Return Value", "type": "bool" } ] },
+    { "id": "setbb", "type": "function", "title": "Set Blackboard Value as Vector", "x": 300, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Key", "type": "struct" }, { "name": "Value", "type": "vector" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "finish", "type": "function", "title": "Finish Execute", "x": 640, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Success", "type": "bool" } ], "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ev", 0, "setbb", 0 ], [ "ev", 2, "loc", 0 ], [ "loc", 0, "rand", 0 ], [ "key", 0, "setbb", 1 ],
+    [ "rand", 0, "setbb", 2 ], [ "rand", 1, "finish", 1 ], [ "setbb", 0, "finish", 0 ]
+  ]
+}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="BTTask_FindRandomLocation.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "BehaviorTree/BTTaskNode.h"
+#include "BTTask_FindRandomLocation.generated.h"
+
+UCLASS()
+class MYGAME_API UBTTask_FindRandomLocation : public UBTTaskNode
+{
+    GENERATED_BODY()
+
+public:
+    UBTTask_FindRandomLocation();
+
+    virtual EBTNodeResult::Type ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) override;
+
+protected:
+    // Choisie dans le Behavior Tree, parmi les clés de type Vector
+    UPROPERTY(EditAnywhere, Category = "Blackboard")
+    FBlackboardKeySelector TargetLocationKey;
+
+    UPROPERTY(EditAnywhere, Category = "Search", meta = (ClampMin = "100.0"))
+    float SearchRadius = 1000.f;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="BTTask_FindRandomLocation.cpp" data-highlight="19,22-23,25-26">
+#include "BTTask_FindRandomLocation.h"
+#include "AIController.h"
+#include "BehaviorTree/BlackboardComponent.h"
+#include "NavigationSystem.h"
+
+UBTTask_FindRandomLocation::UBTTask_FindRandomLocation()
+{
+    NodeName = TEXT("Find Random Location");
+    // Le sélecteur ne proposera que les clés Vector
+    TargetLocationKey.AddVectorFilter(this, GET_MEMBER_NAME_CHECKED(UBTTask_FindRandomLocation, TargetLocationKey));
+}
+
+EBTNodeResult::Type UBTTask_FindRandomLocation::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
+{
+    const AAIController* AIController = OwnerComp.GetAIOwner();
+    const APawn* Pawn = AIController ? AIController->GetPawn() : nullptr;
+    if (!Pawn) return EBTNodeResult::Failed;
+
+    UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent<UNavigationSystemV1>(GetWorld());
+    if (!NavSys) return EBTNodeResult::Failed;
+
+    FNavLocation Result;
+    if (NavSys->GetRandomReachablePointInRadius(Pawn->GetActorLocation(), SearchRadius, Result))
+    {
+        OwnerComp.GetBlackboardComponent()->SetValueAsVector(TargetLocationKey.SelectedKeyName, Result.Location);
+        return EBTNodeResult::Succeeded;
+    }
+    return EBTNodeResult::Failed; // aucun point accessible (pas de NavMesh ?)
+}
+</script>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <p class="callout-title">Piège courant : stocker un état dans la tâche</p>
+    <p>Par défaut, un nœud de Behavior Tree n'est <strong>pas instancié par IA</strong> : le même objet tâche sert à tous les ennemis qui utilisent l'arbre. Une variable membre modifiée pendant <code>ExecuteTask</code> serait donc partagée entre eux. Gardez les données par IA dans le Blackboard ou dans la mémoire de nœud (<code>NodeMemory</code>). Les tâches Blueprint, elles, sont instanciées pour chaque IA.</p>
+  </div>
+
+  <p>Pour un nœud qui ne manipule qu'une seule clé, vous pouvez aussi hériter de <code>UBTTask_BlackboardBase</code>, qui fournit déjà une propriété <code>BlackboardKey</code> et la fonction <code>GetSelectedBlackboardKey()</code>.</p>
+
+  <h3>Les services</h3>
+  <p>Un <strong>service</strong> hérite de <code>UBTService</code> et s'attache à un composite ou une tâche. Tant que cette branche est active, son <code>TickNode</code> est appelé selon l'intervalle réglé (<em>Interval</em>, plus une variation aléatoire <em>Random Deviation</em> pour étaler la charge entre les IA). C'est l'outil idéal pour tenir une clé à jour, par exemple la distance au joueur :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="BTService_UpdateAttackRange.cpp">
+#include "BTService_UpdateAttackRange.h"
+#include "AIController.h"
+#include "BehaviorTree/BlackboardComponent.h"
+
+UBTService_UpdateAttackRange::UBTService_UpdateAttackRange()
+{
+    NodeName = TEXT("Update Attack Range");
+    Interval = 0.3f;
+    RandomDeviation = 0.1f;
+}
+
+void UBTService_UpdateAttackRange::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds)
+{
+    Super::TickNode(OwnerComp, NodeMemory, DeltaSeconds);
+
+    UBlackboardComponent* BB = OwnerComp.GetBlackboardComponent();
+    const APawn* Pawn = OwnerComp.GetAIOwner() ? OwnerComp.GetAIOwner()->GetPawn() : nullptr;
+    const AActor* Target = BB ? Cast<AActor>(BB->GetValueAsObject(TEXT("TargetActor"))) : nullptr;
+
+    const bool bInRange = Pawn && Target && FVector::Dist(Pawn->GetActorLocation(), Target->GetActorLocation()) <= AttackRange;
+    if (BB)
+    {
+        BB->SetValueAsBool(TEXT("IsInAttackRange"), bInRange);
+    }
+}
+</script>
+
+  <h2>Le contrôleur et la perception</h2>
+  <p>Il reste à brancher le tout : le contrôleur lance le Behavior Tree quand il possède son Pawn, et un <code>UAIPerceptionComponent</code> lui donne des <strong>sens</strong>. Chaque sens se configure avec un objet <code>UAISenseConfig_*</code>. La vue est définie par un rayon de détection, un rayon (plus grand) au-delà duquel une cible déjà vue est perdue, et un demi-angle de vision :</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 720 460" width="720" role="img" aria-label="Vue de dessus du cône de vision d'une IA avec les rayons SightRadius et LoseSightRadius et trois cibles">
+      <path d="M90 230 L270 15.5 A280 280 0 0 1 270 444.5 Z" fill="#ffb15c" fill-opacity="0.06" stroke="#ffb15c" stroke-opacity="0.85" stroke-width="1.5" stroke-dasharray="6 5"/>
+      <path d="M90 230 L231.4 61.5 A220 220 0 0 1 231.4 398.5 Z" fill="#5aa9ff" fill-opacity="0.16" stroke="#5aa9ff" stroke-width="2"/>
+      <line x1="90" y1="230" x2="390" y2="230" stroke="currentColor" stroke-opacity="0.45" stroke-dasharray="4 4"/>
+      <text x="388" y="222" text-anchor="end" font-size="12" fill="currentColor" fill-opacity="0.8">avant</text>
+      <path d="M150 230 A60 60 0 0 0 128.6 184" fill="none" stroke="#ffd866" stroke-width="2"/>
+      <text x="152" y="203" font-size="13" fill="#ffd866">50°</text>
+      <circle cx="90" cy="230" r="13" fill="#ff6b6b"/>
+      <path d="M100 222 L112 230 L100 238 Z" fill="#ff6b6b"/>
+      <text x="90" y="234.5" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">IA</text>
+      <circle cx="250" cy="200" r="9" fill="#4ade80"/>
+      <text x="250" y="204" text-anchor="middle" font-size="11" font-weight="700" fill="#0b1220">A</text>
+      <circle cx="300" cy="300" r="9" fill="#ffd866"/>
+      <text x="300" y="304" text-anchor="middle" font-size="11" font-weight="700" fill="#0b1220">B</text>
+      <circle cx="60" cy="110" r="9" fill="currentColor" fill-opacity="0.45"/>
+      <text x="60" y="114" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor">C</text>
+      <text x="196" y="140" font-size="12" fill="#5aa9ff">SightRadius</text>
+      <text x="322" y="414" font-size="12" fill="#ffb15c">LoseSightRadius</text>
+      <g font-size="13" fill="currentColor">
+        <rect x="430" y="40" width="16" height="12" fill="#5aa9ff" fill-opacity="0.35" stroke="#5aa9ff"/>
+        <text x="454" y="51">Cône de détection : SightRadius et</text>
+        <text x="454" y="69">PeripheralVisionAngleDegrees (demi-angle)</text>
+        <rect x="430" y="94" width="16" height="12" fill="none" stroke="#ffb15c" stroke-dasharray="4 3"/>
+        <text x="454" y="105">LoseSightRadius : une cible déjà vue</text>
+        <text x="454" y="123">n'est perdue qu'au-delà de ce rayon</text>
+        <circle cx="438" cy="168" r="8" fill="#4ade80"/>
+        <text x="454" y="164">A : dans le cône et à portée,</text>
+        <text x="454" y="182">détecté (si rien ne masque la vue)</text>
+        <circle cx="438" cy="222" r="8" fill="#ffd866"/>
+        <text x="454" y="218">B : entre les deux rayons, reste</text>
+        <text x="454" y="236">suivi seulement s'il était déjà vu</text>
+        <circle cx="438" cy="276" r="8" fill="currentColor" fill-opacity="0.45"/>
+        <text x="454" y="272">C : hors du cône, invisible même</text>
+        <text x="454" y="290">très près (sauf avec l'ouïe)</text>
+      </g>
+    </svg>
+    <figcaption>Le sens de la vue vu de dessus. Un demi-angle de 50° donne un champ de vision total de 100°. Le moteur vérifie aussi par une trace que rien ne s'interpose.</figcaption>
+  </figure>
+
+<script type="text/plain" data-lang="cpp" data-file="EnemyAIController.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "AIController.h"
+#include "Perception/AIPerceptionTypes.h"
+#include "EnemyAIController.generated.h"
+
+class UBehaviorTree;
+class UAISenseConfig_Sight;
+class UAISenseConfig_Hearing;
+
+UCLASS()
+class MYGAME_API AEnemyAIController : public AAIController
+{
+    GENERATED_BODY()
+
+public:
+    AEnemyAIController();
+
+protected:
+    virtual void BeginPlay() override;
+    virtual void OnPossess(APawn* InPawn) override;
+
+    UPROPERTY(EditDefaultsOnly, Category = "AI")
+    TObjectPtr<UBehaviorTree> BehaviorTree;
+
+    UPROPERTY(VisibleAnywhere, Category = "AI")
+    TObjectPtr<UAISenseConfig_Sight> SightConfig;
+
+    UPROPERTY(VisibleAnywhere, Category = "AI")
+    TObjectPtr<UAISenseConfig_Hearing> HearingConfig;
+
+private:
+    UFUNCTION()
+    void HandleTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="EnemyAIController.cpp" data-highlight="17-21,38-39,46,60-62">
+#include "EnemyAIController.h"
+#include "BehaviorTree/BehaviorTree.h"
+#include "BehaviorTree/BlackboardComponent.h"
+#include "Perception/AIPerceptionComponent.h"
+#include "Perception/AISenseConfig_Sight.h"
+#include "Perception/AISenseConfig_Hearing.h"
+#include "Perception/AISense_Sight.h"
+#include "Perception/AISense_Hearing.h"
+#include "Kismet/GameplayStatics.h"
+
+AEnemyAIController::AEnemyAIController()
+{
+    UAIPerceptionComponent* Perception = CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("Perception"));
+    SetPerceptionComponent(*Perception);
+
+    SightConfig = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
+    SightConfig->SightRadius = 1500.f;
+    SightConfig->LoseSightRadius = 1800.f;              // toujours plus grand que SightRadius
+    SightConfig->PeripheralVisionAngleDegrees = 50.f;   // demi-angle : 100° au total
+    SightConfig->DetectionByAffiliation.bDetectEnemies = true;
+    SightConfig->DetectionByAffiliation.bDetectNeutrals = true; // sans équipes, tout est neutre
+    SightConfig->DetectionByAffiliation.bDetectFriendlies = false;
+    SightConfig->SetMaxAge(5.f);                        // oubli du stimulus après 5 s
+
+    HearingConfig = CreateDefaultSubobject<UAISenseConfig_Hearing>(TEXT("HearingConfig"));
+    HearingConfig->HearingRange = 1200.f;
+    HearingConfig->DetectionByAffiliation.bDetectEnemies = true;
+    HearingConfig->DetectionByAffiliation.bDetectNeutrals = true;
+
+    Perception->ConfigureSense(*SightConfig);
+    Perception->ConfigureSense(*HearingConfig);
+    Perception->SetDominantSense(SightConfig->GetSenseImplementation());
+}
+
+void AEnemyAIController::BeginPlay()
+{
+    Super::BeginPlay();
+    GetPerceptionComponent()->OnTargetPerceptionUpdated.AddDynamic(
+        this, &AEnemyAIController::HandleTargetPerceptionUpdated);
+}
+
+void AEnemyAIController::OnPossess(APawn* InPawn)
+{
+    Super::OnPossess(InPawn);
+
+    if (BehaviorTree && RunBehaviorTree(BehaviorTree)) // crée aussi le Blackboard de l'arbre
+    {
+        GetBlackboardComponent()->SetValueAsVector(TEXT("HomeLocation"), InPawn->GetActorLocation());
+    }
+}
+
+void AEnemyAIController::HandleTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus)
+{
+    UBlackboardComponent* BB = GetBlackboardComponent();
+    if (!BB || Actor != UGameplayStatics::GetPlayerPawn(this, 0))
+    {
+        return; // on ne s'intéresse qu'au joueur
+    }
+
+    if (Stimulus.Type == UAISense::GetSenseID<UAISense_Sight>())
+    {
+        if (Stimulus.WasSuccessfullySensed())
+        {
+            BB->SetValueAsObject(TEXT("TargetActor"), Actor);   // vu : on le poursuit
+        }
+        else
+        {
+            BB->ClearValue(TEXT("TargetActor"));                // perdu de vue
+            BB->SetValueAsVector(TEXT("LastKnownLocation"), Stimulus.StimulusLocation);
+        }
+    }
+    else if (Stimulus.Type == UAISense::GetSenseID<UAISense_Hearing>())
+    {
+        BB->SetValueAsVector(TEXT("LastKnownLocation"), Stimulus.StimulusLocation); // aller voir
+    }
+}
+</script>
+
+  <div class="callout warn">
+    <p class="callout-title">Piège courant : l'IA ne voit pas le joueur</p>
+    <p>Sans système d'équipes, deux acteurs sont considérés comme <strong>neutres</strong> l'un envers l'autre. Si seul <em>Detect Enemies</em> est coché, rien n'est jamais détecté. Cochez <em>Detect Neutrals</em> (ou configurez les équipes, voir plus bas). Vérifiez aussi que <em>LoseSightRadius</em> est supérieur à <em>SightRadius</em>, et que le joueur ne bloque pas lui-même le canal Visibility avec une collision mal réglée.</p>
+  </div>
+
+  <h3>Les sources de stimuli et l'ouïe</h3>
+  <p>Pour être vu, un acteur doit être enregistré comme <strong>source</strong> auprès du système de perception. Par défaut, tous les Pawns le sont automatiquement pour la vue. Pour un acteur qui n'est pas un Pawn (un leurre, un cadavre à découvrir), ou pour contrôler finement les sens concernés, ajoutez-lui un <code>UAIPerceptionStimuliSourceComponent</code> et listez les sens dans <em>Register as Source for Senses</em>.</p>
+  <p>L'ouïe, elle, ne détecte rien toute seule : il faut <strong>signaler les bruits</strong>. Un tir, une porte qui claque, un objet qui tombe appellent <code>ReportNoiseEvent</code> (nœud <em>Report Noise Event</em> en Blueprint) :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Weapon.cpp (extrait)">
+#include "Perception/AISense_Hearing.h"
+
+// Bruit de tir : Loudness 1, portée maximale 3000 cm, Instigator = le tireur
+UAISense_Hearing::ReportNoiseEvent(this, GetActorLocation(), 1.f, GetOwner(), 3000.f, TEXT("Gunshot"));
+</script>
+
+  <div class="quiz">
+    <p class="q">Votre ennemi patrouille (branche la plus à droite du Selector). Il voit le joueur, <code>TargetActor</code> est écrit, mais il termine tranquillement sa patrouille avant de réagir. Quel réglage manque sur le décorateur Blackboard de la branche « Poursuivre » ?</p>
+    <ul>
+      <li>Observer aborts : None</li>
+      <li>Observer aborts : Self</li>
+      <li data-correct>Observer aborts : Lower Priority (ou Both)</li>
+      <li>Un service avec un intervalle plus court</li>
+    </ul>
+    <p class="explain">Il faut interrompre une branche <em>moins prioritaire</em> (plus à droite) quand la condition devient vraie : c'est <em>Lower Priority</em>. <em>Self</em> n'interrompt que la branche du décorateur elle-même, quand sa condition devient fausse.</p>
+  </div>
+
+  <h2>EQS : choisir le meilleur endroit</h2>
+  <p>L'<strong>Environment Query System</strong> répond à des questions spatiales : « où me mettre à couvert ? », « quel point me permet de prendre le joueur à revers ? », « quelle arme au sol est la plus proche ? ». Une requête (asset <em>Environment Query</em>) combine trois étapes :</p>
+  <dl class="defs">
+    <dt>Generator</dt><dd>Produit des candidats : une grille de points autour de l'IA (<em>Points: Grid</em>), un cercle, un anneau, ou des acteurs d'une classe (<em>Actors Of Class</em>). Les positions sont exprimées par rapport à un <strong>contexte</strong> (l'IA qui pose la question, le joueur…).</dd>
+    <dt>Tests</dt><dd>Évaluent chaque candidat : distance, trace de visibilité (<em>Trace</em>), angle (<em>Dot</em>), chemin existant (<em>Pathfinding</em>), tags… Un test peut <strong>filtrer</strong> (éliminer les candidats qui échouent) et/ou <strong>noter</strong>.</dd>
+    <dt>Scoring</dt><dd>Les notes de chaque test sont normalisées entre 0 et 1, pondérées et additionnées. La requête renvoie le meilleur candidat (ou un des meilleurs, au hasard, selon le mode choisi).</dd>
+  </dl>
+
+  <figure class="figure">
+    <svg viewBox="0 0 680 370" width="680" role="img" aria-label="Grille de points EQS : les points visibles par le joueur sont éliminés, les points cachés derrière le mur sont colorés selon leur score">
+      <polygon points="316,105 80,52.4 80,297.6 316,245" fill="#5aa9ff" fill-opacity="0.08"/>
+      <line x1="630" y1="175" x2="80" y2="52.4" stroke="#5aa9ff" stroke-opacity="0.5" stroke-dasharray="5 5"/>
+      <line x1="630" y1="175" x2="80" y2="297.6" stroke="#5aa9ff" stroke-opacity="0.5" stroke-dasharray="5 5"/>
+      <rect x="300" y="105" width="16" height="140" fill="currentColor" fill-opacity="0.55"/>
+      <text x="308" y="96" text-anchor="middle" font-size="12" fill="currentColor">Mur</text>
+      <g>
+        <circle cx="100" cy="100" r="7" fill="#ff6b6b"/>
+        <circle cx="100" cy="150" r="7" fill="#ff806a"/>
+        <circle cx="100" cy="200" r="7" fill="#ff8f69"/>
+        <circle cx="100" cy="250" r="7" fill="#ff9768"/>
+        <circle cx="150" cy="100" r="7" fill="#ff9e68"/>
+        <circle cx="150" cy="150" r="7" fill="#ffb767"/>
+        <circle cx="150" cy="200" r="7" fill="#ffc866"/>
+        <circle cx="150" cy="250" r="7" fill="#ffd166"/>
+        <circle cx="200" cy="100" r="7" fill="#ffd066"/>
+        <circle cx="200" cy="150" r="7" fill="#dcd96a"/>
+        <circle cx="200" cy="200" r="7" fill="#bbda6f"/>
+        <circle cx="200" cy="250" r="7" fill="#a9da72"/>
+        <circle cx="250" cy="100" r="7" fill="#bdda6f"/>
+        <circle cx="250" cy="150" r="7" fill="#86db77"/>
+        <circle cx="250" cy="200" r="7" fill="#5fdd7c"/>
+        <circle cx="250" cy="250" r="7" fill="#4ade80"/>
+      </g>
+      <g stroke="currentColor" stroke-opacity="0.35" stroke-width="1.6">
+        <path d="M96 46 L104 54 M104 46 L96 54"/>
+        <path d="M96 296 L104 304 M104 296 L96 304"/>
+        <path d="M146 46 L154 54 M154 46 L146 54"/>
+        <path d="M146 296 L154 304 M154 296 L146 304"/>
+        <path d="M196 46 L204 54 M204 46 L196 54"/>
+        <path d="M196 296 L204 304 M204 296 L196 304"/>
+        <path d="M246 46 L254 54 M254 46 L246 54"/>
+        <path d="M246 296 L254 304 M254 296 L246 304"/>
+        <path d="M296 46 L304 54 M304 46 L296 54"/>
+        <path d="M296 296 L304 304 M304 296 L296 304"/>
+        <path d="M346 46 L354 54 M354 46 L346 54"/>
+        <path d="M346 96 L354 104 M354 96 L346 104"/>
+        <path d="M346 146 L354 154 M354 146 L346 154"/>
+        <path d="M346 196 L354 204 M354 196 L346 204"/>
+        <path d="M346 246 L354 254 M354 246 L346 254"/>
+        <path d="M346 296 L354 304 M354 296 L346 304"/>
+        <path d="M396 46 L404 54 M404 46 L396 54"/>
+        <path d="M396 96 L404 104 M404 96 L396 104"/>
+        <path d="M396 146 L404 154 M404 146 L396 154"/>
+        <path d="M396 196 L404 204 M404 196 L396 204"/>
+        <path d="M396 246 L404 254 M404 246 L396 254"/>
+        <path d="M396 296 L404 304 M404 296 L396 304"/>
+        <path d="M446 46 L454 54 M454 46 L446 54"/>
+        <path d="M446 96 L454 104 M454 96 L446 104"/>
+        <path d="M446 146 L454 154 M454 146 L446 154"/>
+        <path d="M446 196 L454 204 M454 196 L446 204"/>
+        <path d="M446 246 L454 254 M454 246 L446 254"/>
+        <path d="M446 296 L454 304 M454 296 L446 304"/>
+        <path d="M496 46 L504 54 M504 46 L496 54"/>
+        <path d="M496 96 L504 104 M504 96 L496 104"/>
+        <path d="M496 146 L504 154 M504 146 L496 154"/>
+        <path d="M496 196 L504 204 M504 196 L496 204"/>
+        <path d="M496 246 L504 254 M504 246 L496 254"/>
+        <path d="M496 296 L504 304 M504 296 L496 304"/>
+        <path d="M546 46 L554 54 M554 46 L546 54"/>
+        <path d="M546 96 L554 104 M554 96 L546 104"/>
+        <path d="M546 146 L554 154 M554 146 L546 154"/>
+        <path d="M546 196 L554 204 M554 196 L546 204"/>
+        <path d="M546 246 L554 254 M554 246 L546 254"/>
+        <path d="M546 296 L554 304 M554 296 L546 304"/>
+      </g>
+      <circle cx="250" cy="250" r="13" fill="none" stroke="#5aa9ff" stroke-width="2.5"/>
+      <text x="250" y="282" text-anchor="middle" font-size="12" fill="#5aa9ff">meilleur point</text>
+      <line x1="470" y1="275" x2="262" y2="252" stroke="#ff6b6b" stroke-width="2" stroke-dasharray="6 4"/>
+      <circle cx="470" cy="275" r="11" fill="#ff6b6b"/>
+      <text x="470" y="279.5" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">IA</text>
+      <circle cx="630" cy="175" r="11" fill="#4ade80"/>
+      <text x="630" y="200" text-anchor="middle" font-size="12" fill="currentColor">Joueur</text>
+      <g font-size="13" fill="currentColor">
+        <circle cx="60" cy="342" r="7" fill="#4ade80"/>
+        <circle cx="78" cy="342" r="7" fill="#ffd866"/>
+        <circle cx="96" cy="342" r="7" fill="#ff6b6b"/>
+        <text x="112" y="347">score : proche de l'IA → loin</text>
+        <path d="M332 338 L340 346 M340 338 L332 346" stroke="currentColor" stroke-opacity="0.5" stroke-width="1.6"/>
+        <text x="350" y="347">éliminé par le test Trace (visible)</text>
+      </g>
+    </svg>
+    <figcaption>Requête « trouver un couvert » : une grille de points autour de l'IA, un test Trace qui élimine les points visibles depuis le joueur, puis un test Distance qui préfère les points proches de l'IA.</figcaption>
+  </figure>
+
+  <p>Dans un Behavior Tree, la tâche <em>Run EQS Query</em> exécute la requête et écrit le résultat dans une clé du Blackboard (un Vector ou un Actor), qu'un <em>Move To</em> peut ensuite utiliser. Pour mettre au point une requête dans l'éditeur, placez un <code>EQSTestingPawn</code> dans le niveau : il affiche en direct les points et leurs scores. Selon votre version du moteur, il peut être nécessaire d'activer l'EQS dans les options expérimentales de l'éditeur (c'était le cas dans UE4).</p>
+
+  <h2>StateTree : l'alternative moderne</h2>
+  <p><strong>StateTree</strong> (plugins <em>StateTree</em> et <em>GameplayStateTree</em>, selon votre version) combine les idées des machines à états et des Behavior Trees. On y définit des <strong>états</strong> hiérarchiques (Combat contient Attaquer et Se repositionner), chacun exécutant des <strong>tâches</strong> tant qu'il est actif. Des <strong>transitions</strong> conditionnelles font passer d'un état à l'autre (sur réussite, échec, événement ou condition), et des <strong>évaluateurs</strong> (ou tâches globales) calculent des données accessibles à tous les états, à la place du Blackboard. Le tout s'exécute via un <code>StateTreeComponent</code> (ou sa variante pour l'IA) sur le Pawn ou le contrôleur.</p>
+
+  <table>
+    <thead><tr><th></th><th>Behavior Tree</th><th>StateTree</th></tr></thead>
+    <tbody>
+      <tr><td>Modèle</td><td>Arbre de priorités lu de gauche à droite</td><td>Machine à états hiérarchique</td></tr>
+      <tr><td>Mémoire</td><td>Blackboard (clés nommées)</td><td>Paramètres et liaisons de propriétés typées</td></tr>
+      <tr><td>Réactivité</td><td>Décorateurs et observer aborts</td><td>Transitions sur conditions et événements</td></tr>
+      <tr><td>Logique continue</td><td>Services</td><td>Évaluateurs, tâches globales</td></tr>
+      <tr><td>Usages</td><td>IA de personnages, très documenté</td><td>IA, Smart Objects, Mass, logique de jeu générique</td></tr>
+      <tr><td>Maturité</td><td>Stable depuis UE4, outils de débogage complets</td><td>Plus récent, évolue sensiblement à chaque version</td></tr>
+    </tbody>
+  </table>
+  <p>Pour apprendre, commencez par les Behavior Trees : la documentation et les exemples sont bien plus nombreux, et les concepts (tâches, conditions, priorités) se transposent directement à StateTree.</p>
+
+  <h2>Déboguer l'IA</h2>
+  <p>Une IA qui « ne fait rien » est le bug le plus courant, et le plus frustrant sans les bons outils. Unreal en propose trois, complémentaires :</p>
+  <ol class="steps">
+    <li><strong>Gameplay Debugger</strong>En jeu (PIE), appuyez sur la touche apostrophe <kbd>'</kbd> en visant une IA. Un panneau affiche son contrôleur, sa branche de Behavior Tree active, son Blackboard, sa perception et son chemin. Les catégories (NavMesh, AI, Behavior Tree, EQS, Perception) s'activent avec les touches du pavé numérique. Sur un clavier AZERTY, changez la touche dans <em>Project Settings</em> → <em>Gameplay Debugger</em> (<em>Activation Key</em>), ou utilisez la commande console <code>EnableGDT</code>.</li>
+    <li><strong>Débogueur de Behavior Tree</strong>Ouvrez l'asset Behavior Tree pendant le PIE : la branche active est surlignée en temps réel et le panneau Blackboard affiche les valeurs. Choisissez l'IA à suivre dans la liste déroulante, et posez des points d'arrêt sur les nœuds (<kbd>F9</kbd>).</li>
+    <li><strong>Visual Logger</strong><em>Tools</em> → <em>Debug</em> → <em>Visual Logger</em> (ou commande <code>VisLog</code>). Il enregistre l'historique de chaque IA : on peut revenir en arrière image par image pour comprendre une décision passée. Vous y ajoutez vos propres traces avec <code>UE_VLOG</code> et <code>UE_VLOG_LOCATION</code> (en-tête <code>VisualLogger/VisualLogger.h</code>).</li>
+  </ol>
+
+<script type="text/plain" data-lang="cpp" data-file="Dans une tâche ou un service">
+#include "VisualLogger/VisualLogger.h"
+
+UE_VLOG(AIController, LogTemp, Log, TEXT("Cible choisie : %s"), *GetNameSafe(Target));
+UE_VLOG_LOCATION(AIController, LogTemp, Log, Result.Location, 30.f, FColor::Green, TEXT("Point de patrouille"));
+</script>
+
+  <h3>Les équipes</h3>
+  <p>Pour que la perception distingue amis, ennemis et neutres, les acteurs doivent appartenir à une <strong>équipe</strong> via l'interface <code>IGenericTeamAgentInterface</code>. <code>AAIController</code> l'implémente déjà : appelez <code>SetGenericTeamId(FGenericTeamId(1))</code> dans son constructeur. Côté joueur, implémentez l'interface (fonction <code>GetGenericTeamId</code>) sur le PlayerController ou le personnage. Par défaut, deux équipes différentes sont hostiles l'une envers l'autre, et un acteur qui n'implémente pas l'interface est neutre ; surchargez <code>GetTeamAttitudeTowards</code> pour des règles plus fines (alliances, factions).</p>
+
+  <div class="quiz">
+    <p class="q">Vos ennemis apparaissent par vagues via SpawnActor, mais restent immobiles alors que ceux placés à la main dans le niveau fonctionnent. Quelle est la cause la plus probable ?</p>
+    <ul>
+      <li>Le NavMesh n'est pas généré à cet endroit</li>
+      <li data-correct>Auto Possess AI est resté sur PlacedInWorld : les ennemis spawnés n'ont pas de contrôleur</li>
+      <li>Le Behavior Tree n'a pas de Blackboard</li>
+      <li>La perception ne détecte pas le joueur</li>
+    </ul>
+    <p class="explain">Seule la différence « placé / spawné » change entre les deux groupes : c'est exactement ce que contrôle <em>Auto Possess AI</em>. Réglez-le sur <code>PlacedInWorldOrSpawned</code>, ou appelez <code>SpawnDefaultController()</code> après le spawn.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Un garde qui patrouille, poursuit et revient</h4>
+    <p>Créez un garde qui patrouille entre des points placés dans le niveau, dans l'ordre et en boucle. Quand il voit le joueur, il le poursuit ; quand il le perd de vue, il va inspecter le dernier endroit où il l'a vu pendant quelques secondes, puis reprend sa patrouille là où il l'avait laissée. Décrivez le Blackboard et le Behavior Tree, et écrivez le code nécessaire.</p>
+    <details>
+      <summary>Voir la solution</summary>
+      <p><strong>Blackboard</strong> : <code>TargetActor</code> (Object/Actor), <code>LastKnownLocation</code> (Vector), <code>PatrolLocation</code> (Vector), <code>PatrolIndex</code> (Int).</p>
+      <p><strong>Behavior Tree</strong> :</p>
+      <ul>
+        <li><strong>Selector</strong>
+          <ul>
+            <li><strong>Sequence « Poursuivre »</strong>, décorateur Blackboard <code>TargetActor Is Set</code>, <em>Observer aborts : Both</em> → <em>Move To</em> (TargetActor, Acceptable Radius 100).</li>
+            <li><strong>Sequence « Inspecter »</strong>, décorateur Blackboard <code>LastKnownLocation Is Set</code>, <em>Observer aborts : Lower Priority</em> → <em>Move To</em> (LastKnownLocation) → <em>Wait</em> 3 s → tâche <code>ClearKey</code> qui efface LastKnownLocation.</li>
+            <li><strong>Sequence « Patrouiller »</strong> → tâche <code>GetNextPatrolPoint</code> → <em>Move To</em> (PatrolLocation) → <em>Wait</em> 2 s.</li>
+          </ul>
+        </li>
+      </ul>
+      <p><strong>Le garde</strong> expose ses points de patrouille, choisis par instance dans le niveau (des <em>Target Point</em> par exemple) :</p>
+<script type="text/plain" data-lang="cpp" data-file="GuardCharacter.h (extrait)">
+public:
+    const TArray<TObjectPtr<AActor>>& GetPatrolPoints() const { return PatrolPoints; }
+
+protected:
+    // Réglé sur chaque garde posé dans le niveau
+    UPROPERTY(EditInstanceOnly, Category = "AI")
+    TArray<TObjectPtr<AActor>> PatrolPoints;
+</script>
+      <p><strong>La tâche de patrouille</strong> lit l'index dans le Blackboard, écrit la destination et passe au point suivant. Comme l'index est dans le Blackboard (et non dans la tâche), chaque garde a le sien, et la patrouille reprend au bon point après une poursuite :</p>
+<script type="text/plain" data-lang="cpp" data-file="BTTask_GetNextPatrolPoint.cpp">
+#include "BTTask_GetNextPatrolPoint.h"
+#include "GuardCharacter.h"
+#include "AIController.h"
+#include "BehaviorTree/BlackboardComponent.h"
+
+EBTNodeResult::Type UBTTask_GetNextPatrolPoint::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
+{
+    const AAIController* AIController = OwnerComp.GetAIOwner();
+    const AGuardCharacter* Guard = AIController ? Cast<AGuardCharacter>(AIController->GetPawn()) : nullptr;
+    UBlackboardComponent* BB = OwnerComp.GetBlackboardComponent();
+    if (!Guard || !BB || Guard->GetPatrolPoints().IsEmpty())
+    {
+        return EBTNodeResult::Failed;
+    }
+
+    const TArray<TObjectPtr<AActor>>& Points = Guard->GetPatrolPoints();
+    const int32 Index = BB->GetValueAsInt(PatrolIndexKey.SelectedKeyName) % Points.Num();
+    if (!Points[Index])
+    {
+        return EBTNodeResult::Failed;
+    }
+
+    BB->SetValueAsVector(PatrolLocationKey.SelectedKeyName, Points[Index]->GetActorLocation());
+    BB->SetValueAsInt(PatrolIndexKey.SelectedKeyName, (Index + 1) % Points.Num());
+    return EBTNodeResult::Succeeded;
+}
+</script>
+      <p><strong>La tâche ClearKey</strong> est une tâche d'une ligne : <code>OwnerComp.GetBlackboardComponent()-&gt;ClearValue(Key.SelectedKeyName)</code>, puis <code>Succeeded</code>.</p>
+      <p><strong>Le contrôleur</strong> est exactement <code>AEnemyAIController</code> vu plus haut : la vue écrit <code>TargetActor</code> quand le joueur est vu, l'efface et écrit <code>LastKnownLocation</code> quand il est perdu. La poursuite s'interrompt (Self), l'inspection prend le relais, puis la patrouille reprend quand <code>LastKnownLocation</code> est effacée. Si le garde revoit le joueur pendant l'inspection, la poursuite l'interrompt grâce à <em>Lower Priority</em>.</p>
+    </details>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Un <strong>AIController</strong> possède un Pawn comme un joueur ; réglez <em>Auto Possess AI</em> pour les ennemis spawnés.</li>
+      <li>Le <strong>NavMesh</strong> (Nav Mesh Bounds Volume, touche <kbd>P</kbd>) dépend du rayon et de la hauteur de l'agent ; Nav Modifiers et Nav Links l'affinent.</li>
+      <li>Un <strong>Behavior Tree</strong> se lit de gauche à droite : Selector = « OU », Sequence = « ET ». Les décorateurs avec <em>observer aborts</em> le rendent réactif.</li>
+      <li>Le <strong>Blackboard</strong> est la mémoire par IA ; ne stockez pas d'état dans les nœuds C++, partagés entre toutes les IA.</li>
+      <li>L'<strong>AI Perception</strong> configure vue et ouïe ; cochez <em>Detect Neutrals</em> si vous n'avez pas d'équipes, et signalez les bruits avec <code>ReportNoiseEvent</code>.</li>
+      <li>L'<strong>EQS</strong> choisit des positions (couvert, contournement) ; <strong>StateTree</strong> est l'alternative moderne aux Behavior Trees.</li>
+      <li>Déboguez avec le <strong>Gameplay Debugger</strong>, le débogueur de Behavior Tree et le <strong>Visual Logger</strong>.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

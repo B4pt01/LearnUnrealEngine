@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Animation — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="animation">
+<article class="doc">
+
+  <h1>Animation</h1>
+  <p class="lead">Un personnage qui glisse au lieu de marcher brise immédiatement l'immersion. Le système d'animation d'Unreal choisit et mélange à chaque image la bonne pose selon l'état du personnage : immobile, en course, en l'air, en train d'attaquer. Ce chapitre part des assets de base et vous mène jusqu'aux combos, aux couches d'animation et aux outils modernes d'UE5.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Distinguer <strong>Skeleton</strong>, <strong>Skeletal Mesh</strong>, <strong>Animation Sequence</strong> et <strong>Physics Asset</strong></li>
+      <li>Comprendre l'<strong>Animation Blueprint</strong> : Event Graph, AnimGraph et classe C++ <code>UAnimInstance</code></li>
+      <li>Construire une <strong>State Machine</strong> de locomotion et des <strong>Blend Spaces</strong></li>
+      <li>Jouer des <strong>Montages</strong> (attaques, combos) et superposer des animations par os</li>
+      <li>Déclencher du gameplay avec les <strong>Anim Notifies</strong></li>
+      <li>Choisir entre root motion et in-place, découvrir IK, Control Rig, retargeting et Motion Matching</li>
+      <li>Optimiser le coût de l'animation</li>
+    </ul>
+  </div>
+
+  <h2>Les bases</h2>
+  <p>L'animation squelettale repose sur une idée simple : un <strong>squelette</strong> invisible (une hiérarchie d'os) déforme un maillage. On anime les os, pas les sommets. Quatre types d'assets travaillent ensemble :</p>
+  <dl class="defs">
+    <dt>Skeleton</dt><dd>La hiérarchie d'os, avec leurs noms (<code>root</code>, <code>pelvis</code>, <code>spine_01</code>, <code>hand_r</code>…). Il porte aussi les <strong>sockets</strong> (points d'attache, comme <code>hand_r_weapon</code>), les noms de notifies et les courbes. C'est le « contrat » commun entre maillages et animations.</dd>
+    <dt>Skeletal Mesh</dt><dd>Le maillage 3D et son <em>skinning</em> : pour chaque sommet, l'influence de chaque os. Plusieurs meshes peuvent partager un même Skeleton.</dd>
+    <dt>Animation Sequence</dt><dd>Une animation enregistrée : la position des os au fil du temps (marche, saut, attaque). Elle est liée à un Skeleton, et fonctionne donc sur tous les meshes qui l'utilisent.</dd>
+    <dt>Physics Asset</dt><dd>Des formes de collision simples (capsules, boîtes) attachées aux os, reliées par des contraintes. Il sert au ragdoll, à la détection précise des impacts (tir à la tête) et aux parties physiques (cape, queue).</dd>
+  </dl>
+
+  <ul class="tree">
+    <li><span class="node c-purple">Skeleton</span><span class="desc">hiérarchie d'os, sockets, courbes ; dans les templates UE5 : <code>SK_Mannequin</code></span>
+      <ul>
+        <li><span class="node c-blue">Skeletal Mesh</span><span class="desc">maillage + skinning ; <code>SKM_Manny</code> et <code>SKM_Quinn</code> partagent le même squelette</span>
+          <ul>
+            <li><span class="node c-red">Physics Asset</span><span class="desc">corps physiques par os : ragdoll, impacts</span></li>
+          </ul>
+        </li>
+        <li><span class="node c-green">Animation Sequence</span><span class="desc">Idle, Walk, Run, Jump… liées au squelette</span>
+          <ul>
+            <li><span class="node c-green">Blend Space</span><span class="desc">mélange plusieurs sequences selon des paramètres (vitesse, direction)</span></li>
+            <li><span class="node c-green">Anim Montage</span><span class="desc">sequences découpées en sections, jouées à la demande par le code</span></li>
+          </ul>
+        </li>
+        <li><span class="node c-orange">Animation Blueprint</span><span class="desc">la logique qui calcule la pose à chaque image</span></li>
+      </ul>
+    </li>
+  </ul>
+
+  <h3>Importer un personnage</h3>
+  <ol class="steps">
+    <li><strong>Glisser le fichier</strong>Déposez le FBX dans le Content Browser. La fenêtre d'options d'import s'ouvre (son apparence change selon votre version : UE 5.5 a généralisé le nouveau pipeline <em>Interchange</em>, mais on y retrouve les mêmes réglages).</li>
+    <li><strong>Choisir le squelette</strong>Pour un nouveau personnage, laissez le champ <em>Skeleton</em> vide : un Skeleton est créé. Pour des animations destinées à un personnage existant, sélectionnez son Skeleton : elles seront compatibles d'office.</li>
+    <li><strong>Options utiles</strong>Cochez l'import des animations si le fichier en contient, et la création d'un Physics Asset pour un personnage. Vérifiez l'échelle : Unreal travaille en centimètres.</li>
+  </ol>
+
+  <div class="callout warn">
+    <p class="callout-title">Piège courant : un squelette par import</p>
+    <p>Importer chaque animation en créant un nouveau Skeleton produit des dizaines de squelettes incompatibles entre eux. Une animation ne peut être jouée que sur son Skeleton. Si deux squelettes ont la même hiérarchie et les mêmes noms d'os, déclarez-les compatibles (<em>Compatible Skeletons</em> dans les détails du Skeleton, selon votre version) ; sinon, passez par l'IK Retargeter (plus bas).</p>
+  </div>
+
+  <p>Enfin, vérifiez que le squelette commence par un os <strong>racine</strong> (<code>root</code>) placé au sol, entre les pieds. Sans lui, c'est le bassin qui sert de racine, et le root motion (voir plus loin) devient impossible à utiliser proprement.</p>
+
+  <h2>L'Animation Blueprint</h2>
+  <p>Un <strong>Animation Blueprint</strong> (<code>ABP_</code>), créé par clic droit → <em>Animation</em> → <em>Animation Blueprint</em> en choisissant un Skeleton, est assigné au Skeletal Mesh Component du personnage (<em>Anim Class</em>, mode <em>Use Animation Blueprint</em>). Il a deux graphes aux rôles bien distincts :</p>
+  <div class="compare">
+    <div class="neutral">
+      <h4>Event Graph : recueillir les données</h4>
+      <p>Un graphe Blueprint classique. À chaque image (<em>Event Blueprint Update Animation</em>), il lit l'état du personnage (vitesse, chute, accroupi) et le copie dans des variables de l'Anim Blueprint. Aucune pose n'y est calculée.</p>
+    </div>
+    <div class="alt">
+      <h4>AnimGraph : calculer la pose</h4>
+      <p>Un graphe de poses : des nœuds qui produisent et mélangent des poses (State Machines, Blend Spaces, Slots), jusqu'au nœud final <em>Output Pose</em>. Il ne fait que lire les variables.</p>
+    </div>
+  </div>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    CH["Character<br>vitesse, chute"] --> EG["Mise à jour<br>écrit GroundSpeed,<br>bIsFalling, Direction"]
+    EG --> AG["AnimGraph<br>lit les variables,<br>calcule la pose"]
+    AG --> SK["Skeletal Mesh<br>pose affichée"]
+</pre>
+    <figcaption>Le flux de données d'un Animation Blueprint : l'Event Graph recueille, l'AnimGraph calcule la pose.</figcaption>
+  </figure>
+
+  <h3>La classe C++ UAnimInstance</h3>
+  <p>Tout Animation Blueprint hérite de <code>UAnimInstance</code>. En créant votre propre classe C++, vous déplacez le recueil des données dans un code rapide et versionnable, et l'AnimGraph du Blueprint enfant n'a plus qu'à utiliser les variables :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="HeroAnimInstance.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Animation/AnimInstance.h"
+#include "HeroAnimInstance.generated.h"
+
+class ACharacter;
+class UCharacterMovementComponent;
+
+UCLASS()
+class MYGAME_API UHeroAnimInstance : public UAnimInstance
+{
+    GENERATED_BODY()
+
+public:
+    virtual void NativeInitializeAnimation() override;
+    virtual void NativeUpdateAnimation(float DeltaSeconds) override;
+
+protected:
+    // Lues par l'AnimGraph du Blueprint enfant
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion")
+    float GroundSpeed = 0.f;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion")
+    float Direction = 0.f; // -180 à 180 degrés, 0 = vers l'avant
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion")
+    bool bShouldMove = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion")
+    bool bIsFalling = false;
+
+private:
+    UPROPERTY(Transient)
+    TObjectPtr<ACharacter> Character;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UCharacterMovementComponent> Movement;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="HeroAnimInstance.cpp" data-highlight="10,22-25">
+#include "HeroAnimInstance.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "KismetAnimationLibrary.h"
+
+void UHeroAnimInstance::NativeInitializeAnimation()
+{
+    Super::NativeInitializeAnimation();
+
+    Character = Cast<ACharacter>(TryGetPawnOwner());
+    Movement = Character ? Character->GetCharacterMovement() : nullptr;
+}
+
+void UHeroAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
+{
+    Super::NativeUpdateAnimation(DeltaSeconds);
+
+    // Dans l'aperçu de l'éditeur d'animation, il n'y a pas de Character
+    if (!Character || !Movement) return;
+
+    const FVector Velocity = Movement->Velocity;
+    GroundSpeed = Velocity.Size2D();
+    bIsFalling = Movement->IsFalling();
+    bShouldMove = GroundSpeed > 3.f && !Movement->GetCurrentAcceleration().IsNearlyZero();
+    Direction = UKismetAnimationLibrary::CalculateDirection(Velocity, Character->GetActorRotation());
+}
+</script>
+
+  <div class="callout info">
+    <p class="callout-title">CalculateDirection et son module</p>
+    <p>Depuis UE 5.0, <code>CalculateDirection</code> se trouve dans <code>UKismetAnimationLibrary</code> (l'ancienne version membre de <code>UAnimInstance</code> est dépréciée). Elle demande d'ajouter le module <code>"AnimGraphRuntime"</code> dans le <code>.Build.cs</code>. Si votre version du moteur est antérieure à 5.0, utilisez <code>UAnimInstance::CalculateDirection</code>.</p>
+  </div>
+
+  <h3>La mise à jour thread-safe</h3>
+  <p>Par défaut, l'Event Graph s'exécute sur le <strong>thread principal</strong> du jeu, déjà très chargé. Unreal peut mettre à jour les animations sur des <strong>threads de travail</strong>, en parallèle, à condition que le code ne touche pas aux objets du jeu (qui pourraient être modifiés au même moment). Le modèle recommandé, utilisé par Lyra et les templates récents :</p>
+  <ul>
+    <li>en Blueprint, surchargez la fonction <strong>Blueprint Thread Safe Update Animation</strong> au lieu d'utiliser l'Event Graph, et lisez les données du personnage avec des nœuds <strong>Property Access</strong>, qui copient les valeurs de façon sûre ;</li>
+    <li>en C++, surchargez <code>NativeThreadSafeUpdateAnimation(float DeltaSeconds)</code> : copiez les données brutes dans <code>NativeUpdateAnimation</code> (thread principal), puis faites les calculs dans la version thread-safe, uniquement à partir de ces copies.</li>
+  </ul>
+<script type="text/plain" data-lang="cpp" data-file="HeroAnimInstance.cpp (variante thread-safe)">
+void UHeroAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
+{
+    Super::NativeUpdateAnimation(DeltaSeconds);
+    if (!Character || !Movement) return;
+
+    // Thread principal : on copie seulement les données brutes
+    // (Velocity et ActorRotation sont deux membres ajoutés dans le .h)
+    Velocity = Movement->Velocity;
+    ActorRotation = Character->GetActorRotation();
+    bIsFalling = Movement->IsFalling();
+}
+
+void UHeroAnimInstance::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
+{
+    Super::NativeThreadSafeUpdateAnimation(DeltaSeconds);
+
+    // Thread de travail : calculs à partir des copies, aucun accès au Character
+    GroundSpeed = Velocity.Size2D();
+    Direction = UKismetAnimationLibrary::CalculateDirection(Velocity, ActorRotation);
+}
+</script>
+
+  <div class="quiz">
+    <p class="q">Où doit-on calculer la variable <code>GroundSpeed</code> utilisée par la State Machine ?</p>
+    <ul>
+      <li>Dans l'AnimGraph, juste avant la State Machine</li>
+      <li data-correct>Dans l'Event Graph (ou la mise à jour thread-safe / NativeUpdateAnimation), qui recueille les données du personnage</li>
+      <li>Dans le Tick du Character, en appelant directement la State Machine</li>
+      <li>Dans le Skeleton</li>
+    </ul>
+    <p class="explain">L'AnimGraph ne fait que lire des variables pour calculer la pose. Le recueil des données du gameplay (vitesse, chute) se fait dans la phase de mise à jour : Event Graph, Thread Safe Update ou <code>NativeUpdateAnimation</code> en C++.</p>
+  </div>
+
+  <h2>Les State Machines</h2>
+  <p>Un personnage est toujours dans un <strong>état</strong> : immobile, en mouvement, en début de saut, en chute, à la réception. Une <strong>State Machine</strong> de l'AnimGraph (clic droit → <em>Add New State Machine</em>) contient ces états, chacun produisant une pose (une animation, un Blend Space, ou même un sous-graphe complet), et des <strong>transitions</strong> qui décident quand passer de l'un à l'autre.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Locomotion : bShouldMove
+    Locomotion --> Idle : NOT bShouldMove
+    Idle --> JumpStart : bIsFalling
+    Locomotion --> JumpStart : bIsFalling
+    JumpStart --> Falling : règle automatique
+    Falling --> Land : NOT bIsFalling
+    Land --> Locomotion : bShouldMove
+    Land --> Idle : animation terminée
+</pre>
+    <figcaption>La State Machine de locomotion classique. Locomotion joue un Blend Space piloté par GroundSpeed ; Falling joue une boucle de chute.</figcaption>
+  </figure>
+
+  <dl class="defs">
+    <dt>Transition rule</dt><dd>Chaque flèche contient un petit graphe qui renvoie un booléen (<em>Can Enter Transition</em>) : par exemple <code>bShouldMove</code>, ou <code>NOT bIsFalling</code>. Les réglages de la transition fixent la durée du fondu entre les deux poses (<em>Duration</em>) et son type.</dd>
+    <dt>Règle automatique</dt><dd>L'option <em>Automatic Rule Based on Sequence Player in State</em> déclenche la transition quand l'animation de l'état source se termine (en tenant compte de la durée du fondu). Idéal pour JumpStart → Falling ou Land → Idle.</dd>
+    <dt>Conduit</dt><dd>Un nœud de passage sans pose : plusieurs transitions y entrent, et ses sorties répartissent vers différents états. Il évite de dupliquer les mêmes règles sur de nombreuses flèches.</dd>
+    <dt>State Alias</dt><dd>Un raccourci qui représente un ou plusieurs états. Une transition « depuis l'alias » vaut pour tous les états qu'il représente : par exemple « depuis n'importe quel état au sol, si bIsFalling, aller à Falling ».</dd>
+  </dl>
+
+  <div class="callout tip">
+    <p class="callout-title">Gardez les règles simples</p>
+    <p>Une règle de transition devrait se lire d'un coup d'œil : un booléen, éventuellement combiné avec un autre. Si vous écrivez des calculs dans les règles, déplacez-les dans la mise à jour (Event Graph ou C++) et exposez un booléen bien nommé, comme <code>bShouldMove</code>. Cela rend aussi les règles compatibles avec la mise à jour multithread.</p>
+  </div>
+
+  <h2>Les Blend Spaces</h2>
+  <p>Entre « marcher » et « courir », il y a une infinité de vitesses. Plutôt qu'un état par vitesse, un <strong>Blend Space</strong> mélange plusieurs animations selon un ou deux paramètres. Vous placez des <strong>échantillons</strong> (des Animation Sequences) sur une grille, et à l'exécution le moteur mélange ceux qui entourent la valeur courante.</p>
+  <ul>
+    <li><strong>Blend Space 1D</strong> : un seul axe. Par exemple <code>Speed</code> de 0 à 600 cm/s, avec Idle à 0, Walk à 200, Run à 600. Suffisant pour un personnage qui s'oriente toujours dans sa direction de déplacement.</li>
+    <li><strong>Blend Space 2D</strong> : deux axes, typiquement <code>Direction</code> (-180° à 180°) et <code>Speed</code>. Indispensable pour un personnage qui se déplace de côté ou à reculons en visant (jeu de tir).</li>
+  </ul>
+
+  <figure class="figure">
+    <svg viewBox="0 0 640 370" width="640" role="img" aria-label="Grille d'un Blend Space 2D : direction en abscisse, vitesse en ordonnée, quinze échantillons et un point courant interpolé">
+      <rect x="330" y="60" width="120" height="120" fill="#5aa9ff" fill-opacity="0.1"/>
+      <g stroke="currentColor" stroke-opacity="0.22" stroke-width="1">
+        <line x1="90" y1="60" x2="90" y2="300"/><line x1="210" y1="60" x2="210" y2="300"/><line x1="330" y1="60" x2="330" y2="300"/>
+        <line x1="450" y1="60" x2="450" y2="300"/><line x1="570" y1="60" x2="570" y2="300"/>
+        <line x1="90" y1="60" x2="570" y2="60"/><line x1="90" y1="180" x2="570" y2="180"/>
+      </g>
+      <line x1="90" y1="300" x2="570" y2="300" stroke="currentColor" stroke-opacity="0.7" stroke-width="1.5"/>
+      <line x1="90" y1="60" x2="90" y2="300" stroke="currentColor" stroke-opacity="0.7" stroke-width="1.5"/>
+      <g stroke="#ff6b6b" stroke-width="1.5" stroke-dasharray="4 3">
+        <line x1="370" y1="132" x2="330" y2="180"/><line x1="370" y1="132" x2="450" y2="180"/>
+        <line x1="370" y1="132" x2="330" y2="60"/><line x1="370" y1="132" x2="450" y2="60"/>
+      </g>
+      <g fill="#b195ff">
+        <path d="M90 293 L97 300 L90 307 L83 300 Z"/>
+        <path d="M210 293 L217 300 L210 307 L203 300 Z"/>
+        <path d="M330 293 L337 300 L330 307 L323 300 Z"/>
+        <path d="M450 293 L457 300 L450 307 L443 300 Z"/>
+        <path d="M570 293 L577 300 L570 307 L563 300 Z"/>
+        <path d="M90 173 L97 180 L90 187 L83 180 Z"/>
+        <path d="M210 173 L217 180 L210 187 L203 180 Z"/>
+        <path d="M330 173 L337 180 L330 187 L323 180 Z"/>
+        <path d="M450 173 L457 180 L450 187 L443 180 Z"/>
+        <path d="M570 173 L577 180 L570 187 L563 180 Z"/>
+        <path d="M90 53 L97 60 L90 67 L83 60 Z"/>
+        <path d="M210 53 L217 60 L210 67 L203 60 Z"/>
+        <path d="M330 53 L337 60 L330 67 L323 60 Z"/>
+        <path d="M450 53 L457 60 L450 67 L443 60 Z"/>
+        <path d="M570 53 L577 60 L570 67 L563 60 Z"/>
+      </g>
+      <g font-size="12" fill="currentColor">
+        <text x="99" y="291">Idle</text><text x="219" y="291">Idle</text><text x="339" y="291">Idle</text><text x="459" y="291">Idle</text><text x="579" y="291">Idle</text>
+        <text x="99" y="171">Walk_B</text><text x="219" y="171">Walk_L</text><text x="339" y="171">Walk_F</text><text x="459" y="171">Walk_R</text><text x="579" y="171">Walk_B</text>
+        <text x="99" y="51">Run_B</text><text x="219" y="51">Run_L</text><text x="339" y="51">Run_F</text><text x="459" y="51">Run_R</text><text x="579" y="51">Run_B</text>
+      </g>
+      <circle cx="370" cy="132" r="7" fill="#ff6b6b"/>
+      <text x="350" y="122" text-anchor="end" font-size="12" font-weight="600" fill="#ff6b6b">valeur courante (30°, 420)</text>
+      <g font-size="12" fill="currentColor" fill-opacity="0.85" text-anchor="middle">
+        <text x="90" y="322">-180</text><text x="210" y="322">-90</text><text x="330" y="322">0</text><text x="450" y="322">90</text><text x="570" y="322">180</text>
+      </g>
+      <g font-size="12" fill="currentColor" fill-opacity="0.85" text-anchor="end">
+        <text x="78" y="304">0</text><text x="78" y="184">300</text><text x="78" y="64">600</text>
+      </g>
+      <text x="330" y="352" text-anchor="middle" font-size="13" fill="currentColor">Direction (degrés)</text>
+      <text x="26" y="180" text-anchor="middle" font-size="13" fill="currentColor" transform="rotate(-90 26 180)">Speed (cm/s)</text>
+    </svg>
+    <figcaption>Un Blend Space 2D de locomotion. Pour une direction de 30° et une vitesse de 420 cm/s, le moteur mélange les échantillons de la case surlignée (Walk_F, Walk_R, Run_F, Run_R), d'autant plus qu'ils sont proches du point.</figcaption>
+  </figure>
+
+  <p>Dans l'état <em>Locomotion</em> de la State Machine, on glisse le Blend Space et on branche ses entrées sur les variables <code>GroundSpeed</code> et <code>Direction</code>. Le lissage des axes (<em>Smoothing Time</em> dans les réglages de chaque axe, selon votre version) évite les changements brutaux quand la valeur saute, par exemple quand la direction passe d'un coup de 90° à -90°.</p>
+
+  <div class="callout warn">
+    <p class="callout-title">Piège courant : des pieds qui patinent</p>
+    <p>Si les échantillons ne sont pas placés à la vitesse réelle de leur animation (une course qui avance de 500 cm/s placée à 600), les pieds glissent sur le sol. Mesurez la vitesse de chaque animation et placez-la à cette valeur sur l'axe ; réglez aussi <em>Max Walk Speed</em> du Character Movement sur la vitesse du dernier échantillon.</p>
+  </div>
+
+  <h2>Les Montages</h2>
+  <p>Une attaque, un rechargement, une animation de mort ne dépendent pas d'un état continu : ils sont <strong>déclenchés</strong> par le gameplay à un instant précis. C'est le rôle des <strong>Anim Montages</strong> (<code>AM_</code>), créés depuis une Animation Sequence (clic droit → <em>Create</em> → <em>Create AnimMontage</em>) :</p>
+  <dl class="defs">
+    <dt>Slot</dt><dd>Le canal dans lequel le montage est joué. L'AnimGraph doit contenir un nœud <em>Slot</em> portant ce nom : c'est là que la pose du montage remplace (ou se mélange à) la pose normale. Les slots se gèrent dans l'<em>Anim Slot Manager</em> (<code>DefaultSlot</code>, <code>UpperBody</code>…).</dd>
+    <dt>Sections</dt><dd>Des segments nommés du montage (<code>Attack1</code>, <code>Attack2</code>, <code>Attack3</code>). Le panneau <em>Montage Sections</em> définit leur enchaînement : par défaut, elles se suivent ; pour un combo, on coupe ces liens pour que chaque section termine le montage, sauf si le code saute à la suivante.</dd>
+    <dt>Notifies</dt><dd>Des événements placés sur la timeline (voir plus bas) : ouvrir la fenêtre de combo, activer la hitbox de l'arme.</dd>
+  </dl>
+
+  <p>Côté code, <code>ACharacter::PlayAnimMontage</code> est le raccourci le plus simple ; l'Anim Instance offre le contrôle complet : <code>Montage_Play</code>, <code>Montage_JumpToSection</code>, <code>Montage_SetNextSection</code>, <code>Montage_Stop</code>, et les delegates <code>OnMontageEnded</code> (fin, avec un booléen indiquant une interruption) et <code>OnMontageBlendingOut</code> (début du fondu de sortie, souvent le meilleur moment pour rendre la main au joueur). Voici un combo de trois coups :</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="Play Montage est un nœud asynchrone : ses sorties se déclenchent plus tard. On Notify Begin réagit aux notifies de type Montage Notify placés dans le montage.">
+{
+  "nodes": [
+    { "id": "ia", "type": "event", "title": "EnhancedInputAction IA_Attack", "x": 0, "y": 0,
+      "out": [ { "name": "Triggered", "type": "exec" }, { "name": "Started", "type": "exec" },
+               { "name": "Completed", "type": "exec" }, { "name": "Action Value", "type": "bool" } ] },
+    { "id": "mesh", "type": "var", "title": "Mesh", "x": 150, "y": 180, "out": [ { "type": "object" } ] },
+    { "id": "montage", "type": "var", "title": "Attack Montage", "x": 60, "y": 235, "out": [ { "type": "object" } ] },
+    { "id": "play", "type": "function", "title": "Play Montage", "x": 300, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "In Skeletal Mesh Component", "type": "object" },
+              { "name": "Montage to Play", "type": "object" }, { "name": "Play Rate", "type": "float", "value": "1.0" },
+              { "name": "Starting Position", "type": "float", "value": "0.0" },
+              { "name": "Starting Section", "type": "name", "value": "Attack1" } ],
+      "out": [ { "type": "exec" }, { "name": "On Completed", "type": "exec" }, { "name": "On Blend Out", "type": "exec" },
+               { "name": "On Interrupted", "type": "exec" }, { "name": "On Notify Begin", "type": "exec" },
+               { "name": "On Notify End", "type": "exec" }, { "name": "Notify Name", "type": "name" } ] },
+    { "id": "reset", "type": "function", "title": "Reset Combo", "x": 680, "y": 40,
+      "in": [ { "type": "exec" } ], "out": [ { "type": "exec" } ] },
+    { "id": "trace", "type": "function", "title": "Weapon Trace", "x": 680, "y": 150,
+      "in": [ { "type": "exec" } ], "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ia", 1, "play", 0 ], [ "mesh", 0, "play", 1 ], [ "montage", 0, "play", 2 ],
+    [ "play", 1, "reset", 0 ], [ "play", 4, "trace", 0 ]
+  ]
+}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="HeroCharacter.h (extrait)">
+public:
+    void Attack(); // liée à IA_Attack, ETriggerEvent::Started
+    void SetComboWindowOpen(bool bOpen) { bComboWindowOpen = bOpen; }
+
+protected:
+    UPROPERTY(EditDefaultsOnly, Category = "Combat")
+    TObjectPtr<UAnimMontage> AttackMontage;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Combat")
+    TArray<FName> ComboSections = { TEXT("Attack1"), TEXT("Attack2"), TEXT("Attack3") };
+
+private:
+    void OnAttackMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+    int32 ComboIndex = 0;
+    bool bComboWindowOpen = false; // ouverte par un Notify State dans chaque section
+</script>
+<script type="text/plain" data-lang="cpp" data-file="HeroCharacter.cpp (extrait)" data-highlight="13-14,16-18,23-25">
+#include "HeroCharacter.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+
+void AHeroCharacter::Attack()
+{
+    UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+    if (!AnimInstance || !AttackMontage || ComboSections.IsEmpty()) return;
+
+    if (!AnimInstance->Montage_IsPlaying(AttackMontage))
+    {
+        ComboIndex = 0; // premier coup
+        AnimInstance->Montage_Play(AttackMontage);
+        AnimInstance->Montage_JumpToSection(ComboSections[0], AttackMontage);
+
+        FOnMontageEnded EndDelegate;
+        EndDelegate.BindUObject(this, &AHeroCharacter::OnAttackMontageEnded);
+        AnimInstance->Montage_SetEndDelegate(EndDelegate, AttackMontage);
+    }
+    else if (bComboWindowOpen && ComboSections.IsValidIndex(ComboIndex + 1))
+    {
+        // Coup suivant, seulement si le joueur appuie pendant la fenêtre
+        bComboWindowOpen = false;
+        ++ComboIndex;
+        AnimInstance->Montage_JumpToSection(ComboSections[ComboIndex], AttackMontage);
+    }
+}
+
+void AHeroCharacter::OnAttackMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+    ComboIndex = 0;
+    bComboWindowOpen = false;
+}
+</script>
+    </div>
+  </div>
+
+  <div class="callout danger">
+    <p class="callout-title">Le montage qui ne se joue pas</p>
+    <p>Si <code>Montage_Play</code> renvoie une durée positive mais que le personnage ne bouge pas, c'est presque toujours que l'AnimGraph ne contient <strong>aucun nœud Slot</strong> correspondant au slot du montage. Le montage tourne alors « dans le vide ». Ajoutez un nœud <em>Slot</em> (<code>DefaultSlot</code> par défaut) entre la State Machine et l'Output Pose.</p>
+  </div>
+
+  <h2>Superposer des animations</h2>
+  <p>Votre personnage doit pouvoir recharger <strong>en courant</strong> : les jambes continuent la locomotion pendant que le haut du corps joue le rechargement. C'est le <strong>layered blending</strong> (mélange par couches), construit dans l'AnimGraph avec trois outils :</p>
+  <dl class="defs">
+    <dt>Cached Pose</dt><dd><em>New Save Cached Pose</em> mémorise le résultat d'un sous-graphe (ici la locomotion) sous un nom ; des nœuds <em>Use Cached Pose</em> le réutilisent à plusieurs endroits sans le recalculer.</dd>
+    <dt>Slot UpperBody</dt><dd>Un slot dédié aux montages du haut du corps (rechargement, lancer). Sans montage actif, il laisse passer la pose d'entrée telle quelle.</dd>
+    <dt>Layered blend per bone</dt><dd>Prend une pose de base (<em>Base Pose</em>) et une ou plusieurs poses à superposer (<em>Blend Poses 0</em>…), appliquées seulement à partir d'un os choisi dans les <em>Layer Setup</em> → <em>Branch Filters</em> (par exemple <code>spine_01</code> et tous ses enfants). <em>Blend Depth</em> adoucit la transition sur quelques os ; <em>Mesh Space Rotation Blend</em> garde le buste orienté correctement quand le bassin bouge.</dd>
+  </dl>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TB
+    SM["State Machine<br>Locomotion"] --> SAVE["Save Cached Pose<br>LocomotionCache"]
+    SAVE -.-> U1["Use Cached Pose<br>LocomotionCache"]
+    SAVE -.-> U2["Use Cached Pose<br>LocomotionCache"]
+    U2 --> SLOT["Slot<br>UpperBody"]
+    U1 -- "Base Pose" --> LB["Layered blend per bone<br>branche : spine_01"]
+    SLOT -- "Blend Poses 0" --> LB
+    LB --> DS["Slot<br>DefaultSlot"]
+    DS --> OUT["Output Pose"]
+</pre>
+    <figcaption>AnimGraph avec couches : la locomotion est calculée une fois, puis le haut du corps (à partir de spine_01) prend la pose du slot UpperBody quand un montage y est joué. Le DefaultSlot final sert aux montages plein corps.</figcaption>
+  </figure>
+
+  <h2>Anim Notifies</h2>
+  <p>Les <strong>Anim Notifies</strong> sont des marqueurs posés sur la timeline d'une animation ou d'un montage (clic droit sur la piste <em>Notifies</em>). Ils synchronisent le gameplay avec l'image exacte de l'animation : un son de pas quand le pied touche le sol, des dégâts quand l'épée atteint sa cible.</p>
+  <div class="compare">
+    <div class="neutral">
+      <h4>Anim Notify : un instant</h4>
+      <p>Se déclenche à une image précise. Pas, cri, apparition d'un projectile, particules d'impact. Notifies fournis : <em>Play Sound</em>, <em>Play Niagara Particle Effect</em>.</p>
+    </div>
+    <div class="alt">
+      <h4>Anim Notify State : une fenêtre</h4>
+      <p>Couvre une durée, avec un début, un tick et une fin. Fenêtre de collision de l'arme, fenêtre de combo, invulnérabilité pendant une roulade.</p>
+    </div>
+  </div>
+  <p>Les <em>Skeleton Notifies</em> (notifies nommés, créés par <em>Add Notify</em> → <em>New Notify</em>) apparaissent dans l'Event Graph de l'Anim Blueprint sous la forme d'événements <em>AnimNotify_NomDuNotify</em>. Pour une logique réutilisable, créez plutôt vos propres classes en C++. Les signatures ci-dessous, avec le paramètre <code>const FAnimNotifyEventReference&amp;</code>, sont celles d'UE 5 (les anciennes, sans ce paramètre, sont dépréciées depuis UE 5.0) :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="AnimNotify_Footstep.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Animation/AnimNotifies/AnimNotify.h"
+#include "AnimNotify_Footstep.generated.h"
+
+class USoundBase;
+
+UCLASS(meta = (DisplayName = "Footstep"))
+class MYGAME_API UAnimNotify_Footstep : public UAnimNotify
+{
+    GENERATED_BODY()
+
+public:
+    virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
+                        const FAnimNotifyEventReference& EventReference) override;
+
+protected:
+    UPROPERTY(EditAnywhere, Category = "Footstep")
+    FName FootBone = TEXT("foot_l");
+
+    UPROPERTY(EditAnywhere, Category = "Footstep")
+    TObjectPtr<USoundBase> Sound;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="AnimNotify_Footstep.cpp">
+#include "AnimNotify_Footstep.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Kismet/GameplayStatics.h"
+
+void UAnimNotify_Footstep::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
+                                  const FAnimNotifyEventReference& EventReference)
+{
+    Super::Notify(MeshComp, Animation, EventReference);
+
+    if (MeshComp && Sound)
+    {
+        // Fonctionne aussi dans l'aperçu de l'éditeur d'animation
+        UGameplayStatics::PlaySoundAtLocation(MeshComp, Sound, MeshComp->GetSocketLocation(FootBone));
+    }
+}
+</script>
+
+  <p>La fenêtre de collision de l'arme est un Notify State : il prévient le personnage au début, à chaque image et à la fin, et c'est le personnage qui fait les traces et retient les ennemis déjà touchés pendant ce coup.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="AnimNotifyState_WeaponTrace.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Animation/AnimNotifies/AnimNotifyState.h"
+#include "AnimNotifyState_WeaponTrace.generated.h"
+
+UCLASS(meta = (DisplayName = "Weapon Trace Window"))
+class MYGAME_API UAnimNotifyState_WeaponTrace : public UAnimNotifyState
+{
+    GENERATED_BODY()
+
+public:
+    virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
+                             float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
+    virtual void NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
+                            float FrameDeltaTime, const FAnimNotifyEventReference& EventReference) override;
+    virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
+                           const FAnimNotifyEventReference& EventReference) override;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="AnimNotifyState_WeaponTrace.cpp">
+#include "AnimNotifyState_WeaponTrace.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "HeroCharacter.h"
+
+void UAnimNotifyState_WeaponTrace::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
+    float TotalDuration, const FAnimNotifyEventReference& EventReference)
+{
+    Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
+    // Dans l'aperçu, le propriétaire n'est pas un AHeroCharacter : le Cast renvoie nullptr
+    if (AHeroCharacter* Hero = Cast<AHeroCharacter>(MeshComp->GetOwner()))
+    {
+        Hero->BeginWeaponTrace(); // vide la liste des acteurs déjà touchés
+    }
+}
+
+void UAnimNotifyState_WeaponTrace::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
+    float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
+{
+    Super::NotifyTick(MeshComp, Animation, FrameDeltaTime, EventReference);
+    if (AHeroCharacter* Hero = Cast<AHeroCharacter>(MeshComp->GetOwner()))
+    {
+        Hero->TickWeaponTrace(); // sweep entre deux sockets de la lame
+    }
+}
+
+void UAnimNotifyState_WeaponTrace::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
+    const FAnimNotifyEventReference& EventReference)
+{
+    Super::NotifyEnd(MeshComp, Animation, EventReference);
+    if (AHeroCharacter* Hero = Cast<AHeroCharacter>(MeshComp->GetOwner()))
+    {
+        Hero->EndWeaponTrace();
+    }
+}
+</script>
+
+  <div class="callout warn">
+    <p class="callout-title">Piège courant : stocker un état dans le notify</p>
+    <p>Un notify est un objet de l'<strong>asset d'animation</strong> : la même instance sert à tous les personnages qui jouent cette animation, au même moment. Une variable membre comme « ennemis déjà touchés » serait donc partagée entre tous les ennemis qui attaquent. Gardez l'état dans le personnage (ou un composant), comme ci-dessus. Pour un timing précis dans un montage (la fenêtre de combo), réglez aussi le <em>Montage Tick Type</em> du notify sur <em>Branching Point</em>.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Votre Notify State d'arme garde dans une variable membre la liste des acteurs touchés. Avec deux ennemis qui attaquent en même temps, des coups sont ignorés. Pourquoi ?</p>
+    <ul>
+      <li>Les Notify States ne fonctionnent pas en multijoueur</li>
+      <li data-correct>L'instance du notify appartient à l'asset d'animation et est partagée par tous les personnages qui la jouent</li>
+      <li>NotifyTick n'est appelé qu'une image sur deux</li>
+      <li>Il faut utiliser un Anim Notify simple à la place</li>
+    </ul>
+    <p class="explain">Les deux ennemis jouent la même animation, donc le même objet notify. Ils écrivent dans la même liste, et l'un « voit » les cibles de l'autre comme déjà touchées. L'état propre à chaque personnage doit vivre dans le personnage.</p>
+  </div>
+
+  <h2>Root motion ou in-place ?</h2>
+  <p>Une animation de course peut être faite <strong>sur place</strong> (le personnage court sans avancer, le code déplace la capsule) ou avec <strong>root motion</strong> (l'os <code>root</code> avance réellement dans l'animation, et le moteur applique ce déplacement à la capsule).</p>
+  <div class="compare">
+    <div class="good">
+      <h4>Root motion</h4>
+      <ul>
+        <li>Déplacement exactement fidèle à l'animation : aucun pied qui patine</li>
+        <li>Idéal pour les attaques avec pas en avant, roulades, escalade, interactions</li>
+        <li>Mais moins réactif aux commandes, et plus de travail côté animation</li>
+        <li>Activé par <em>Enable Root Motion</em> sur l'Animation Sequence</li>
+      </ul>
+    </div>
+    <div class="alt">
+      <h4>In-place</h4>
+      <ul>
+        <li>Le code (Character Movement) contrôle totalement la vitesse : très réactif</li>
+        <li>Simple à mettre en place, standard pour la locomotion</li>
+        <li>Mais il faut accorder vitesse et animation (Blend Space, warping)</li>
+        <li>Fonctionne naturellement avec la prédiction réseau</li>
+      </ul>
+    </div>
+  </div>
+  <p>Le réglage <em>Root Motion Mode</em> des Class Defaults de l'Anim Blueprint choisit d'où le root motion est extrait : <em>Root Motion from Montages Only</em> (par défaut, recommandé, notamment en multijoueur), <em>Root Motion from Everything</em>, <em>Ignore Root Motion</em> ou <em>No Root Motion Extraction</em>. Le compromis le plus courant : locomotion in-place, montages d'action en root motion.</p>
+
+  <h2>IK et outils d'UE5</h2>
+  <p>Au-delà des animations enregistrées, Unreal sait <strong>ajuster les poses en temps réel</strong> et produire de nouvelles animations. Voici les outils à connaître :</p>
+  <div class="cards">
+    <div class="card"><span class="card-tag">AnimGraph</span><h4>Two Bone IK</h4><p>Résout une chaîne de deux os (bras, jambe) pour placer l'extrémité à une position cible : main posée sur une poignée, pied sur une marche. Un <em>Joint Target</em> oriente le coude ou le genou.</p></div>
+    <div class="card"><span class="card-tag">Locomotion</span><h4>Placement des pieds</h4><p>Adapter les pieds aux pentes et aux escaliers : traces vers le sol puis IK des jambes. Selon votre version, des nœuds dédiés existent (Leg IK, Foot Placement du plugin Animation Warping), ou on le fait dans un Control Rig.</p></div>
+    <div class="card"><span class="card-tag">Rigging</span><h4>Control Rig</h4><p>Un système de rigging dans l'éditeur : contrôles pour animer à la main dans Sequencer, et logique procédurale (IK complet du corps, ajustements) exécutée dans l'AnimGraph via le nœud Control Rig.</p></div>
+    <div class="card"><span class="card-tag">Retargeting</span><h4>IK Rig et IK Retargeter</h4><p>Transférer des animations d'un squelette à un autre aux proportions différentes : des animations UE4 vers Manny, ou d'un personnage importé vers le vôtre. Les versions récentes automatisent une grande partie des réglages.</p></div>
+    <div class="card"><span class="card-tag">Cinématiques</span><h4>Sequencer</h4><p>L'éditeur de cinématiques non linéaire : pistes d'animation, de caméra, d'événements dans un <em>Level Sequence</em>. Sert aussi à créer ou retoucher des animations avec Control Rig.</p></div>
+    <div class="card"><span class="card-tag">UE 5.4+</span><h4>Motion Matching</h4><p>Plugin <em>Pose Search</em> : au lieu d'une State Machine, le moteur cherche à chaque instant, dans une base d'animations, la pose qui continue le mieux le mouvement et la trajectoire voulue. Le projet gratuit <em>Game Animation Sample</em> d'Epic en est la démonstration.</p></div>
+    <div class="card"><span class="card-tag">Architecture</span><h4>Linked Anim Layers</h4><p>L'Anim Blueprint principal déclare des couches via une <em>Animation Layer Interface</em>, implémentées par d'autres Anim Blueprints échangeables à l'exécution (<code>LinkAnimClassLayers</code>) : une couche par arme dans Lyra.</p></div>
+  </div>
+
+  <h2>Performance</h2>
+  <p>L'animation coûte cher en CPU : chaque personnage évalue son graphe, mélange des poses et met à jour ses os à chaque image. Avec des dizaines de personnages, il faut des stratégies. Mesurez d'abord avec la commande console <code>stat anim</code> (voir <a href="optimisation.html">Débogage &amp; optimisation</a>).</p>
+  <table>
+    <thead><tr><th>Technique</th><th>Principe</th><th>Où la régler</th></tr></thead>
+    <tbody>
+      <tr><td>Update Rate Optimizations (URO)</td><td>Les personnages lointains ou petits à l'écran mettent à jour leur animation moins souvent, avec interpolation entre deux mises à jour</td><td>Skeletal Mesh Component : <em>Enable Update Rate Optimizations</em></td></tr>
+      <tr><td><code>VisibilityBasedAnimTickOption</code></td><td>Que faire quand le mesh n'est pas visible : tout calculer (<code>AlwaysTickPoseAndRefreshBones</code>, réglage par défaut des Characters), ne calculer que la pose, seulement les montages (<code>OnlyTickMontagesWhenNotRendered</code>) ou rien (<code>OnlyTickPoseWhenRendered</code>)</td><td>Skeletal Mesh Component : <em>Visibility Based Anim Tick Option</em></td></tr>
+      <tr><td>LODs</td><td>Moins d'os et de triangles au loin ; certains nœuds de l'AnimGraph (IK, effets secondaires) se désactivent au-delà d'un LOD (<em>LOD Threshold</em>)</td><td>Skeletal Mesh (LOD Settings), nœuds de l'AnimGraph</td></tr>
+      <tr><td>Animation Budget Allocator</td><td>Plugin qui plafonne le temps CPU d'animation par image en dégradant d'abord les personnages les moins importants</td><td>Plugin + <code>USkeletalMeshComponentBudgeted</code></td></tr>
+      <tr><td>Mise à jour multithread</td><td>Mise à jour sur des threads de travail, en parallèle du jeu</td><td>Thread Safe Update + Property Access (voir plus haut)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout perf">
+    <p class="callout-title">Le réglage qui rapporte le plus</p>
+    <p>Pour une foule d'ennemis, passez <em>Visibility Based Anim Tick Option</em> à <code>OnlyTickPoseWhenRendered</code> sur ceux dont la position des os n'importe pas hors écran, et activez l'URO. Sur un serveur dédié, en revanche, gardez des os à jour pour les personnages dont les hitboxes servent à la détection des tirs.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Ajouter l'accroupissement</h4>
+    <p>Le personnage doit pouvoir s'accroupir en maintenant <kbd>C</kbd> (ou <kbd>Ctrl</kbd>) : il se déplace alors plus lentement avec une animation accroupie (immobile et en marche), et se relève en relâchant la touche. Mettez en place le gameplay, la variable d'animation, un Blend Space et les transitions de la State Machine.</p>
+    <details>
+      <summary>Voir la solution</summary>
+      <p><strong>1. Le gameplay.</strong> Dans le Character Movement, cochez <em>Can Crouch</em> (section <em>Nav Movement</em> → <em>Movement Capabilities</em>), réglez <em>Max Walk Speed Crouched</em> (par exemple 200) et <em>Crouched Half Height</em>. Créez <code>IA_Crouch</code> et liez-la :</p>
+<script type="text/plain" data-lang="cpp" data-file="HeroCharacter.cpp (extrait)">
+AHeroCharacter::AHeroCharacter()
+{
+    // Équivalent C++ de la case Can Crouch
+    GetCharacterMovement()->GetNavAgentPropertiesRef().bCanCrouch = true;
+    GetCharacterMovement()->MaxWalkSpeedCrouched = 200.f;
+}
+
+void AHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
+{
+    Super::SetupPlayerInputComponent(PlayerInputComponent);
+    if (UEnhancedInputComponent* Input = Cast<UEnhancedInputComponent>(PlayerInputComponent))
+    {
+        Input->BindAction(CrouchAction, ETriggerEvent::Started, this, &AHeroCharacter::StartCrouch);
+        Input->BindAction(CrouchAction, ETriggerEvent::Completed, this, &AHeroCharacter::StopCrouch);
+    }
+}
+
+void AHeroCharacter::StartCrouch() { Crouch(); }   // réduit la capsule, ralentit
+void AHeroCharacter::StopCrouch()  { UnCrouch(); } // se relève si la place le permet
+</script>
+      <p><strong>2. La variable d'animation.</strong> Dans <code>UHeroAnimInstance</code>, ajoutez <code>UPROPERTY(BlueprintReadOnly) bool bIsCrouching</code> et, dans la mise à jour : <code>bIsCrouching = Movement-&gt;IsCrouching();</code></p>
+      <p><strong>3. Le Blend Space.</strong> Créez <code>BS_Crouch</code>, un Blend Space 1D sur l'axe <code>Speed</code> de 0 à 200 (la valeur de <em>Max Walk Speed Crouched</em>), avec l'animation accroupie immobile à 0 et la marche accroupie à 200.</p>
+      <p><strong>4. La State Machine.</strong> Ajoutez un état <em>Crouch</em> qui joue <code>BS_Crouch</code> avec <code>GroundSpeed</code> en entrée, puis les transitions :</p>
+      <ul>
+        <li><em>Idle</em> → <em>Crouch</em> et <em>Locomotion</em> → <em>Crouch</em> : <code>bIsCrouching</code> ;</li>
+        <li><em>Crouch</em> → <em>Locomotion</em> : <code>NOT bIsCrouching</code> (Locomotion retombe sur Idle si le personnage est immobile) ;</li>
+        <li><em>Crouch</em> → <em>Falling</em> : <code>bIsFalling</code>, pour le cas où il marche accroupi au-delà d'un rebord.</li>
+      </ul>
+      <p>Donnez aux transitions une durée de fondu d'environ 0,2 s. Pour éviter de multiplier les flèches, un <strong>State Alias</strong> regroupant Idle et Locomotion permet de n'écrire qu'une seule transition vers Crouch. Notez qu'un personnage accroupi ne peut pas sauter par défaut (<code>CanJump</code> renvoie false) : aucune transition Crouch → JumpStart n'est nécessaire.</p>
+    </details>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Dans un jeu de tir à la troisième personne, le personnage doit pouvoir marcher de côté et à reculons tout en visant. Quel asset utiliser dans l'état Locomotion ?</p>
+    <ul>
+      <li>Un Blend Space 1D sur la vitesse</li>
+      <li data-correct>Un Blend Space 2D sur la direction et la vitesse</li>
+      <li>Un Anim Montage par direction</li>
+      <li>Une State Machine avec un état par direction</li>
+    </ul>
+    <p class="explain">Le Blend Space 2D mélange les animations avant, arrière, gauche et droite selon la direction relative du déplacement (calculée avec <code>CalculateDirection</code>) et la vitesse. Un Blend Space 1D suppose que le personnage regarde toujours là où il va.</p>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Le <strong>Skeleton</strong> est le contrat commun : meshes et animations qui le partagent sont compatibles ; le <strong>Physics Asset</strong> gère ragdoll et impacts.</li>
+      <li>Dans l'<strong>Animation Blueprint</strong>, la mise à jour recueille les données (Event Graph, Thread Safe Update ou <code>NativeUpdateAnimation</code>) et l'<strong>AnimGraph</strong> calcule la pose.</li>
+      <li>Une <strong>State Machine</strong> enchaîne les états avec des règles simples ; les <strong>Blend Spaces</strong> mélangent les animations selon vitesse et direction.</li>
+      <li>Les <strong>Montages</strong> jouent des actions ponctuelles dans un <strong>Slot</strong> ; leurs sections permettent les combos.</li>
+      <li><em>Layered blend per bone</em> + slot UpperBody + cached pose = action du haut du corps pendant la course.</li>
+      <li>Les <strong>Notifies</strong> synchronisent le gameplay avec l'animation ; leur instance est partagée, l'état doit vivre dans le personnage.</li>
+      <li>Locomotion in-place, actions en root motion ; IK, Control Rig, IK Retargeter et Motion Matching complètent la boîte à outils ; URO et tick selon la visibilité réduisent le coût.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

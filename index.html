@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UE5 Academy — Apprendre à créer un jeu avec Unreal Engine 5</title>
+  <meta name="description" content="Guide complet en français pour apprendre à coder un jeu vidéo avec Unreal Engine 5 : Blueprints, C++, gameplay, IA, UI, animation, multijoueur, optimisation et packaging.">
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body data-root="" data-page="accueil">
+<article class="doc">
+
+  <section class="hero">
+    <div class="hero-inner">
+      <div class="kicker">Guide complet · en français · gratuit</div>
+      <h1>Apprendre à créer un jeu avec <span class="grad">Unreal Engine 5</span></h1>
+      <p class="lead">De l'installation du moteur jusqu'à la publication sur Steam : tout ce qu'il faut savoir pour programmer un jeu vidéo avec Unreal Engine 5, en Blueprint <em>et</em> en C++. Chaque notion est expliquée pas à pas, avec des exemples de code, des graphes Blueprint et des schémas.</p>
+      <div class="hero-cta">
+        <a class="btn primary" href="pages/installation.html">Commencer le parcours →</a>
+        <a class="btn" href="pages/projet.html">Aller au projet guidé</a>
+      </div>
+      <div class="hero-stats">
+        <div><b data-stat="chapters">20</b>chapitres détaillés</div>
+        <div><b>C++ &amp; BP</b>exemples dans les deux langages</div>
+        <div><b>1</b>mini-jeu complet à construire</div>
+      </div>
+    </div>
+  </section>
+
+  <h2>À qui s'adresse ce guide ?</h2>
+  <div class="cards">
+    <div class="card">
+      <span class="card-tag">Débutant complet</span>
+      <h4>Vous n'avez jamais créé de jeu</h4>
+      <p>Suivez les chapitres dans l'ordre. Commencez par les Blueprints : vous verrez des résultats concrets très vite, sans écrire une ligne de code.</p>
+    </div>
+    <div class="card">
+      <span class="card-tag">Venant d'Unity / Godot</span>
+      <h4>Vous connaissez déjà un moteur</h4>
+      <p>Lisez attentivement « Architecture du moteur » : le Gameplay Framework d'Unreal (GameMode, Controller, Pawn…) est la plus grosse différence.</p>
+    </div>
+    <div class="card">
+      <span class="card-tag">Programmeur</span>
+      <h4>Vous codez déjà en C++</h4>
+      <p>Passez vite sur les bases et concentrez-vous sur la réflexion Unreal (<code>UCLASS</code>, <code>UPROPERTY</code>), le garbage collector et la réplication.</p>
+    </div>
+  </div>
+
+  <h2>Comment fonctionne un jeu vidéo ?</h2>
+  <p>Avant de parler d'Unreal, il faut comprendre l'idée centrale de tout moteur de jeu : la <strong>boucle de jeu</strong> (<em>game loop</em>). Un jeu n'est pas un programme qui s'exécute une fois puis s'arrête : c'est une boucle qui tourne en continu, typiquement 30 à 144 fois par seconde. Chaque tour de boucle s'appelle une <strong>frame</strong> (image).</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    A["1. Lire les entrées<br>clavier, souris, manette"] --> B["2. Mettre à jour le jeu<br>Tick de chaque Actor,<br>physique, IA, animations"]
+    B --> C["3. Afficher l'image<br>rendu 3D + interface"]
+    C --> D{"Le jeu<br>continue ?"}
+    D -- "Oui (frame suivante)" --> A
+    D -- Non --> E["Quitter"]
+</pre>
+    <figcaption>La boucle de jeu. À 60 images par seconde, ce cycle complet doit tenir en <b>16,6 millisecondes</b>.</figcaption>
+  </figure>
+
+  <p>Unreal Engine gère cette boucle à votre place. Votre travail consiste à <strong>réagir à des événements</strong> (« le jeu commence », « le joueur appuie sur Espace », « deux objets se touchent ») et à <strong>mettre à jour l'état du jeu</strong> à chaque frame quand c'est nécessaire. C'est exactement ce que vous ferez, que ce soit en Blueprint ou en C++.</p>
+
+  <div class="callout info">
+    <p class="callout-title">Le Delta Time, une notion à retenir dès maintenant</p>
+    <p>Le temps entre deux frames n'est jamais constant (il dépend de la puissance du PC). Unreal vous le fournit sous le nom de <code>DeltaTime</code> (en secondes). Pour qu'un objet se déplace à la même vitesse sur tous les PC, on multiplie toujours la vitesse par <code>DeltaTime</code> : <code>Position += Vitesse * DeltaTime</code>.</p>
+  </div>
+
+  <h2>Le parcours recommandé</h2>
+  <p>Le site est organisé en sept grandes étapes. Chaque étape s'appuie sur la précédente : il est conseillé de les suivre dans l'ordre, au moins pour les deux premières.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    S["Démarrer<br>installer, éditeur"] --> F["Fondamentaux<br>architecture, maths"]
+    F --> P["Programmer<br>Blueprint, C++"]
+    P --> G["Gameplay<br>input, collisions, IA"]
+    G --> C["Contenu<br>UI, anim, rendu, son"]
+    C --> A["Avancé<br>réseau, optimisation"]
+    A --> X["Projet guidé<br>Orb Rush"]
+    P -. "dès que possible" .-> X
+</pre>
+    <figcaption>Vous pouvez attaquer le projet guidé dès que vous avez lu la partie « Programmer », puis revenir aux autres chapitres au besoin.</figcaption>
+  </figure>
+
+  <div id="roadmap"></div>
+
+  <h2>Ce qu'il faut avant de commencer</h2>
+  <h3>Matériel</h3>
+  <p>Unreal Engine 5 est un moteur exigeant, surtout avec Nanite et Lumen activés. Voici des repères réalistes pour travailler confortablement :</p>
+  <table>
+    <thead><tr><th>Composant</th><th>Minimum pour apprendre</th><th>Confortable</th></tr></thead>
+    <tbody>
+      <tr><td>Système</td><td>Windows 10/11 64 bits, macOS récent ou Linux</td><td>Windows 11 (meilleur support des outils et du C++)</td></tr>
+      <tr><td>Processeur</td><td>4 cœurs / 8 threads</td><td>8 cœurs ou plus (la compilation C++ en profite énormément)</td></tr>
+      <tr><td>Mémoire vive</td><td>16 Go</td><td>32 Go ou plus</td></tr>
+      <tr><td>Carte graphique</td><td>Compatible DirectX 12, 6 Go de VRAM</td><td>8 Go de VRAM ou plus, gamme RTX 3060 / RX 6700 ou mieux</td></tr>
+      <tr><td>Stockage</td><td>SSD avec 100 Go libres</td><td>SSD NVMe avec 250 Go libres (moteur + projets + cache)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Connaissances</h3>
+  <ul>
+    <li><strong>Aucune connaissance en programmation n'est obligatoire</strong> pour commencer : les Blueprints permettent de créer un jeu complet visuellement.</li>
+    <li>Pour la partie C++, des bases en programmation (variables, conditions, boucles, fonctions) aident beaucoup. Le chapitre <a href="pages/cpp-bases.html">C++ pour Unreal</a> fait un rappel des notions indispensables.</li>
+    <li>Un peu de géométrie (vecteurs, angles) est utile : le chapitre <a href="pages/maths.html">Maths du jeu vidéo</a> explique tout ce qu'il faut, avec des schémas.</li>
+    <li>Un anglais de base est précieux : l'éditeur, la documentation et la majorité des ressources sont en anglais. Ce guide donne toujours le nom anglais des notions.</li>
+  </ul>
+
+  <h2>Blueprint ou C++ : faut-il choisir ?</h2>
+  <p>Non. Unreal propose deux façons de programmer, et les studios professionnels utilisent <strong>les deux en même temps</strong>. Le C++ sert à écrire les systèmes solides et performants, les Blueprints servent à assembler, régler et itérer rapidement par-dessus.</p>
+  <div class="compare">
+    <div class="neutral">
+      <h4>Blueprint <span class="badge bp">Visuel</span></h4>
+      <ul>
+        <li>Aucune compilation externe, résultat immédiat</li>
+        <li>Idéal pour le prototypage, les level designers, les game designers</li>
+        <li>Parfait pour l'UI, les animations, les événements de niveau</li>
+        <li>Devient difficile à maintenir sur de gros systèmes</li>
+      </ul>
+    </div>
+    <div class="alt">
+      <h4>C++ <span class="badge cpp">Code</span></h4>
+      <ul>
+        <li>Plus rapide à l'exécution, accès à tout le moteur</li>
+        <li>Meilleur pour la logique complexe, le réseau, les outils</li>
+        <li>Se versionne et se relit facilement (Git, revues de code)</li>
+        <li>Courbe d'apprentissage plus raide, temps de compilation</li>
+      </ul>
+    </div>
+  </div>
+  <p>Dans ce guide, la plupart des exemples sont proposés dans les deux langages grâce à des onglets <strong>Blueprint / C++</strong>. Votre choix d'onglet est mémorisé pour toute la suite du site.</p>
+
+  <h2>Comment utiliser ce site</h2>
+  <ul>
+    <li><strong>Recherche</strong> : appuyez sur <kbd>Ctrl</kbd> + <kbd>K</kbd> (ou <kbd>/</kbd>) pour trouver une notion, par exemple « replication » ou « timer ».</li>
+    <li><strong>Progression</strong> : à la fin de chaque chapitre, cliquez sur « Marquer comme terminé ». Votre avancée s'affiche en haut à droite et dans le menu.</li>
+    <li><strong>Quiz et exercices</strong> : chaque chapitre contient des questions pour vérifier votre compréhension, et des exercices avec solution.</li>
+    <li><strong>Code</strong> : chaque bloc de code a un bouton « Copier ». Le code est écrit pour Unreal Engine 5 (versions 5.4 et suivantes).</li>
+  </ul>
+  <p>Les encadrés ont une signification précise :</p>
+  <div class="callout info"><p class="callout-title">Information</p><p>Une précision ou un complément utile pour bien comprendre.</p></div>
+  <div class="callout tip"><p class="callout-title">Astuce</p><p>Un raccourci, une bonne pratique ou une façon plus rapide de faire.</p></div>
+  <div class="callout warn"><p class="callout-title">Attention</p><p>Un piège courant dans lequel tombent la plupart des débutants.</p></div>
+  <div class="callout perf"><p class="callout-title">Performance</p><p>Un point qui a un impact sur la fluidité de votre jeu.</p></div>
+  <div class="callout ue"><p class="callout-title">Dans la documentation officielle</p><p>Où trouver plus de détails dans la documentation d'Epic Games.</p></div>
+
+  <h2>Conseils pour apprendre efficacement</h2>
+  <ol class="steps">
+    <li><strong>Pratiquez en même temps que vous lisez</strong>Gardez Unreal ouvert à côté du site et reproduisez chaque exemple. On apprend un moteur avec les mains, pas avec les yeux.</li>
+    <li><strong>Commencez minuscule</strong>Votre premier jeu ne doit pas être un RPG en monde ouvert. Un Pong, un jeu de plateforme d'un seul niveau ou le projet guidé de ce site sont parfaits.</li>
+    <li><strong>Terminez vos projets</strong>Un petit jeu terminé (avec un menu, une condition de victoire et un build jouable) vous apprendra plus que dix prototypes abandonnés.</li>
+    <li><strong>Lisez les messages d'erreur</strong>Le journal de sortie (<em>Output Log</em>) et les erreurs de compilation disent presque toujours ce qui ne va pas. Prenez le temps de les lire en entier.</li>
+    <li><strong>Participez à une game jam</strong>Des événements comme la Ludum Dare ou les Epic MegaJam vous obligent à finir un jeu en 48 heures à une semaine : excellent pour progresser vite.</li>
+  </ol>
+
+</article>
+
+<script src="assets/js/nav.js"></script>
+<script src="assets/js/syntax.js"></script>
+<script src="assets/js/blueprint.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script src="assets/js/app.js"></script>
+</body>
+</html>

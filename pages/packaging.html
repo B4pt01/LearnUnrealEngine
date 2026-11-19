@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Packaging &amp; publication — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="packaging">
+<article class="doc">
+
+  <h1>Packaging &amp; publication</h1>
+  <p class="lead">Un jeu qui ne tourne que dans l'éditeur n'est pas un jeu : il faut le transformer en exécutable autonome, le tester sur d'autres machines, puis le mettre entre les mains des joueurs. Ce chapitre couvre toute la chaîne, de la configuration de build jusqu'à la page Steam, sans oublier la licence d'Unreal.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Choisir la bonne <strong>configuration de build</strong> (Development, Shipping…) et la bonne cible</li>
+      <li>Comprendre le <strong>cook</strong> et pourquoi certains assets disparaissent du jeu packagé</li>
+      <li>Packager depuis l'éditeur, puis en <strong>ligne de commande</strong> avec BuildCookRun</li>
+      <li>Diagnostiquer les <strong>erreurs courantes</strong> de packaging</li>
+      <li>Publier sur <strong>Steam</strong>, l'<strong>Epic Games Store</strong> ou <strong>itch.io</strong></li>
+      <li>Comprendre la <strong>licence</strong> d'Unreal Engine et ses redevances</li>
+    </ul>
+  </div>
+
+  <h2>Configurations et cibles de build</h2>
+  <p>« Builder », c'est compiler votre code C++ (et celui du moteur) avec l'<strong>Unreal Build Tool</strong> pour une plateforme, une cible et une configuration données. La <strong>configuration</strong> règle le compromis entre vitesse d'exécution et outils de débogage :</p>
+  <table>
+    <thead><tr><th>Configuration</th><th>Optimisation</th><th>Outils de debug</th><th>Usage</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Debug</strong></td><td>Moteur et jeu non optimisés</td><td>Tous</td><td>Déboguer le moteur lui-même (moteur compilé depuis les sources)</td></tr>
+      <tr><td><strong>DebugGame</strong></td><td>Moteur optimisé, votre code non optimisé</td><td>Tous</td><td>Déboguer pas à pas <em>votre</em> code</td></tr>
+      <tr><td><strong>Development</strong></td><td>Tout optimisé</td><td>Console, logs, stats, <code>check</code></td><td>La configuration par défaut, celle de l'éditeur et des builds de test internes</td></tr>
+      <tr><td><strong>Test</strong></td><td>Comme Shipping</td><td>Quelques outils (console, stats)</td><td>Mesurer les performances dans des conditions proches du final</td></tr>
+      <tr><td><strong>Shipping</strong></td><td>Optimisation maximale</td><td>Aucun</td><td>La version distribuée aux joueurs</td></tr>
+    </tbody>
+  </table>
+  <p>La <strong>cible</strong> (<em>target</em>) indique ce que l'on construit. Chaque cible correspond à un fichier <code>.Target.cs</code> dans le dossier <code>Source</code> :</p>
+  <dl class="defs">
+    <dt>Editor</dt><dd><code>MyGameEditor.Target.cs</code> : votre module chargé dans l'éditeur. C'est ce que vous compilez au quotidien (« Development Editor »).</dd>
+    <dt>Game</dt><dd><code>MyGame.Target.cs</code> : le jeu autonome, capable d'être client et serveur (listen server). La cible standard d'un packaging.</dd>
+    <dt>Client</dt><dd>Un jeu sans le code serveur, pour les jeux multijoueur à serveurs dédiés.</dd>
+    <dt>Server</dt><dd>Un serveur dédié sans affichage. Les cibles Client et Server demandent un moteur compilé depuis les sources (voir <a href="multijoueur.html">Réseau &amp; multijoueur</a>).</dd>
+  </dl>
+<script type="text/plain" data-lang="csharp" data-file="Source/MyGame.Target.cs">
+using UnrealBuildTool;
+using System.Collections.Generic;
+
+public class MyGameTarget : TargetRules
+{
+    public MyGameTarget(TargetInfo Target) : base(Target)
+    {
+        Type = TargetType.Game;
+        DefaultBuildSettings = BuildSettingsVersion.V5;
+        IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
+        ExtraModuleNames.Add("MyGame");
+    }
+}
+</script>
+
+  <h3>Ce que Shipping retire</h3>
+  <p>Une build Shipping est plus rapide et plus difficile à bidouiller, car le moteur y supprime à la compilation tout ce qui sert au développement :</p>
+  <ul>
+    <li>la <strong>console</strong> (touche ²) et les commandes de triche du <code>CheatManager</code> ;</li>
+    <li>les <strong>logs</strong> : les <code>UE_LOG</code> disparaissent (les réactiver passe par le <code>.Target.cs</code>, ce qui impose en pratique un moteur compilé depuis les sources) ;</li>
+    <li>les commandes <code>stat</code>, le dessin de debug (<code>DrawDebugLine</code>…) et les messages <em>Print String</em> ;</li>
+    <li>les assertions <code>check()</code> et <code>checkf()</code> : leur expression n'est même plus évaluée. Utilisez <code>verify()</code> si l'expression a un effet nécessaire.</li>
+  </ul>
+<script type="text/plain" data-lang="cpp" data-file="Exemple : code réservé au développement">
+#if !UE_BUILD_SHIPPING
+    // Outil de debug : absent de la version distribuée
+    DrawDebugSphere(GetWorld(), GetActorLocation(), 50.f, 12, FColor::Red, false, 1.f);
+    UE_LOG(LogTemp, Verbose, TEXT("Position du joueur : %s"), *GetActorLocation().ToString());
+#endif
+
+    // check() disparaît en Shipping : jamais d'effet de bord à l'intérieur !
+    check(Inventory != nullptr);
+    verify(Inventory->Initialize()); // l'appel est conservé en Shipping
+</script>
+
+  <div class="callout warn">
+    <p class="callout-title">Testez en Shipping avant la sortie</p>
+    <p>Un bug qui n'apparaît qu'en Shipping est presque toujours lié à ce qui a été retiré : un <code>check()</code> qui contenait un appel de fonction, une logique cachée dans un log, ou une variable non initialisée qu'une build Development masquait. Packagez en Shipping régulièrement, pas seulement la veille de la sortie.</p>
+  </div>
+
+  <h2>Le cook : préparer les assets</h2>
+  <p>Dans l'éditeur, vos assets contiennent des données d'édition et des formats génériques. Le <strong>cook</strong> les convertit pour une plateforme précise : textures compressées au format du GPU cible (BC sur PC, ASTC sur mobile), shaders compilés pour l'API graphique (DirectX 12, Vulkan, Metal), données d'éditeur supprimées. C'est souvent l'étape la plus longue d'un packaging.</p>
+  <p>Point crucial : <strong>le cook n'emporte que ce qui est référencé</strong>. Il part des niveaux à inclure et suit les références de proche en proche ; tout le reste est ignoré, même s'il est dans le dossier <code>Content</code>.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    M["Niveaux à cooker<br>List of maps to include<br>+ Game Default Map"] --> R["Références des niveaux<br>acteurs, Blueprints, meshes"]
+    R --> R2["Références des références<br>matériaux, textures, sons"]
+    D["Additional Asset<br>Directories to Cook"] --> C["Assets cookés"]
+    PAL["Primary Asset Labels<br>Asset Manager"] --> C
+    R2 --> C
+    S["Chemin écrit dans une chaîne<br>LoadObject, FString"] -.->|invisible| X["Non cooké"]
+</pre>
+    <figcaption>Comment le cooker découvre les assets à inclure. Ce qui n'est atteint par aucun chemin n'existera pas dans le jeu packagé.</figcaption>
+  </figure>
+
+  <ul>
+    <li><strong>List of maps to include in a packaged build</strong> (Project Settings → Packaging, section avancée) : listez tous vos niveaux, y compris ceux chargés par <code>OpenLevel</code>. Si la liste est vide, le moteur cuisine tous les niveaux du projet, ce qui gonfle le jeu.</li>
+    <li><strong>Additional Asset Directories to Cook</strong> : des dossiers entiers à inclure de force, pour les assets chargés dynamiquement.</li>
+    <li><strong>Primary Asset Labels</strong> et règles de l'<strong>Asset Manager</strong> : la méthode propre pour déclarer des assets chargés à la demande (objets d'inventaire, personnages jouables).</li>
+  </ul>
+
+  <h3>Pak, IoStore, compression et chiffrement</h3>
+  <dl class="defs">
+    <dt>Pak</dt><dd>Plutôt que des milliers de petits fichiers, les assets cookés sont regroupés dans des conteneurs <code>.pak</code> : moins de fichiers, chargement plus rapide, distribution plus simple.</dd>
+    <dt>IoStore</dt><dd>Le format de conteneur moderne d'UE5 (option <em>Use Io Store</em>, active par défaut) : des paires <code>.utoc</code> (table des matières) et <code>.ucas</code> (données), accompagnées d'un petit <code>.pak</code>. Optimisé pour le chargement asynchrone rapide.</dd>
+    <dt>Compression</dt><dd>Les conteneurs sont compressés (Oodle par défaut en UE5). Un niveau de compression élevé, réservé aux builds de distribution, réduit le téléchargement au prix d'un packaging plus long.</dd>
+    <dt>Chiffrement et signature</dt><dd>Dans Project Settings → Crypto, générez une clé pour chiffrer les conteneurs et activez la signature pour détecter les fichiers modifiés. Le chiffrement décourage l'extraction occasionnelle, mais la clé est dans l'exécutable : ce n'est pas une protection absolue.</dd>
+  </dl>
+
+  <h2>Packager depuis l'éditeur</h2>
+  <ol class="steps">
+    <li><strong>Décrire le projet</strong>Project Settings → Project → <em>Description</em> : <em>Project Name</em>, <em>Project Version</em>, <em>Company Name</em>, <em>Copyright Notice</em>, <em>Project Displayed Title</em> (le titre de la fenêtre) et la vignette.</li>
+    <li><strong>Choisir les niveaux</strong>Project → <em>Maps &amp; Modes</em> : <em>Game Default Map</em> est le niveau chargé au lancement du jeu (votre menu principal) ; <em>Editor Startup Map</em> n'affecte que l'éditeur. Réglez aussi le <em>Default GameMode</em>.</li>
+    <li><strong>Régler le packaging</strong>Project → <em>Packaging</em> : <em>Build Configuration</em> (Shipping pour la sortie), <em>Use Pak File</em> et <em>Use Io Store</em> (laissez-les cochés), <em>Full Rebuild</em> (repart de zéro, plus lent mais plus sûr), <em>For Distribution</em> (obligatoire pour les stores mobiles et consoles), la liste des niveaux à inclure et, dans les options avancées, <em>Include prerequisites installer</em>.</li>
+    <li><strong>Plateformes et identité visuelle</strong>Project → <em>Supported Platforms</em> : cochez les plateformes visées. Platforms → <em>Windows</em> : l'icône du jeu (<em>Game Icon</em>, un fichier <code>.ico</code> de 256 × 256) et l'image de démarrage (<em>Game Splash</em>), ainsi que les API graphiques ciblées (<em>Targeted RHIs</em>).</li>
+    <li><strong>Lancer le packaging</strong>Dans la barre d'outils, menu <strong>Platforms → Windows</strong> : choisissez la <em>Binary Configuration</em> (Shipping), puis <strong>Package Project</strong> et un dossier de sortie. Suivez la progression dans l'<em>Output Log</em> : le packaging se termine par <code>BUILD SUCCESSFUL</code> ou par l'erreur à corriger.</li>
+  </ol>
+
+  <p>Ces réglages sont enregistrés dans les fichiers de configuration du projet, ce qui permet de les versionner avec Git :</p>
+<script type="text/plain" data-lang="ini" data-file="Config/DefaultGame.ini (extrait)">
+[/Script/EngineSettings.GeneralProjectSettings]
+ProjectName=Orb Rush
+ProjectVersion=1.0.0
+CompanyName=Mon Studio
+
+[/Script/UnrealEd.ProjectPackagingSettings]
+BuildConfiguration=PPBC_Shipping
+UsePakFile=True
+bUseIoStore=True
+ForDistribution=True
+IncludePrerequisites=True
++MapsToCook=(FilePath="/Game/Maps/MainMenu")
++MapsToCook=(FilePath="/Game/Maps/Level01")
++DirectoriesToAlwaysCook=(Path="/Game/Data/Items")
+</script>
+<script type="text/plain" data-lang="ini" data-file="Config/DefaultEngine.ini (extrait)">
+[/Script/EngineSettings.GameMapsSettings]
+GameDefaultMap=/Game/Maps/MainMenu.MainMenu
+EditorStartupMap=/Game/Maps/Level01.Level01
+GlobalDefaultGameMode=/Game/Blueprints/BP_MyGameMode.BP_MyGameMode_C
+</script>
+
+  <h3>Ce qui se passe pendant le packaging</h3>
+  <p>Derrière le bouton, l'éditeur lance l'<strong>Unreal Automation Tool</strong> (UAT) avec la commande <code>BuildCookRun</code>, qui enchaîne cinq étapes :</p>
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    B["Build<br>compilation C++<br>Unreal Build Tool"] --> C["Cook<br>assets au format<br>de la plateforme"]
+    C --> S["Stage<br>tout est rassemblé<br>dans un dossier de travail"]
+    S --> P["Package<br>conteneurs .pak,<br>.utoc et .ucas"]
+    P --> A["Archive<br>copie finale<br>dans le dossier choisi"]
+</pre>
+    <figcaption>Les étapes de BuildCookRun. Pour un projet 100 % Blueprint, l'étape Build se contente des exécutables déjà fournis par le moteur.</figcaption>
+  </figure>
+
+  <p>Le dossier obtenu pour Windows ressemble à ceci (pour un projet nommé <code>MyGame</code>) :</p>
+  <ul class="tree">
+    <li><span class="node c-blue">Windows/</span><span class="desc">Le dossier à distribuer, en entier</span>
+      <ul>
+        <li><span class="node c-green">MyGame.exe</span><span class="desc">Petit lanceur : c'est lui que le joueur double-clique</span></li>
+        <li><span class="node c-yellow">Engine/</span><span class="desc">Fichiers du moteur nécessaires à l'exécution (bibliothèques tierces, prérequis)</span></li>
+        <li><span class="node c-yellow">MyGame/</span>
+          <ul>
+            <li><span class="node">Binaries/Win64/</span>
+              <ul>
+                <li><span class="node c-green">MyGame-Win64-Shipping.exe</span><span class="desc">Le vrai exécutable (en Development : <code>MyGame.exe</code>)</span></li>
+              </ul>
+            </li>
+            <li><span class="node">Content/Paks/</span>
+              <ul>
+                <li><span class="node c-purple">MyGame-Windows.pak / .utoc / .ucas</span><span class="desc">Tout le contenu cooké du jeu (avec les fichiers <code>global.utoc</code> et <code>global.ucas</code>)</span></li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+        <li><span class="node">Manifest_*.txt</span><span class="desc">Listes de fichiers générées par le packaging</span></li>
+      </ul>
+    </li>
+  </ul>
+
+  <div class="callout info">
+    <p class="callout-title">Où sont les sauvegardes et les logs ?</p>
+    <p>Un jeu packagé sous Windows écrit ses données dans <code>%LOCALAPPDATA%\MyGame\Saved\</code> : <code>SaveGames</code>, <code>Logs</code>, <code>Config</code> (dont <code>GameUserSettings.ini</code>) et <code>Crashes</code>. Le dossier d'installation reste en lecture seule, ce qui est indispensable sous <code>Program Files</code>.</p>
+  </div>
+
+  <h2>Packager en ligne de commande</h2>
+  <p>Pour automatiser les builds (script, serveur d'intégration continue, build nocturne), on appelle directement UAT. C'est exactement ce que fait l'éditeur, en reproductible :</p>
+<script type="text/plain" data-lang="console" data-file="Invite de commandes Windows">
+"C:\Program Files\Epic Games\UE_5.4\Engine\Build\BatchFiles\RunUAT.bat" BuildCookRun ^
+  -project="D:\Projets\MyGame\MyGame.uproject" ^
+  -platform=Win64 -clientconfig=Shipping ^
+  -build -cook -stage -pak -iostore -prereqs ^
+  -archive -archivedirectory="D:\Builds\MyGame_1.0.0" ^
+  -noP4 -utf8output
+</script>
+  <table>
+    <thead><tr><th>Argument</th><th>Rôle</th></tr></thead>
+    <tbody>
+      <tr><td><code>-project</code></td><td>Chemin complet du <code>.uproject</code></td></tr>
+      <tr><td><code>-platform=Win64</code></td><td>Plateforme cible (<code>Linux</code>, <code>Android</code>, <code>Mac</code>, <code>IOS</code>…)</td></tr>
+      <tr><td><code>-clientconfig=Shipping</code></td><td>Configuration du jeu (<code>-serverconfig</code> pour un serveur dédié)</td></tr>
+      <tr><td><code>-build</code>, <code>-cook</code>, <code>-stage</code></td><td>Les étapes à exécuter : compiler, cooker, rassembler</td></tr>
+      <tr><td><code>-pak</code>, <code>-iostore</code></td><td>Produire les conteneurs</td></tr>
+      <tr><td><code>-prereqs</code></td><td>Inclure l'installeur des prérequis</td></tr>
+      <tr><td><code>-archive</code>, <code>-archivedirectory</code></td><td>Copier le résultat final dans ce dossier</td></tr>
+      <tr><td><code>-noP4</code></td><td>Ne pas utiliser Perforce</td></tr>
+    </tbody>
+  </table>
+  <p>Sous Linux et macOS, le script s'appelle <code>RunUAT.sh</code>. L'éditeur propose aussi le <strong>Project Launcher</strong> (menu Tools ou Platforms selon votre version) : vous y créez des <em>profils personnalisés</em> (configuration, niveaux à cooker, cook incrémental, déploiement direct sur un appareil Android branché…) réutilisables en un clic.</p>
+
+  <h2>Les erreurs courantes</h2>
+  <table>
+    <thead><tr><th>Symptôme</th><th>Cause probable</th><th>Solution</th></tr></thead>
+    <tbody>
+      <tr><td>Écran noir ou mauvais niveau au lancement</td><td><em>Game Default Map</em> non réglé, ou niveau absent de la liste à cooker</td><td>Régler Maps &amp; Modes, ajouter tous les niveaux à <em>List of maps to include</em></td></tr>
+      <tr><td>Objet, son ou texture manquant en jeu, mais présent dans l'éditeur</td><td>Asset chargé par un chemin écrit dans une chaîne : le cooker ne l'a pas vu</td><td>Utiliser une référence (<code>TSoftObjectPtr</code>, propriété), un <em>Primary Asset Label</em> ou <em>Additional Asset Directories to Cook</em></td></tr>
+      <tr><td>« Plugin X failed to load because module Y could not be found »</td><td>Plugin activé uniquement pour l'éditeur, non compilé pour la cible, ou module de type <em>Editor</em> utilisé en jeu</td><td>Vérifier le <code>.uplugin</code> et le <code>.uproject</code>, compiler le plugin pour la plateforme</td></tr>
+      <tr><td>« VCRUNTIME140.dll est introuvable » chez un joueur</td><td>Redistribuables Visual C++ absents</td><td>Cocher <em>Include prerequisites installer</em> et lancer <code>UEPrereqSetup_x64.exe</code>, ou laisser Steam installer les redistribuables</td></tr>
+      <tr><td>« DX12 is not supported on your system »</td><td>Carte graphique trop ancienne pour DirectX 12 / Shader Model 6</td><td>Ajouter DirectX 11 aux <em>Targeted RHIs</em> (sans Nanite ni Lumen matériel) ou annoncer clairement la configuration minimale</td></tr>
+      <tr><td>Erreur de compilation uniquement au packaging</td><td>Code d'éditeur (<code>UnrealEd</code>, <code>GEditor</code>) compilé dans une cible Game</td><td>Protéger avec <code>#if WITH_EDITOR</code> et conditionner la dépendance dans le <code>Build.cs</code></td></tr>
+    </tbody>
+  </table>
+
+  <p>Le dernier cas mérite un exemple, car il surprend tous les débutants : le jeu compile parfaitement dans l'éditeur, puis le packaging échoue.</p>
+<script type="text/plain" data-lang="cpp" data-file="SpawnerActor.h / .cpp" data-highlight="2,4,9,17">
+// SpawnerActor.h
+#if WITH_EDITOR
+    virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
+// SpawnerActor.cpp
+#include "SpawnerActor.h"
+
+#if WITH_EDITOR
+#include "Editor.h"   // n'existe pas dans une cible Game
+
+void ASpawnerActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+    Super::PostEditChangeProperty(PropertyChangedEvent);
+    // Outils d'édition : prévisualiser la zone de spawn quand on change le rayon…
+}
+#endif
+</script>
+<script type="text/plain" data-lang="csharp" data-file="MyGame.Build.cs (extrait)">
+// Les modules d'éditeur ne doivent être liés que dans les cibles qui contiennent l'éditeur
+if (Target.bBuildEditor)
+{
+    PrivateDependencyModuleNames.Add("UnrealEd");
+}
+</script>
+
+  <div class="quiz">
+    <p class="q">Votre jeu packagé lance bien le menu, mais un objet d'inventaire chargé avec <code>LoadObject(nullptr, TEXT("/Game/Items/Epee.Epee"))</code> renvoie <code>nullptr</code>. Pourquoi ?</p>
+    <ul>
+      <li>LoadObject ne fonctionne pas en Shipping</li>
+      <li data-correct>Rien ne référence l'asset : le cooker ne l'a pas inclus</li>
+      <li>Il fallait packager en Development</li>
+      <li>Les chemins doivent être en minuscules</li>
+    </ul>
+    <p class="explain">Le cooker suit les références, pas les chaînes de caractères. Référencez l'asset via une propriété (<code>TSoftObjectPtr</code>, Data Asset…), un Primary Asset Label, ou ajoutez son dossier à <em>Additional Asset Directories to Cook</em>.</p>
+  </div>
+
+  <h2>Tester ses builds</h2>
+  <ul>
+    <li><strong>Lancez avec des arguments</strong> : <code>-log</code> ouvre une fenêtre de log (en Development), <code>-windowed -ResX=1280 -ResY=720</code> force une fenêtre.</li>
+    <li><strong>Testez sur d'autres machines</strong> : une configuration modeste, un portable, une machine « propre » sans Visual Studio ni Unreal (elle révèle les prérequis manquants), un Steam Deck si vous le visez.</li>
+    <li><strong>Vérifiez les réglages par défaut</strong> : au premier lancement, quelle qualité graphique est choisie ? Le jeu reste-t-il jouable sur la machine la plus faible ? (Voir la scalabilité dans <a href="graphismes.html">Matériaux, lumière &amp; VFX</a>.)</li>
+    <li><strong>Préparez les crashs</strong> : cochez <em>Include Crash Reporter</em> dans les réglages de packaging et <strong>archivez les symboles</strong> (<code>.pdb</code>) de chaque version distribuée, sans les livrer aux joueurs. Sans eux, une pile d'appels de crash est illisible.</li>
+  </ul>
+<script type="text/plain" data-lang="console" data-file="Lancer une build de test">
+MyGame.exe -log -windowed -ResX=1280 -ResY=720
+</script>
+
+  <h2>Les plateformes</h2>
+  <div class="cards">
+    <div class="card"><span class="card-tag">Windows</span><h4>La cible naturelle</h4><p>Packaging direct depuis l'éditeur, DirectX 12 par défaut (DirectX 11 et Vulkan possibles). La plateforme de développement de référence.</p></div>
+    <div class="card"><span class="card-tag">Linux</span><h4>Compilation croisée</h4><p>Depuis Windows, installez la <em>toolchain</em> clang fournie par Epic pour votre version du moteur (variable d'environnement <code>LINUX_MULTIARCH_ROOT</code>). Linux apparaît alors dans Platforms.</p></div>
+    <div class="card"><span class="card-tag">macOS / iOS</span><h4>Un Mac est obligatoire</h4><p>La compilation et la signature passent par Xcode sur un Mac, et un compte Apple Developer est nécessaire pour distribuer.</p></div>
+    <div class="card"><span class="card-tag">Android</span><h4>SDK et NDK</h4><p>Installez Android Studio, puis les versions de SDK, NDK et JDK exigées par votre version du moteur (script <code>SetupAndroid</code> dans <code>Engine/Extras/Android</code>). Sortie en APK ou AAB pour le Play Store.</p></div>
+    <div class="card"><span class="card-tag">Consoles</span><h4>Accès sous NDA</h4><p>PlayStation, Xbox et Switch exigent d'être accepté comme développeur par le constructeur, un accord de confidentialité et des kits de développement. Les outils Unreal correspondants sont fournis après validation.</p></div>
+  </div>
+
+  <h2>Publier son jeu</h2>
+  <h3>Steam</h3>
+  <ol class="steps">
+    <li><strong>Compte Steamworks</strong>Inscrivez-vous comme partenaire Steamworks (informations fiscales et bancaires), puis payez les frais <strong>Steam Direct</strong> : 100 USD par jeu, récupérés une fois que le jeu a généré 1 000 USD de revenus bruts.</li>
+    <li><strong>App ID et depots</strong>Steam crée un <strong>App ID</strong> (l'identifiant du jeu) et des <strong>depots</strong> (des lots de fichiers, par exemple un par système d'exploitation). Les <em>branches</em> permettent de publier une bêta à côté de la version stable.</li>
+    <li><strong>Page du magasin</strong>Captures, bande-annonce, description, configuration requise. La page doit être publiée en « Coming Soon » un certain temps avant la sortie, et passe, comme la build, par une revue de Valve : consultez les délais actuels dans la documentation Steamworks.</li>
+    <li><strong>Envoyer la build</strong>Avec <strong>SteamPipe</strong> : le dossier <code>tools/ContentBuilder</code> du SDK Steamworks contient <code>steamcmd</code> et des scripts <code>.vdf</code> qui décrivent quoi envoyer dans quel depot.</li>
+    <li><strong>Publier</strong>Dans Steamworks, rendez la build active (<em>Set build live</em>) sur la branche <code>default</code> : les joueurs la téléchargent.</li>
+  </ol>
+<script type="text/plain" data-lang="text" data-file="scripts/app_build_1234560.vdf">
+"AppBuild"
+{
+    "AppID" "1234560"
+    "Desc" "Version 1.0.0"
+    "ContentRoot" "..\content\"
+    "BuildOutput" "..\output\"
+    "Depots"
+    {
+        "1234561"
+        {
+            "FileMapping"
+            {
+                "LocalPath" "*"
+                "DepotPath" "."
+                "recursive" "1"
+            }
+        }
+    }
+}
+</script>
+<script type="text/plain" data-lang="console" data-file="tools/ContentBuilder/builder">
+steamcmd.exe +login mon_compte_steam +run_app_build ..\scripts\app_build_1234560.vdf +quit
+</script>
+  <p>Copiez au préalable le contenu de votre dossier <code>Windows/</code> packagé dans <code>ContentBuilder/content/</code>. Pour les succès, le classement et l'overlay Steam, activez le plugin <strong>Online Subsystem Steam</strong> et configurez-le ; les nœuds d'Online Subsystem (<em>Cache Achievements</em>, <em>Write Achievement Progress</em>) gèrent ensuite les succès déclarés dans Steamworks.</p>
+<script type="text/plain" data-lang="ini" data-file="Config/DefaultEngine.ini (extrait)">
+[OnlineSubsystem]
+DefaultPlatformService=Steam
+
+[OnlineSubsystemSteam]
+bEnabled=true
+; 480 = application de test « Spacewar » de Valve : remplacez par votre App ID
+SteamDevAppId=480
+</script>
+  <p>Pensez au <strong>Steam Deck</strong> : Valve évalue les jeux (<em>Verified</em>, <em>Playable</em>, <em>Unsupported</em>). Une build Windows y tourne via la couche de compatibilité Proton ; les critères principaux sont une prise en charge complète de la manette, un texte lisible en 1280 × 800 et l'absence de lanceur externe problématique.</p>
+
+  <h3>Epic Games Store et itch.io</h3>
+  <p>L'<strong>Epic Games Store</strong> est ouvert à l'auto-publication via le portail développeur d'Epic. Le partage de revenus standard est de <strong>88 % pour le développeur et 12 % pour Epic</strong>, et Epic a annoncé des conditions encore plus favorables sur une partie des premiers revenus : vérifiez les conditions en vigueur. Les services en ligne <strong>Epic Online Services</strong> (succès, amis, multijoueur multiplateforme) sont gratuits et utilisables même hors de l'EGS.</p>
+  <p><strong>itch.io</strong> est la porte d'entrée la plus simple : aucun frais, publication en quelques minutes, et vous choisissez vous-même la part reversée à la plateforme (10 % par défaut). Idéal pour une game jam, une démo ou un premier jeu. L'outil en ligne de commande <strong>butler</strong> envoie et met à jour les builds en ne transférant que les différences :</p>
+<script type="text/plain" data-lang="console" data-file="Terminal">
+butler login
+butler push Windows mon-pseudo/orb-rush:windows --userversion 1.0.0
+</script>
+
+  <table>
+    <thead><tr><th></th><th>Steam</th><th>Epic Games Store</th><th>itch.io</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Frais d'entrée</strong></td><td>100 USD par jeu (récupérables)</td><td>Frais d'inscription par titre (voir le portail)</td><td>Aucun</td></tr>
+      <tr><td><strong>Part du magasin</strong></td><td>30 %, puis 25 % et 20 % au-delà de 10 et 50 M USD</td><td>12 %</td><td>Au choix (10 % par défaut)</td></tr>
+      <tr><td><strong>Audience</strong></td><td>La plus large sur PC</td><td>Large, très orientée promotions et jeux gratuits</td><td>Communauté indépendante, jams, prototypes</td></tr>
+      <tr><td><strong>Outils</strong></td><td>SteamPipe, Steamworks, succès, ateliers</td><td>Portail développeur, Epic Online Services</td><td>butler, pages personnalisables</td></tr>
+      <tr><td><strong>Redevance Unreal</strong></td><td>Due au-delà du seuil</td><td>Revenus exonérés</td><td>Due au-delà du seuil</td></tr>
+    </tbody>
+  </table>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    PK["Build packagée<br>Shipping"] --> T["Tests<br>machines variées"]
+    T --> UP["Envoi<br>steamcmd, butler,<br>portail Epic"]
+    UP --> BR["Branche bêta<br>tests internes"]
+    BR --> LIVE["Branche publique<br>les joueurs téléchargent"]
+    LIVE -- "bug ou contenu" --> PATCH["Patch<br>nouvelle version"]
+    PATCH --> T
+</pre>
+    <figcaption>Le cycle de vie d'une version publiée : chaque patch repasse par les tests et une branche de bêta.</figcaption>
+  </figure>
+
+  <h2>Versions et patchs</h2>
+  <p>Numérotez chaque build distribuée, et affichez ce numéro dans le menu principal : un joueur qui signale un bug doit pouvoir dire quelle version il utilise. La version se règle dans <em>Project Version</em> (enregistrée dans <code>DefaultGame.ini</code>) et se lit en C++ :</p>
+<script type="text/plain" data-lang="cpp" data-file="MainMenuWidget.cpp (extrait)">
+#include "GeneralProjectSettings.h"   // module "EngineSettings" dans le Build.cs
+
+FText UMainMenuWidget::GetVersionText() const
+{
+    const FString Version = GetDefault<UGeneralProjectSettings>()->ProjectVersion;
+    return FText::FromString(FString::Printf(TEXT("Version %s"), *Version));
+}
+</script>
+  <p>Pour les mises à jour, les magasins comme Steam ne téléchargent que les blocs modifiés des fichiers. Unreal peut aussi produire de vrais <strong>paks de patch</strong> qui ne contiennent que le contenu modifié : on crée une version de référence au lancement (argument <code>-createreleaseversion=1.0</code>), puis on génère un patch par rapport à elle (<code>-generatepatch -basedonreleaseversion=1.0</code>). Pour télécharger du contenu depuis votre propre serveur (DLC, jeux mobiles), le plugin <strong>ChunkDownloader</strong> récupère des paks à la demande.</p>
+
+  <h2>La licence Unreal Engine</h2>
+  <p>Unreal Engine est <strong>gratuit</strong> à télécharger et à utiliser, code source compris. Pour un jeu commercialisé, le principe de l'EULA (le contrat de licence) est le suivant :</p>
+  <ul>
+    <li>une <strong>redevance de 5 %</strong> du chiffre d'affaires <strong>brut</strong> d'un produit, seulement au-delà du <strong>premier million de dollars</strong> de revenus cumulés sur toute la vie de ce produit ;</li>
+    <li>les revenus réalisés via l'<strong>Epic Games Store</strong> sont <strong>exonérés</strong> ;</li>
+    <li>des <strong>déclarations trimestrielles</strong> de revenus sont à transmettre à Epic une fois les seuils concernés atteints, et Epic demande d'être prévenu de la sortie du jeu ;</li>
+    <li>Epic propose parfois des <strong>taux réduits</strong> via des programmes spécifiques, par exemple pour les jeux qui sortent aussi sur l'Epic Games Store.</li>
+  </ul>
+  <p><strong>Exemple :</strong> un jeu vendu uniquement sur Steam génère 1 500 000 USD de revenus bruts au total. La redevance porte sur 1 500 000 − 1 000 000 = 500 000 USD, soit 5 % × 500 000 = <strong>25 000 USD</strong>. Attention, « brut » signifie avant la commission du magasin : la base de calcul n'est pas ce que Steam vous verse.</p>
+
+  <div class="callout danger">
+    <p class="callout-title">Vérifiez la version actuelle de l'EULA</p>
+    <p>Les conditions de licence évoluent (seuils, exonérations, programmes à taux réduit, règles pour les usages hors jeu vidéo). Ce résumé n'est pas un conseil juridique : avant de commercialiser votre jeu, lisez la version actuelle de l'EULA d'Unreal Engine sur le site d'Epic et sa FAQ, et respectez aussi la mention de copyright et les règles d'utilisation des marques et logos.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Votre jeu, vendu sur Steam et sur l'Epic Games Store, a rapporté 800 000 USD bruts sur Steam et 300 000 USD sur l'EGS. Que devez-vous à Epic au titre de la licence Unreal ?</p>
+    <ul>
+      <li>5 % de 1 100 000 USD</li>
+      <li>5 % de 100 000 USD</li>
+      <li data-correct>Rien : les revenus soumis à redevance (hors EGS) n'ont pas dépassé le million de dollars</li>
+      <li>12 % des ventes EGS</li>
+    </ul>
+    <p class="explain">Les ventes sur l'Epic Games Store sont exonérées de redevance, et le million de dollars des autres revenus n'est pas atteint. Les 12 % sont la commission du magasin EGS, pas la redevance du moteur. Vérifiez toujours ces règles dans l'EULA en vigueur.</p>
+  </div>
+
+  <h2>Checklist avant la sortie</h2>
+  <table>
+    <thead><tr><th>Domaine</th><th>À vérifier</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Options</strong></td><td>Qualité graphique, résolution, mode fenêtré, synchronisation verticale, volumes séparés (musique, effets, voix), sensibilité</td></tr>
+      <tr><td><strong>Sauvegardes</strong></td><td>Sauvegarde et chargement fiables, comportement si le fichier est absent ou corrompu, compatibilité entre versions</td></tr>
+      <tr><td><strong>Contrôles</strong></td><td>Manette complète (menus compris), icônes adaptées au périphérique, <strong>remappage des touches</strong></td></tr>
+      <tr><td><strong>Accessibilité</strong></td><td><strong>Sous-titres</strong> (taille, fond), modes pour <strong>daltoniens</strong>, réduction des flashs et du flou de mouvement, difficulté adaptable</td></tr>
+      <tr><td><strong>Localisation</strong></td><td>Tous les textes en <code>FText</code>, traductions intégrées, textes qui ne débordent pas en allemand</td></tr>
+      <tr><td><strong>Performances</strong></td><td>Cible tenue (par exemple 60 FPS) sur la configuration minimale annoncée, temps de chargement, mémoire</td></tr>
+      <tr><td><strong>Légal</strong></td><td>Crédits complets, mentions exigées par l'EULA d'Unreal, licences des assets (Fab, polices, musiques) et des bibliothèques tierces</td></tr>
+      <tr><td><strong>Build</strong></td><td>Shipping, numéro de version affiché, symboles archivés, test sur une machine vierge</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout ue">
+    <p class="callout-title">Pour aller plus loin</p>
+    <p>Dans la documentation d'Epic, cherchez « Packaging Your Project », « Build Operations: Cooking, Packaging, Deploying, and Running » et « Cooking Content ». Côté Valve, la documentation <em>Steamworks</em> détaille SteamPipe, les depots et la revue des builds.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Une build Shipping avec icône et niveau de démarrage</h4>
+    <p>Packagez votre projet (par exemple celui du <a href="projet.html">projet guidé</a>) en <strong>Shipping</strong> pour Windows. Le jeu doit démarrer sur le menu principal, afficher votre propre icône dans l'explorateur Windows et la barre des tâches, et fonctionner sur une autre machine.</p>
+    <details>
+      <summary>Voir la solution</summary>
+      <ol class="steps">
+        <li><strong>Préparer l'icône</strong>Créez une image carrée et convertissez-la en <code>.ico</code> contenant une taille de 256 × 256 (la plupart des outils d'image le font).</li>
+        <li><strong>Régler l'identité</strong>Project Settings → Description : nom, version <code>1.0.0</code>, entreprise. Platforms → Windows → <em>Game Icon</em> : choisissez votre <code>.ico</code>.</li>
+        <li><strong>Régler les niveaux</strong>Maps &amp; Modes → <em>Game Default Map</em> = votre menu principal. Packaging → <em>List of maps to include</em> : ajoutez le menu et tous les niveaux de jeu.</li>
+        <li><strong>Régler le packaging</strong>Packaging → <em>Build Configuration</em> = Shipping, <em>Full Rebuild</em> et <em>For Distribution</em> cochés, <em>Include prerequisites installer</em> coché.</li>
+        <li><strong>Packager</strong>Platforms → Windows → Binary Configuration = Shipping, puis <em>Package Project</em>. Attendez <code>BUILD SUCCESSFUL</code> dans l'Output Log.</li>
+        <li><strong>Vérifier</strong>Dans le dossier <code>Windows/</code>, <code>MyGame.exe</code> affiche votre icône. Copiez tout le dossier sur une autre machine (lancez d'abord <code>UEPrereqSetup_x64.exe</code> depuis <code>Engine/Extras/Redist</code> si besoin) et vérifiez que le menu apparaît, que les niveaux se chargent et qu'aucun asset ne manque.</li>
+      </ol>
+      <p>Si l'icône n'a pas changé : elle est intégrée à l'exécutable, faites un <em>Full Rebuild</em>. Si le problème persiste sur un projet uniquement Blueprint, ajouter une classe C++ (même vide) force la compilation d'un exécutable propre au projet. Enfin, l'explorateur Windows garde parfois l'ancienne icône en cache.</p>
+    </details>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li><strong>Development</strong> pour travailler, <strong>Shipping</strong> pour distribuer : Shipping retire console, logs, stats et <code>check()</code>.</li>
+      <li>Le <strong>cook</strong> n'inclut que ce qui est référencé : déclarez vos niveaux et vos assets chargés dynamiquement.</li>
+      <li>Le packaging enchaîne <strong>Build, Cook, Stage, Package, Archive</strong> ; <code>RunUAT BuildCookRun</code> fait de même en ligne de commande.</li>
+      <li>Protégez le code d'éditeur avec <code>WITH_EDITOR</code>, incluez les prérequis et testez sur une machine vierge.</li>
+      <li><strong>Steam</strong> : 100 USD par jeu, SteamPipe pour envoyer les builds ; <strong>EGS</strong> : 88/12 et revenus exonérés de redevance ; <strong>itch.io</strong> : le plus simple.</li>
+      <li>Licence Unreal : <strong>5 % au-delà du premier million</strong> de revenus bruts par produit, hors EGS. Vérifiez toujours l'EULA en vigueur.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

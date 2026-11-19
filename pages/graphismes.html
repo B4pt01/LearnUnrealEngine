@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Matériaux, lumière &amp; VFX — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="graphismes">
+<article class="doc">
+
+  <h1>Matériaux, lumière &amp; VFX</h1>
+  <p class="lead">Un jeu, c'est aussi une image. Ce chapitre vous montre comment Unreal fabrique chaque frame, comment créer des matériaux réalistes et pilotables depuis le code, comment éclairer une scène avec Lumen, la finaliser avec le post-process et l'animer avec des effets Niagara. Le but n'est pas de faire de vous un artiste technique, mais de vous donner les bons réflexes de programmeur face au rendu.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Comprendre le <strong>rendu différé</strong> d'UE5 : G-Buffer, Lumen, Virtual Shadow Maps, TSR</li>
+      <li>Créer des <strong>matériaux PBR</strong> et les piloter avec des <strong>Material Instances</strong>, y compris en C++</li>
+      <li>Régler correctement les <strong>textures</strong> : compression, sRGB, mipmaps, channel packing</li>
+      <li>Savoir quand utiliser <strong>Nanite</strong>, <strong>Lumen</strong> ou un éclairage précalculé</li>
+      <li>Éclairer une scène extérieure et la finaliser avec le <strong>post-process</strong></li>
+      <li>Déclencher des effets <strong>Niagara</strong> depuis le gameplay</li>
+      <li>Rendre votre jeu <strong>scalable</strong> pour les machines modestes</li>
+    </ul>
+  </div>
+
+  <h2>Comment Unreal dessine une image</h2>
+  <p>À chaque frame, le moteur transforme des milliers d'objets 3D en une image 2D, en moins de 16 ms pour tenir 60 images par seconde. Sur PC et consoles, Unreal utilise par défaut un <strong>rendu différé</strong> (<em>deferred rendering</em>) : au lieu de calculer l'éclairage de chaque objet au moment où il est dessiné, il dessine d'abord <em>toute</em> la géométrie dans des textures intermédiaires, puis calcule la lumière une seule fois par pixel visible. Le coût de l'éclairage dépend alors du nombre de pixels éclairés, et non du nombre d'objets.</p>
+
+  <dl class="defs">
+    <dt>G-Buffer</dt><dd>Le « Geometry Buffer » : un ensemble de textures plein écran qui stockent, pour chaque pixel, la couleur de base, la normale, la rugosité, le caractère métallique, la profondeur… C'est ce que remplissent vos matériaux.</dd>
+    <dt>Shader</dt><dd>Programme exécuté par la carte graphique. Chaque matériau est compilé en plusieurs shaders : c'est la cause des fameux « Compiling Shaders » de l'éditeur.</dd>
+    <dt>Draw call</dt><dd>Une commande envoyée au GPU pour dessiner un objet avec un matériau. Trop de draw calls saturent le processeur ; Nanite et l'instanciation les réduisent fortement.</dd>
+    <dt>Upscaling</dt><dd>Calculer l'image à une résolution inférieure puis la reconstruire à la résolution de l'écran. C'est le rôle de TSR, qui exploite les frames précédentes.</dd>
+  </dl>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    G["Géométrie<br>Nanite + meshes classiques"] --> GB["Base pass<br>remplit le G-Buffer"]
+    GB --> L["Éclairage<br>Lumen : GI et réflexions<br>Virtual Shadow Maps"]
+    L --> T["Translucidité<br>verre, particules"]
+    T --> PP["Post-process<br>profondeur de champ"]
+    PP --> TSR["TSR<br>upscaling temporel"]
+    TSR --> PP2["Bloom, tone mapping,<br>étalonnage"]
+    PP2 --> S["Écran<br>+ interface UMG"]
+</pre>
+    <figcaption>Le trajet simplifié d'une frame. L'ordre exact est plus fin (certains effets passent avant TSR, d'autres après), mais retenez la logique : géométrie, puis lumière, puis retouches.</figcaption>
+  </figure>
+
+  <div class="callout info">
+    <p class="callout-title">Et le rendu forward ?</p>
+    <p>Le <strong>Forward Shading</strong> (Project Settings → Rendering → Forward Renderer) calcule la lumière objet par objet. Il est plus léger pour des scènes simples et autorise l'anti-aliasing MSAA, d'où son usage en réalité virtuelle, mais il prend en charge moins de fonctionnalités. Les plateformes mobiles ont leur propre moteur de rendu, plus limité.</p>
+  </div>
+
+  <h2>Les matériaux : décrire une surface</h2>
+  <p>Un <strong>matériau</strong> (asset <em>Material</em>, préfixe <code>M_</code>) décrit l'aspect d'une surface : sa couleur, sa brillance, son relief, s'il émet de la lumière ou laisse passer le regard. On le construit dans le <strong>Material Editor</strong> (double-clic sur l'asset) en reliant des nœuds, comme en Blueprint. Une différence essentielle : il n'y a pas de flux d'exécution. Le graphe est une <strong>formule évaluée pour chaque pixel</strong> par la carte graphique, des millions de fois par frame.</p>
+  <p>L'éditeur affiche le graphe au centre, un aperçu 3D à gauche et le panneau <strong>Details</strong> où se règlent les options globales du matériau : <em>Material Domain</em> (Surface, Post Process, Light Function, User Interface…), <em>Blend Mode</em>, <em>Shading Model</em> et <em>Two Sided</em>. Cliquez sur <strong>Apply</strong> pour compiler et voir le résultat en jeu.</p>
+
+  <h3>Le PBR : décrire la matière, pas le rendu</h3>
+  <p>Unreal utilise le <strong>PBR</strong> (<em>Physically Based Rendering</em>). Au lieu de peindre l'aspect final (reflets, ombres), on décrit les <strong>propriétés physiques</strong> de la matière, et le moteur calcule son apparence sous n'importe quel éclairage. Un même matériau « métal brossé » paraîtra juste au soleil, dans une cave ou sous un néon. Les entrées principales du nœud final :</p>
+
+  <table>
+    <thead><tr><th>Entrée</th><th>Rôle</th><th>Valeurs typiques</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Base Color</strong></td><td>Couleur de la matière sans aucun éclairage (albédo)</td><td>Entre 0,02 et 0,9 environ : évitez le noir et le blanc purs. Pour un métal, c'est la couleur du reflet (or, cuivre).</td></tr>
+      <tr><td><strong>Metallic</strong></td><td>Métal ou non-métal</td><td><strong>0</strong> (bois, plastique, peau, pierre) ou <strong>1</strong> (métal nu). Les valeurs intermédiaires ne servent qu'aux transitions : rouille, poussière sur du métal.</td></tr>
+      <tr><td><strong>Specular</strong></td><td>Réflexion des non-métaux</td><td>Laissez <code>0.5</code> (valeur par défaut) dans presque tous les cas.</td></tr>
+      <tr><td><strong>Roughness</strong></td><td>Rugosité : netteté des reflets</td><td>0 = miroir ; 0,2–0,4 vernis, sol mouillé ; 0,5–0,7 plastique ; 0,8–1 pierre, tissu, terre.</td></tr>
+      <tr><td><strong>Normal</strong></td><td>Relief fin sans géométrie (normal map)</td><td>Une texture compressée en <em>Normalmap</em>. Non connectée = surface lisse.</td></tr>
+      <tr><td><strong>Emissive Color</strong></td><td>Lumière émise par la surface</td><td>0 par défaut. De 1 à 50 et plus pour un écran, un néon, de la lave : plus la valeur est forte, plus le bloom fait « briller » la surface.</td></tr>
+      <tr><td><strong>Ambient Occlusion</strong></td><td>Assombrit les creux (ombre de contact précalculée)</td><td>1 = aucune occlusion. Généralement une texture issue du logiciel de modélisation.</td></tr>
+      <tr><td><strong>Opacity</strong> / <strong>Opacity Mask</strong></td><td>Transparence</td><td><em>Opacity</em> de 0 à 1 en mode Translucent ; <em>Opacity Mask</em> en mode Masked : chaque pixel est visible ou non selon le seuil <em>Opacity Mask Clip Value</em> (0,3333 par défaut).</td></tr>
+    </tbody>
+  </table>
+
+  <figure class="figure">
+    <svg viewBox="0 0 740 320" width="740" role="img" aria-label="Deux rangées de sphères, plastique rouge et or, de la plus lisse à la plus rugueuse">
+      <defs>
+        <radialGradient id="sph-p0" cx="50%" cy="50%" r="50%" fx="34%" fy="30%"><stop offset="0" stop-color="#ffffff"/><stop offset="0.07" stop-color="#ffffff"/><stop offset="0.12" stop-color="#e65a4f"/><stop offset="0.5" stop-color="#a8261c"/><stop offset="1" stop-color="#2a0806"/></radialGradient>
+        <radialGradient id="sph-p1" cx="50%" cy="50%" r="50%" fx="34%" fy="30%"><stop offset="0" stop-color="#fff4f2"/><stop offset="0.1" stop-color="#ffb3aa"/><stop offset="0.22" stop-color="#e2554a"/><stop offset="0.6" stop-color="#9e241b"/><stop offset="1" stop-color="#2a0806"/></radialGradient>
+        <radialGradient id="sph-p2" cx="50%" cy="50%" r="50%" fx="34%" fy="30%"><stop offset="0" stop-color="#ffc2bb"/><stop offset="0.25" stop-color="#ec6a5f"/><stop offset="0.65" stop-color="#a3271e"/><stop offset="1" stop-color="#300a07"/></radialGradient>
+        <radialGradient id="sph-p3" cx="50%" cy="50%" r="50%" fx="36%" fy="32%"><stop offset="0" stop-color="#f39087"/><stop offset="0.45" stop-color="#d64a3f"/><stop offset="1" stop-color="#3a0e0a"/></radialGradient>
+        <radialGradient id="sph-p4" cx="50%" cy="50%" r="50%" fx="38%" fy="35%"><stop offset="0" stop-color="#e8766c"/><stop offset="0.6" stop-color="#c44036"/><stop offset="1" stop-color="#4a120d"/></radialGradient>
+        <radialGradient id="sph-g0" cx="50%" cy="50%" r="50%" fx="34%" fy="30%"><stop offset="0" stop-color="#ffffff"/><stop offset="0.07" stop-color="#fffbe6"/><stop offset="0.13" stop-color="#ffe27a"/><stop offset="0.45" stop-color="#c8941f"/><stop offset="0.8" stop-color="#5a3c05"/><stop offset="1" stop-color="#1f1400"/></radialGradient>
+        <radialGradient id="sph-g1" cx="50%" cy="50%" r="50%" fx="34%" fy="30%"><stop offset="0" stop-color="#fff8dc"/><stop offset="0.12" stop-color="#ffe48a"/><stop offset="0.3" stop-color="#e0ac30"/><stop offset="0.7" stop-color="#7a5208"/><stop offset="1" stop-color="#251800"/></radialGradient>
+        <radialGradient id="sph-g2" cx="50%" cy="50%" r="50%" fx="34%" fy="30%"><stop offset="0" stop-color="#ffeaa0"/><stop offset="0.3" stop-color="#e8b53a"/><stop offset="0.75" stop-color="#8a5e0c"/><stop offset="1" stop-color="#2c1d02"/></radialGradient>
+        <radialGradient id="sph-g3" cx="50%" cy="50%" r="50%" fx="36%" fy="32%"><stop offset="0" stop-color="#f5d070"/><stop offset="0.5" stop-color="#cf9a2a"/><stop offset="1" stop-color="#3a2706"/></radialGradient>
+        <radialGradient id="sph-g4" cx="50%" cy="50%" r="50%" fx="38%" fy="35%"><stop offset="0" stop-color="#e6c05e"/><stop offset="0.65" stop-color="#b8862a"/><stop offset="1" stop-color="#4a3410"/></radialGradient>
+      </defs>
+      <text x="16" y="92" font-size="14" font-weight="600" fill="currentColor">Metallic 0</text>
+      <text x="16" y="110" font-size="12" fill="currentColor" opacity="0.7">plastique</text>
+      <text x="16" y="212" font-size="14" font-weight="600" fill="currentColor">Metallic 1</text>
+      <text x="16" y="230" font-size="12" fill="currentColor" opacity="0.7">or</text>
+      <circle cx="175" cy="98" r="48" fill="url(#sph-p0)"/>
+      <circle cx="300" cy="98" r="48" fill="url(#sph-p1)"/>
+      <circle cx="425" cy="98" r="48" fill="url(#sph-p2)"/>
+      <circle cx="550" cy="98" r="48" fill="url(#sph-p3)"/>
+      <circle cx="675" cy="98" r="48" fill="url(#sph-p4)"/>
+      <circle cx="175" cy="218" r="48" fill="url(#sph-g0)"/>
+      <circle cx="300" cy="218" r="48" fill="url(#sph-g1)"/>
+      <circle cx="425" cy="218" r="48" fill="url(#sph-g2)"/>
+      <circle cx="550" cy="218" r="48" fill="url(#sph-g3)"/>
+      <circle cx="675" cy="218" r="48" fill="url(#sph-g4)"/>
+      <text x="16" y="292" font-size="14" font-weight="600" fill="currentColor">Roughness</text>
+      <g font-size="13" fill="currentColor" text-anchor="middle">
+        <text x="175" y="292">0</text><text x="300" y="292">0,25</text><text x="425" y="292">0,5</text><text x="550" y="292">0,75</text><text x="675" y="292">1</text>
+      </g>
+      <line x1="150" y1="308" x2="700" y2="308" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.5"/>
+      <path d="M700 308 l-8 -4 v8 z" fill="currentColor" fill-opacity="0.45"/>
+      <text x="16" y="34" font-size="12" fill="currentColor" opacity="0.7">Lisse : reflet petit et net</text>
+      <text x="724" y="34" font-size="12" fill="currentColor" opacity="0.7" text-anchor="end">Rugueux : lumière étalée et mate</text>
+    </svg>
+    <figcaption>Plus la <b>Roughness</b> augmente, plus le reflet de la lumière s'étale et s'affadit. Le métal (en bas) teinte son reflet avec sa Base Color ; le plastique (en haut) garde un reflet blanc.</figcaption>
+  </figure>
+
+  <h3>Blend modes : opaque ou transparent ?</h3>
+  <p>Le <strong>Blend Mode</strong> indique comment le pixel du matériau se combine avec ce qui est derrière. C'est un choix de performance autant que d'apparence :</p>
+  <table>
+    <thead><tr><th>Blend Mode</th><th>Usage</th><th>Coût et limites</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Opaque</strong></td><td>L'immense majorité des surfaces : murs, sols, personnages</td><td>Le moins cher. À utiliser par défaut.</td></tr>
+      <tr><td><strong>Masked</strong></td><td>Transparence tout ou rien : feuillage, grillage, tissu déchiré</td><td>Plus coûteux qu'Opaque (surtout empilé : herbe dense). Pris en charge par Nanite depuis UE 5.1.</td></tr>
+      <tr><td><strong>Translucent</strong></td><td>Vraie semi-transparence : verre, eau, fumée, hologramme</td><td>Cher, trié par distance, interagit mal avec l'éclairage et n'écrit pas la profondeur. Non pris en charge par Nanite.</td></tr>
+      <tr><td><strong>Additive</strong></td><td>Ajoute sa couleur à l'arrière-plan : feu, étincelles, lasers</td><td>Ne peut qu'éclaircir. Pratique pour les particules lumineuses.</td></tr>
+    </tbody>
+  </table>
+  <p>Il existe aussi <em>Modulate</em> (multiplie l'arrière-plan, pour assombrir) et des modes plus spécialisés, plus rarement utilisés.</p>
+
+  <h3>Shading models</h3>
+  <p>Le <strong>Shading Model</strong> choisit l'équation d'éclairage. Il change aussi les entrées disponibles sur le nœud final (les entrées inutiles sont grisées) :</p>
+  <dl class="defs">
+    <dt>Default Lit</dt><dd>Le modèle standard, pour presque tout.</dd>
+    <dt>Unlit</dt><dd>Aucun éclairage : seule l'entrée Emissive compte. Idéal pour les effets, les écrans, les hologrammes, et très bon marché.</dd>
+    <dt>Subsurface</dt><dd>La lumière pénètre et diffuse sous la surface : cire, jade, glace, peau stylisée. <em>Subsurface Profile</em> est la version haut de gamme pour la peau réaliste.</dd>
+    <dt>Clear Coat</dt><dd>Une couche de vernis transparent au-dessus du matériau : peinture de voiture, bois verni, fibre de carbone.</dd>
+    <dt>Two Sided Foliage</dt><dd>Laisse passer la lumière à travers les feuilles fines.</dd>
+    <dt>Cloth, Hair, Eye</dt><dd>Modèles dédiés aux tissus (velours), aux cheveux et aux yeux des personnages réalistes.</dd>
+  </dl>
+
+  <h2>Construire un graphe de matériau</h2>
+  <p>Voici un matériau typique d'accessoire, <code>M_Caisse</code>. La texture de couleur est teintée par un paramètre <code>Tint</code>, la rugosité est réglable et une normal map ajoute le relief des planches. Le nœud de droite, qui porte le nom du matériau, est le <strong>nœud de sortie</strong> : tout ce qui n'y est pas relié n'existe pas.</p>
+
+<script type="application/json" class="bp-graph" data-caption="Imitation du Material Editor : la couleur de la texture est multipliée par la teinte, puis envoyée dans Base Color.">
+{
+  "nodes": [
+    { "id": "uv", "type": "pure", "title": "TexCoord[0]", "x": 0, "y": 0, "out": [ { "type": "vector" } ] },
+    { "id": "texd", "type": "function", "title": "Texture Sample", "subtitle": "T_Caisse_D", "x": 190, "y": 0,
+      "in": [ { "name": "UVs", "type": "vector" } ],
+      "out": [ { "name": "RGB", "type": "vector" }, { "name": "A", "type": "float" } ] },
+    { "id": "tint", "type": "pure", "title": "Tint", "subtitle": "Vector Parameter", "x": 190, "y": 135,
+      "out": [ { "type": "vector" } ] },
+    { "id": "mul", "type": "op", "title": "×", "x": 400, "y": 43,
+      "in": [ { "name": "A", "type": "vector" }, { "name": "B", "type": "vector" } ],
+      "out": [ { "type": "vector" } ] },
+    { "id": "rough", "type": "pure", "title": "Roughness", "subtitle": "Scalar Parameter", "x": 400, "y": 135,
+      "out": [ { "type": "float" } ] },
+    { "id": "texn", "type": "function", "title": "Texture Sample", "subtitle": "T_Caisse_N", "x": 400, "y": 245,
+      "in": [ { "name": "UVs", "type": "vector" } ],
+      "out": [ { "name": "RGB", "type": "vector" } ] },
+    { "id": "out", "type": "flow", "title": "M_Caisse", "x": 610, "y": 40,
+      "in": [ { "name": "Base Color", "type": "vector" }, { "name": "Metallic", "type": "float", "value": "0.0" },
+              { "name": "Specular", "type": "float", "value": "0.5" }, { "name": "Roughness", "type": "float" },
+              { "name": "Emissive Color", "type": "vector" }, { "name": "Normal", "type": "vector" } ] }
+  ],
+  "links": [
+    [ "uv", 0, "texd", 0 ],
+    [ "texd", 0, "mul", 0 ],
+    [ "tint", 0, "mul", 1 ],
+    [ "mul", 0, "out", 0 ],
+    [ "rough", 0, "out", 3 ],
+    [ "texn", 0, "out", 5 ]
+  ]
+}
+</script>
+
+  <p>Quelques remarques sur ce graphe :</p>
+  <ul>
+    <li><strong>TexCoord</strong> fournit les coordonnées UV du mesh. Le multiplier (par 2, par 4…) répète la texture : c'est le <em>tiling</em>. Si l'entrée UVs d'un Texture Sample reste vide, le canal UV 0 est utilisé.</li>
+    <li>Le <strong>Texture Sample</strong> de la normal map doit avoir le <em>Sampler Type</em> <code>Normal</code> : l'éditeur signale une erreur sinon.</li>
+    <li><strong>Tint</strong> et <strong>Roughness</strong> sont des <em>paramètres</em> : ils pourront changer d'une instance à l'autre sans recompiler (voir plus bas).</li>
+  </ul>
+
+  <h3>Les nœuds à connaître</h3>
+  <p>Le Material Editor propose des centaines d'expressions, mais une douzaine suffit pour la plupart des besoins. Astuce : maintenez une touche et cliquez dans le graphe pour créer un nœud instantanément.</p>
+  <table>
+    <thead><tr><th>Nœud</th><th>Touche + clic</th><th>Usage</th></tr></thead>
+    <tbody>
+      <tr><td>Constant / Constant3Vector</td><td><kbd>1</kbd> / <kbd>3</kbd></td><td>Un nombre fixe, une couleur fixe</td></tr>
+      <tr><td>Texture Sample</td><td><kbd>T</kbd></td><td>Lire une texture</td></tr>
+      <tr><td>TextureCoordinate</td><td><kbd>U</kbd></td><td>Coordonnées UV, tiling</td></tr>
+      <tr><td>Multiply / Add</td><td><kbd>M</kbd> / <kbd>A</kbd></td><td>Combiner des valeurs : teinter, assombrir, décaler</td></tr>
+      <tr><td>Lerp (LinearInterpolate)</td><td><kbd>L</kbd></td><td>Mélanger A et B selon Alpha (0 donne A, 1 donne B) : mousse sur la pierre, usure, neige</td></tr>
+      <tr><td>Scalar / Vector Parameter</td><td><kbd>S</kbd> / <kbd>V</kbd></td><td>Valeurs exposées aux instances et au code</td></tr>
+      <tr><td>Panner</td><td><kbd>P</kbd></td><td>Faire défiler des UV dans le temps : eau, lave, tapis roulant</td></tr>
+      <tr><td>Time</td><td>—</td><td>Temps écoulé : base de toutes les animations de matériau</td></tr>
+      <tr><td>Fresnel</td><td>—</td><td>Valeur proche de 1 sur les bords vus de profil : liseré lumineux, bouclier d'énergie</td></tr>
+      <tr><td>World Position Offset</td><td>(entrée du nœud final)</td><td>Déplacer les sommets sur le GPU : herbe au vent, drapeau, respiration d'une créature</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <p class="callout-title">World Position Offset ne déplace que l'image</p>
+    <p>Le WPO déplace les sommets au moment du rendu, mais la <strong>collision</strong> ne bouge pas : un drapeau animé par WPO ne poussera jamais le joueur. Le WPO a aussi un coût : avec Nanite et les Virtual Shadow Maps, les meshes animés ainsi doivent être retraités à chaque frame. Limitez-le aux objets qui en ont vraiment besoin.</p>
+  </div>
+
+  <h2>Material Instances : un matériau, mille variantes</h2>
+  <p>Compiler un matériau prend du temps et crée des shaders qui occupent de la mémoire. Pour obtenir dix caisses de couleurs différentes, on ne crée donc pas dix matériaux : on crée un <strong>matériau parent</strong> (souvent appelé <em>master material</em>) qui expose des paramètres, puis des <strong>Material Instances</strong> (préfixe <code>MI_</code>) qui changent seulement les valeurs. Clic droit sur le matériau → <em>Create Material Instance</em>.</p>
+
+  <ul class="tree">
+    <li><span class="node c-purple">M_Master</span><span class="desc">Le graphe complet, compilé une seule fois en shaders</span>
+      <ul>
+        <li><span class="node c-blue">MI_Metal</span><span class="desc">Metallic 1, Roughness 0,3</span>
+          <ul>
+            <li><span class="node c-blue">MI_Metal_Rouille</span><span class="desc">Hérite de MI_Metal, ne change que la texture</span></li>
+          </ul>
+        </li>
+        <li><span class="node c-blue">MI_Bois_Clair</span><span class="desc">Tint beige, Roughness 0,7</span></li>
+        <li><span class="node c-orange">MID (en jeu)</span><span class="desc">Instance dynamique créée par le code pour un ennemi précis</span></li>
+      </ul>
+    </li>
+  </ul>
+
+  <h3>Les types de paramètres</h3>
+  <table>
+    <thead><tr><th>Paramètre</th><th>Exemple</th><th>Changer sa valeur…</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Scalar Parameter</strong></td><td>Roughness, intensité d'émissif, vitesse de défilement</td><td>Instantané, même en jeu</td></tr>
+      <tr><td><strong>Vector Parameter</strong></td><td>Tint, couleur d'équipe, couleur de flash</td><td>Instantané, même en jeu</td></tr>
+      <tr><td><strong>Texture Parameter</strong></td><td>Texture de couleur, normal map, motif</td><td>Instantané, même en jeu</td></tr>
+      <tr><td><strong>Static Switch Parameter</strong></td><td>« Utiliser une normal map ? », « Activer la neige ? »</td><td>Compile une <strong>nouvelle permutation</strong> de shaders : uniquement dans l'éditeur</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout perf">
+    <p class="callout-title">Attention à l'explosion des permutations</p>
+    <p>Chaque Static Switch double potentiellement le nombre de shaders à compiler : 5 switches indépendants, c'est jusqu'à 32 variantes. Ils sont utiles pour retirer des calculs coûteux, mais un master material avec des dizaines de switches rallonge fortement les compilations et le cook.</p>
+  </div>
+
+  <h3>Constante ou dynamique</h3>
+  <div class="compare">
+    <div class="neutral">
+      <h4>Material Instance Constant (MIC)</h4>
+      <p>L'asset <code>MI_</code> créé dans le Content Browser. Ses valeurs sont fixées dans l'éditeur et partagées par tous les objets qui l'utilisent. Parfait pour les variantes de décor.</p>
+    </div>
+    <div class="alt">
+      <h4>Material Instance Dynamic (MID)</h4>
+      <p>Créée <strong>en jeu</strong>, par Blueprint ou C++, pour un objet précis. Ses paramètres peuvent changer à chaque frame sans affecter les autres objets : flash de dégât, dissolution, jauge.</p>
+    </div>
+  </div>
+
+  <p>Exemple classique : un mannequin d'entraînement qui <strong>clignote en rouge</strong> quand il prend des dégâts. Le matériau parent ajoute à son émissif <code>FlashColor × FlashAmount × 20</code> ; il suffit de passer <code>FlashAmount</code> de 0 à 1 puis de revenir à 0. La gestion des dégâts elle-même est détaillée dans <a href="systemes-gameplay.html">Systèmes de gameplay</a>.</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+      <p>Au <code>BeginPlay</code>, le nœud <em>Create Dynamic Material Instance</em> (Target : le mesh, Element Index : 0) crée la MID ; faites clic droit sur sa sortie → <em>Promote to Variable</em> pour la stocker dans <code>Body MID</code>. Ensuite, à chaque dégât, une <strong>Timeline</strong> dont la piste <code>Flash</code> passe de 1 à 0 en 0,15 s pilote le paramètre :</p>
+<script type="application/json" class="bp-graph" data-caption="Event AnyDamage relance la Timeline ; à chaque mise à jour, la valeur de la piste Flash est écrite dans la MID.">
+{
+  "nodes": [
+    { "id": "dmg", "type": "event", "title": "Event AnyDamage", "x": 0, "y": 0,
+      "out": [ { "type": "exec" }, { "name": "Damage", "type": "float" } ] },
+    { "id": "tl", "type": "flow", "title": "FlashTimeline", "x": 216, "y": 0,
+      "in": [ { "name": "Play", "type": "exec" }, { "name": "Play from Start", "type": "exec" }, { "name": "Stop", "type": "exec" }, { "name": "Reverse", "type": "exec" } ],
+      "out": [ { "name": "Update", "type": "exec" }, { "name": "Finished", "type": "exec" }, { "name": "Direction", "type": "enum" }, { "name": "Flash", "type": "float" } ] },
+    { "id": "mid", "type": "var", "title": "Body MID", "x": 296, "y": 182, "out": [ { "type": "object" } ] },
+    { "id": "set", "type": "function", "title": "Set Scalar Parameter Value", "subtitle": "Target is Material Instance Dynamic", "x": 500, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object" }, { "name": "Parameter Name", "type": "name", "value": "FlashAmount" }, { "name": "Value", "type": "float" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "dmg", 0, "tl", 1 ],
+    [ "tl", 0, "set", 0 ],
+    [ "tl", 3, "set", 3 ],
+    [ "mid", 0, "set", 1 ]
+  ]
+}
+</script>
+      <p>La Timeline donne un fondu progressif. Pour un flash sec, on peut aussi utiliser <em>Set Timer by Event</em>, l'équivalent du timer C++.</p>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="TargetDummy.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "TargetDummy.generated.h"
+
+class UStaticMeshComponent;
+class UMaterialInstanceDynamic;
+
+UCLASS()
+class MYGAME_API ATargetDummy : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    ATargetDummy();
+
+    virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent,
+        class AController* EventInstigator, AActor* DamageCauser) override;
+
+protected:
+    virtual void BeginPlay() override;
+
+    UPROPERTY(VisibleAnywhere, Category = "Dummy")
+    TObjectPtr<UStaticMeshComponent> Mesh;
+
+    UPROPERTY(EditAnywhere, Category = "Dummy|Flash")
+    FLinearColor FlashColor = FLinearColor(1.f, 0.05f, 0.05f);
+
+    UPROPERTY(EditAnywhere, Category = "Dummy|Flash", meta = (ClampMin = "0.01"))
+    float FlashDuration = 0.12f;
+
+private:
+    void StopFlash();
+
+    // Instance dynamique propre à CET acteur
+    UPROPERTY(Transient)
+    TObjectPtr<UMaterialInstanceDynamic> BodyMID;
+
+    FTimerHandle FlashTimer;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="TargetDummy.cpp" data-highlight="28-29,40-41,44">
+#include "TargetDummy.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/DamageEvents.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "TimerManager.h"
+
+namespace DummyParams
+{
+    // Doivent correspondre EXACTEMENT aux noms des paramètres du matériau
+    const FName FlashAmount(TEXT("FlashAmount"));
+    const FName FlashColor(TEXT("FlashColor"));
+}
+
+ATargetDummy::ATargetDummy()
+{
+    PrimaryActorTick.bCanEverTick = false;
+    Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
+    RootComponent = Mesh;
+}
+
+void ATargetDummy::BeginPlay()
+{
+    Super::BeginPlay();
+
+    // Le matériau de l'emplacement 0 (souvent une MIC) devient le parent de la MID
+    if (UMaterialInterface* BaseMaterial = Mesh->GetMaterial(0))
+    {
+        BodyMID = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+        Mesh->SetMaterial(0, BodyMID);
+    }
+}
+
+float ATargetDummy::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
+    AController* EventInstigator, AActor* DamageCauser)
+{
+    const float Applied = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+
+    if (BodyMID)
+    {
+        BodyMID->SetVectorParameterValue(DummyParams::FlashColor, FlashColor);
+        BodyMID->SetScalarParameterValue(DummyParams::FlashAmount, 1.f);
+
+        // SetTimer relance le minuteur : des coups rapprochés prolongent le flash
+        GetWorldTimerManager().SetTimer(FlashTimer, this, &ATargetDummy::StopFlash, FlashDuration, false);
+    }
+    return Applied;
+}
+
+void ATargetDummy::StopFlash()
+{
+    if (BodyMID)
+    {
+        BodyMID->SetScalarParameterValue(DummyParams::FlashAmount, 0.f);
+    }
+}
+</script>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <p class="callout-title">Pièges classiques avec les MID</p>
+    <p>Un nom de paramètre mal orthographié ne provoque <strong>aucune erreur</strong> : l'appel est simplement ignoré. Vérifiez la casse exacte. Autre piège : créer une nouvelle MID à chaque dégât au lieu de la réutiliser ; vous accumulez des objets inutiles. Créez-la une fois au <code>BeginPlay</code> et gardez-la dans une propriété <code>UPROPERTY</code> pour que le garbage collector ne la détruise pas.</p>
+  </div>
+
+  <h3>Réutiliser et partager : les autres outils</h3>
+  <dl class="defs">
+    <dt>Material Function</dt><dd>Un morceau de graphe réutilisable (préfixe <code>MF_</code>), avec ses propres nœuds <em>Function Input</em> et <em>Function Output</em>. Exemple : une fonction « neige selon l'orientation » appelée par tous vos matériaux de rochers. Modifier la fonction met à jour tous ses utilisateurs.</dd>
+    <dt>Material Parameter Collection</dt><dd>Un asset (préfixe <code>MPC_</code>) qui regroupe des paramètres <strong>globaux</strong> lus par de nombreux matériaux : force du vent, humidité de la pluie, position du joueur pour écarter l'herbe. Une seule écriture (nœud <em>Set Scalar Parameter Value</em> de la collection, ou <code>UKismetMaterialLibrary::SetScalarParameterValue</code> en C++) met à jour tout le monde. Un matériau peut référencer au plus deux collections.</dd>
+    <dt>Material Layers</dt><dd>Un système d'empilement de couches (assets <em>Material Layer</em> et <em>Material Layer Blend</em>) réglées directement dans l'instance : métal, puis peinture, puis boue, chacune avec son masque. Pratique pour les véhicules et les armes.</dd>
+    <dt>Substrate</dt><dd>Le nouveau cadre de matériaux d'UE5, qui remplace les shading models figés par des « slabs » combinables (un vernis sur un métal sur un tissu…). Expérimental à son arrivée (5.2), il a progressivement mûri : son statut et son activation (Project Settings → Rendering) dépendent de votre version. Vérifiez les notes de version avant de l'adopter en production.</dd>
+  </dl>
+
+  <div class="quiz">
+    <p class="q">Vous voulez que chaque ennemi puisse changer de couleur indépendamment pendant la partie. Quelle solution choisir ?</p>
+    <ul>
+      <li>Un matériau différent par ennemi</li>
+      <li>Modifier la Material Instance Constant partagée depuis le code</li>
+      <li data-correct>Une Material Instance Dynamic par ennemi, créée au BeginPlay</li>
+      <li>Un Static Switch Parameter par couleur</li>
+    </ul>
+    <p class="explain">Une MID appartient à un seul objet : changer ses paramètres n'affecte pas les autres ennemis et ne demande aucune recompilation. Une MIC est partagée (et ne se modifie pas en jeu), et un Static Switch exige une recompilation dans l'éditeur.</p>
+  </div>
+
+  <h2>Les textures</h2>
+  <p>Les textures représentent souvent l'essentiel de la mémoire vidéo d'un jeu. Un mauvais réglage ne se voit pas forcément, mais se paie en mémoire, en temps de chargement ou en rendu faux. Trois réglages comptent avant tout dans l'éditeur de texture : <strong>Compression Settings</strong>, <strong>sRGB</strong> et la taille.</p>
+
+  <table>
+    <thead><tr><th>Compression Settings</th><th>Pour quoi ?</th><th>sRGB</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Default</strong></td><td>Couleurs : Base Color, émissif, interface simple</td><td>Activé</td></tr>
+      <tr><td><strong>Normalmap</strong></td><td>Normal maps (compression BC5 sur PC, deux canaux de haute qualité)</td><td>Désactivé automatiquement</td></tr>
+      <tr><td><strong>Masks (no sRGB)</strong></td><td>Données en niveaux de gris rangées par canal : ORM, masques</td><td>Désactivé</td></tr>
+      <tr><td><strong>Grayscale</strong></td><td>Un seul canal (hauteur, masque unique)</td><td>Selon l'usage</td></tr>
+      <tr><td><strong>HDR</strong></td><td>Images à haute dynamique (ciel HDRI)</td><td>Désactivé</td></tr>
+      <tr><td><strong>UserInterface2D (RGBA)</strong></td><td>Icônes et images d'interface, sans compression destructrice</td><td>Activé</td></tr>
+    </tbody>
+  </table>
+
+  <dl class="defs">
+    <dt>sRGB</dt><dd>Indique que la texture est stockée en espace « gamma », comme une photo. C'est juste pour les <strong>couleurs</strong>, faux pour les <strong>données</strong> (rugosité, métal, normales) : une roughness lue en sRGB donne des valeurs déformées et un matériau trop brillant ou trop mat.</dd>
+    <dt>Puissance de deux</dt><dd>Utilisez des dimensions comme 512, 1024, 2048 ou 4096 (pas forcément carrées : 2048 × 1024 convient). Les autres tailles ne génèrent pas de mipmaps et ne profitent pas du streaming.</dd>
+    <dt>Mipmaps</dt><dd>Versions réduites de la texture, calculées à l'import. Un objet lointain utilise une version plus petite : moins de mémoire lue, et pas de scintillement.</dd>
+    <dt>Streaming</dt><dd>Le moteur ne charge en mémoire que les mips nécessaires selon la taille à l'écran. L'avertissement <em>Texture Streaming Pool Over Budget</em> signifie que vos textures ne tiennent plus dans le budget alloué.</dd>
+    <dt>Virtual Textures</dt><dd>Les <em>Streaming Virtual Textures</em> découpent les très grandes textures en tuiles chargées à la demande ; les <em>Runtime Virtual Textures</em> servent surtout à mélanger un terrain avec les objets posés dessus. Elles s'activent dans les Project Settings.</dd>
+  </dl>
+
+  <figure class="figure">
+    <svg viewBox="0 0 690 210" width="690" role="img" aria-label="Chaîne de mipmaps : chaque niveau fait la moitié de la taille du précédent">
+      <rect x="20" y="20" width="160" height="160" rx="3" fill="#5aa9ff" fill-opacity="0.22" stroke="#5aa9ff" stroke-width="1.5"/>
+      <rect x="210" y="100" width="80" height="80" rx="3" fill="#5aa9ff" fill-opacity="0.22" stroke="#5aa9ff" stroke-width="1.5"/>
+      <rect x="320" y="140" width="40" height="40" rx="2" fill="#5aa9ff" fill-opacity="0.22" stroke="#5aa9ff" stroke-width="1.5"/>
+      <rect x="390" y="160" width="20" height="20" rx="1" fill="#5aa9ff" fill-opacity="0.22" stroke="#5aa9ff" stroke-width="1.5"/>
+      <rect x="440" y="170" width="10" height="10" fill="#5aa9ff" fill-opacity="0.22" stroke="#5aa9ff" stroke-width="1.2"/>
+      <text x="472" y="180" font-size="14" fill="currentColor">…</text>
+      <g font-size="12" fill="currentColor" text-anchor="middle">
+        <text x="100" y="200">Mip 0 : 2048²</text>
+        <text x="250" y="200">Mip 1 : 1024²</text>
+        <text x="340" y="200">Mip 2</text>
+        <text x="400" y="200">Mip 3</text>
+        <text x="445" y="200">Mip 4</text>
+      </g>
+      <text x="510" y="44" font-size="13" fill="currentColor" font-weight="600">Chaque niveau :</text>
+      <text x="510" y="64" font-size="12" fill="currentColor" opacity="0.8">moitié de la largeur,</text>
+      <text x="510" y="82" font-size="12" fill="currentColor" opacity="0.8">quart de la mémoire.</text>
+      <text x="510" y="112" font-size="13" fill="#4ade80" font-weight="600">Chaîne complète :</text>
+      <text x="510" y="132" font-size="12" fill="currentColor" opacity="0.8">environ +33 % de mémoire</text>
+      <text x="510" y="150" font-size="12" fill="currentColor" opacity="0.8">pour une image stable.</text>
+    </svg>
+    <figcaption>Les mipmaps d'une texture 2048 × 2048. Le GPU choisit le niveau adapté à la taille de l'objet à l'écran.</figcaption>
+  </figure>
+
+  <h3>Le channel packing (ORM)</h3>
+  <p>Roughness, Metallic et Ambient Occlusion sont des valeurs en niveaux de gris : un seul canal suffit pour chacune. Plutôt que trois textures, on les range dans les trois canaux d'une seule image, appelée <strong>ORM</strong> (ou parfois ARM). Résultat : trois fois moins de lectures de texture et de mémoire.</p>
+  <table>
+    <thead><tr><th>Canal</th><th>Contenu</th><th>Relié à</th></tr></thead>
+    <tbody>
+      <tr><td><strong style="color:#ff6b6b">R</strong> (rouge)</td><td><strong>O</strong>cclusion ambiante</td><td>Ambient Occlusion</td></tr>
+      <tr><td><strong style="color:#4ade80">G</strong> (vert)</td><td><strong>R</strong>oughness</td><td>Roughness</td></tr>
+      <tr><td><strong style="color:#5aa9ff">B</strong> (bleu)</td><td><strong>M</strong>etallic</td><td>Metallic</td></tr>
+      <tr><td>A (alpha, optionnel)</td><td>Hauteur, masque d'opacité…</td><td>Selon le matériau</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <p class="callout-title">L'erreur la plus fréquente</p>
+    <p>Une texture ORM importée avec le réglage <em>Default</em> reste en sRGB : la rugosité est faussée sur tous vos objets, et rien ne signale l'erreur. Passez-la en <strong>Masks (no sRGB)</strong>, et réglez le <em>Sampler Type</em> du Texture Sample sur <code>Masks</code> (ou <code>Linear Color</code>).</p>
+  </div>
+
+  <h2>Nanite : la géométrie virtualisée</h2>
+  <p><strong>Nanite</strong> est le système de géométrie virtualisée d'UE5. Un mesh Nanite est découpé en petits groupes de triangles (des <em>clusters</em>) organisés en hiérarchie. À chaque frame, le moteur ne dessine que le niveau de détail nécessaire pour la taille à l'écran, et ne garde en mémoire que les données utiles. Conséquences pour vous :</p>
+  <ul>
+    <li>Plus besoin de créer des LOD à la main : un rocher scanné de plusieurs millions de triangles reste affichable.</li>
+    <li>Le nombre d'objets et de triangles compte beaucoup moins : les draw calls sont regroupés.</li>
+    <li>Les ombres Virtual Shadow Maps sont conçues pour fonctionner main dans la main avec Nanite.</li>
+  </ul>
+  <p><strong>Activer Nanite :</strong> cochez <em>Build Nanite</em> dans les options d'import, ou ouvrez le Static Mesh et cochez <em>Enable Nanite Support</em> dans la section <em>Nanite Settings</em>, puis <em>Apply Changes</em>. Le Content Browser permet aussi de l'activer sur une sélection de meshes (l'emplacement exact du menu varie selon la version).</p>
+
+  <h3>Ce que Nanite gère, et ses limites</h3>
+  <p>Le périmètre de Nanite s'élargit à chaque version d'UE5. À titre indicatif :</p>
+  <ul>
+    <li><strong>Pris en charge</strong> : Static Meshes opaques, matériaux Masked et World Position Offset (depuis 5.1), meshes instanciés, foliage. Selon votre version, le terrain (Landscape) et les Skeletal Meshes ont un support expérimental ou plus avancé.</li>
+    <li><strong>Non pris en charge</strong> : les matériaux Translucent. Les morph targets et certaines fonctions de déformation restent limités.</li>
+    <li><strong>Matériel</strong> : Nanite exige une plateforme récente (PC DirectX 12 avec Shader Model 6, consoles actuelles). Sur les plateformes sans Nanite, le moteur affiche un <em>fallback mesh</em> simplifié, également utilisé pour la collision complexe.</li>
+  </ul>
+
+  <h3>Visualiser et diagnostiquer</h3>
+  <p>Dans le viewport, le menu des modes d'affichage (<em>Lit</em>) propose <strong>Nanite Visualization</strong> : <em>Mask</em> (vert pour Nanite, rouge sinon), <em>Triangles</em> et <em>Clusters</em> (la densité réelle), <em>Overdraw</em> (pixels dessinés plusieurs fois, typique du feuillage Masked). La commande console <code>r.Nanite 0</code> désactive Nanite pour comparer.</p>
+
+  <div class="callout tip">
+    <p class="callout-title">Quand ne pas utiliser Nanite</p>
+    <p>Pour un jeu visant le mobile, la Switch ou des PC anciens ; pour le verre et l'eau (translucides) ; pour les objets fortement déformés. Pour tout le reste, Epic recommande désormais d'activer Nanite largement. Mesurez avec les outils du chapitre <a href="optimisation.html">Débogage &amp; optimisation</a> plutôt que de deviner.</p>
+  </div>
+
+  <h2>Lumen : l'éclairage global dynamique</h2>
+  <p>Dans la réalité, la lumière rebondit : un mur rouge éclairé par le soleil teinte de rouge le sol voisin, et une pièce s'éclaire par la seule lumière de la fenêtre. C'est l'<strong>illumination globale</strong> (GI). <strong>Lumen</strong> la calcule en temps réel, ainsi que les <strong>réflexions</strong>. Tout peut bouger : soleil, portes, murs détruits, lampes allumées par le joueur.</p>
+
+  <div class="compare">
+    <div class="neutral">
+      <h4>Software Ray Tracing</h4>
+      <p>Fonctionne sur toute carte compatible UE5. Lumen trace des rayons dans une représentation simplifiée de la scène, à base de <em>Mesh Distance Fields</em> (option <em>Generate Mesh Distance Fields</em>, active par défaut). Rapide, mais moins précis : les petits objets et les reflets nets en souffrent.</p>
+    </div>
+    <div class="alt">
+      <h4>Hardware Ray Tracing</h4>
+      <p>Utilise les cœurs de ray tracing des cartes récentes. Reflets plus nets, meilleure précision, mais plus coûteux. Activez <em>Support Hardware Ray Tracing</em> puis <em>Use Hardware Ray Tracing when available</em> dans Project Settings → Rendering.</p>
+    </div>
+  </div>
+
+  <p>Les réglages artistiques se font dans un <strong>Post Process Volume</strong> : sections <em>Global Illumination</em> (méthode <code>Lumen</code>, <em>Lumen Scene Lighting Quality</em>, <em>Final Gather Quality</em>, <em>Max Trace Distance</em>…) et <em>Reflections</em> (méthode <code>Lumen</code>, qualité). Augmenter ces valeurs réduit le bruit au prix de millisecondes GPU.</p>
+  <ul>
+    <li><strong>Matériaux émissifs</strong> : avec Lumen, une surface émissive éclaire réellement son entourage (écran, néon, lave). Pratique, mais une petite source très intense crée du bruit : gardez de vraies lumières pour les sources principales.</li>
+    <li><strong>Limites</strong> : les murs trop fins laissent fuir la lumière, les très petits objets sont mal représentés, et la lumière met un instant à se stabiliser après un changement brutal.</li>
+    <li><strong>Scalabilité</strong> : avec les réglages par défaut, Lumen n'est actif qu'aux niveaux de qualité <em>High</em> et <em>Epic</em> du groupe Global Illumination ; en dessous, le moteur bascule sur des solutions plus simples.</li>
+  </ul>
+
+  <h3>L'alternative : l'éclairage précalculé</h3>
+  <p>Pour le mobile, la VR ou les PC modestes, on peut encore <strong>précalculer</strong> l'éclairage dans des <em>lightmaps</em> (textures d'éclairage). Le calcul, appelé « bake », se fait avec <strong>Lightmass</strong> (processeur) ou <strong>GPU Lightmass</strong> (plugin, carte avec ray tracing requise). Le résultat est très beau et presque gratuit en jeu, mais figé : rien ne peut bouger, et chaque modification du niveau impose de relancer le calcul. Il faut aussi activer <em>Allow Static Lighting</em> dans les Project Settings et donner aux meshes des UV de lightmap propres.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TD
+    Q1{"Plateforme visée ?"}
+    Q1 -- "Mobile, Switch,<br>PC modeste" --> B["Éclairage précalculé<br>Lightmass ou GPU Lightmass"]
+    Q1 -- "PC récent, PS5,<br>Xbox Series" --> Q2{"La lumière ou le décor<br>changent-ils en jeu ?"}
+    Q2 -- "Oui : cycle jour/nuit,<br>destruction, lampes" --> LU["Lumen<br>lumières en Movable"]
+    Q2 -- "Non, scène figée" --> Q3{"Budget GPU très serré ?<br>VR, 120 FPS"}
+    Q3 -- Oui --> B
+    Q3 -- Non --> LU
+</pre>
+    <figcaption>Choisir entre Lumen et un éclairage précalculé.</figcaption>
+  </figure>
+
+  <h2>Les lumières</h2>
+  <table>
+    <thead><tr><th>Acteur</th><th>Rôle</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Directional Light</strong></td><td>Le soleil ou la lune : rayons parallèles venant de l'infini. Une seule en général.</td></tr>
+      <tr><td><strong>Sky Light</strong></td><td>Capture le ciel et l'applique comme lumière ambiante. Avec <em>Real Time Capture</em>, elle suit un ciel dynamique.</td></tr>
+      <tr><td><strong>Sky Atmosphere</strong></td><td>Ciel physique : sa couleur dépend de l'angle du soleil (bleu à midi, orangé au couchant) et il ajoute la perspective aérienne.</td></tr>
+      <tr><td><strong>Volumetric Cloud</strong></td><td>Nuages volumétriques éclairés par le soleil.</td></tr>
+      <tr><td><strong>Exponential Height Fog</strong></td><td>Brouillard plus dense près du sol, avec option de brouillard volumétrique (rayons de lumière).</td></tr>
+      <tr><td><strong>Point Light</strong></td><td>Ampoule : éclaire dans toutes les directions.</td></tr>
+      <tr><td><strong>Spot Light</strong></td><td>Cône : lampe torche, projecteur.</td></tr>
+      <tr><td><strong>Rect Light</strong></td><td>Surface rectangulaire : fenêtre, écran, panneau lumineux.</td></tr>
+    </tbody>
+  </table>
+  <p>Pour un extérieur, la fenêtre <strong>Env. Light Mixer</strong> (menu <em>Window</em>) crée en quelques clics Sky Light, soleil, Sky Atmosphere, nuages et brouillard, et permet de les régler au même endroit.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    DL["Directional Light<br>le soleil"] -- "direction" --> SA["Sky Atmosphere<br>couleur du ciel"]
+    SA -- "ciel capturé" --> SL["Sky Light<br>Real Time Capture"]
+    DL --> VC["Volumetric Cloud<br>nuages"]
+    DL --> LU["Lumen<br>rebonds de lumière"]
+    SL --> LU
+    HF["Exponential Height Fog<br>profondeur, brume"] --> PPV["Post Process Volume<br>exposition, étalonnage"]
+    LU --> PPV
+</pre>
+    <figcaption>Un éclairage extérieur complet : chaque acteur nourrit le suivant, et le post-process finalise l'image.</figcaption>
+  </figure>
+
+  <h3>La mobilité des lumières</h3>
+  <table>
+    <thead><tr><th>Mobility</th><th>Principe</th><th>Usage</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Static</strong></td><td>Entièrement précalculée dans les lightmaps. Ne peut ni bouger ni changer.</td><td>Éclairage précalculé, plateformes modestes</td></tr>
+      <tr><td><strong>Stationary</strong></td><td>Lumière directe dynamique, ombres des objets fixes et rebonds précalculés. Couleur et intensité modifiables, mais immobile. Au plus 4 lumières Stationary peuvent se chevaucher.</td><td>Compromis du pipeline précalculé</td></tr>
+      <tr><td><strong>Movable</strong></td><td>Entièrement dynamique : peut bouger et tout changer, à chaque frame.</td><td><strong>Le réglage à utiliser avec Lumen</strong>, qui n'exploite pas les données précalculées</td></tr>
+    </tbody>
+  </table>
+
+  <dl class="defs">
+    <dt>Virtual Shadow Maps</dt><dd>La méthode d'ombres par défaut d'UE5 (Project Settings → Rendering → Shadows). Des ombres très détaillées, de près comme de loin, grâce à une immense texture virtuelle mise en cache. Le cache est invalidé par tout ce qui bouge : beaucoup d'objets animés (WPO, physique) augmentent le coût.</dd>
+    <dt>Profils IES</dt><dd>Fichiers fournis par les fabricants d'éclairage qui décrivent la forme réelle du faisceau d'une lampe. Assignés via <em>IES Texture</em> sur une Point, Spot ou Rect Light.</dd>
+    <dt>Light Function</dt><dd>Un matériau de domaine <em>Light Function</em> qui module une lumière : néon qui grésille, ombre de nuages qui défilent, motif de vitrail projeté.</dd>
+  </dl>
+
+  <div class="callout info">
+    <p class="callout-title">Beaucoup de lumières dynamiques ?</p>
+    <p>Chaque lumière dynamique qui projette des ombres coûte cher. Désactivez <em>Cast Shadows</em> sur les petites lumières d'ambiance et limitez leur rayon (<em>Attenuation Radius</em>). Selon votre version, la technologie <strong>MegaLights</strong> (expérimentale à son introduction en 5.5) vise à rendre abordables des centaines de lumières ombrées.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Votre jeu a un cycle jour/nuit avec Lumen. Quelle mobilité donner au Directional Light ?</p>
+    <ul>
+      <li>Static, pour économiser du GPU</li>
+      <li>Stationary, pour garder des ombres précalculées</li>
+      <li data-correct>Movable</li>
+      <li>Peu importe, Lumen s'adapte</li>
+    </ul>
+    <p class="explain">Le soleil doit tourner pendant la partie : seule une lumière Movable peut changer de direction. Lumen n'utilise pas les données précalculées, donc Movable est de toute façon le réglage recommandé.</p>
+  </div>
+
+  <h2>Le post-process</h2>
+  <p>Le post-process retouche l'image finale, comme un filtre photo intelligent. Placez un <strong>Post Process Volume</strong> dans le niveau et cochez <em>Infinite Extent (Unbound)</em> pour qu'il s'applique partout ; sinon, il n'agit que lorsque la caméra est à l'intérieur de son volume (pratique pour une grotte ou une scène sous-marine, avec <em>Blend Radius</em> pour une transition douce et <em>Priority</em> si plusieurs volumes se chevauchent).</p>
+
+  <dl class="defs">
+    <dt>Exposure</dt><dd>La « pupille » de la caméra. En mode <em>Auto Exposure</em>, l'image s'adapte à la luminosité moyenne (bornes <em>Min EV100</em> et <em>Max EV100</em>). En mode <em>Manual</em>, l'exposition est fixe et vos réglages de lumière sont lisibles.</dd>
+    <dt>Bloom</dt><dd>Halo autour des zones très lumineuses. Indispensable aux émissifs, envahissant s'il est poussé trop fort.</dd>
+    <dt>Color Grading</dt><dd>Étalonnage : température, saturation, contraste, gamma, gain, séparément pour les ombres, les tons moyens et les hautes lumières.</dd>
+    <dt>LUT</dt><dd><em>Look-Up Table</em> : une petite texture qui remappe toutes les couleurs, préparée dans un logiciel de retouche. Pratique pour donner une identité visuelle forte.</dd>
+    <dt>Vignette</dt><dd>Assombrit les bords de l'image, discret mais efficace pour guider le regard.</dd>
+    <dt>Depth of Field</dt><dd>Flou des zones hors de la mise au point (<em>Focal Distance</em>, ouverture <em>Aperture F-stop</em>). Idéal pour les cinématiques et les menus d'inspection.</dd>
+    <dt>Motion Blur</dt><dd>Flou de mouvement. Beaucoup de joueurs le désactivent : proposez une option.</dd>
+  </dl>
+
+  <div class="callout warn">
+    <p class="callout-title">Le piège de l'auto-exposition</p>
+    <p>Vous réglez une pièce sombre… et l'auto-exposition la rééclaircit aussitôt. Vous montez une lumière… et l'image ne change presque pas. Avant de juger un éclairage, fixez l'exposition : mode <em>Manual</em>, ou <em>Min EV100</em> égal à <em>Max EV100</em>. Rétablissez ensuite une plage réduite pour garder l'effet d'adaptation de l'œil. Le réglage par défaut du projet se change aussi dans Project Settings → Rendering → Default Settings.</p>
+  </div>
+
+  <p>Enfin, les <strong>matériaux de post-process</strong> (domaine <em>Post Process</em>, ajoutés dans la liste <em>Post Process Materials</em> du volume) permettent des effets sur mesure : contour des objets interactifs grâce au <em>Custom Depth</em> (option <em>Render CustomDepth Pass</em> sur le mesh), vision nocturne, effet de dégâts à l'écran.</p>
+
+  <h2>Anti-aliasing et upscaling</h2>
+  <p>L'<strong>aliasing</strong>, ce sont les bords en escalier et les détails qui scintillent. La méthode se choisit dans Project Settings → Rendering (<em>Anti-Aliasing Method</em>) ou avec la variable console <code>r.AntiAliasingMethod</code>.</p>
+  <table>
+    <thead><tr><th>Méthode</th><th>Valeur</th><th>Caractéristiques</th></tr></thead>
+    <tbody>
+      <tr><td><strong>TSR</strong> (Temporal Super Resolution)</td><td><code>4</code></td><td>Par défaut en UE5. Accumule les frames précédentes et reconstruit une image nette à partir d'une résolution réduite : c'est aussi un upscaler.</td></tr>
+      <tr><td><strong>TAA</strong> (Temporal AA)</td><td><code>2</code></td><td>L'ancienne méthode temporelle, plus légère, plus floue.</td></tr>
+      <tr><td><strong>FXAA</strong></td><td><code>1</code></td><td>Filtre d'image très rapide, mais flou et peu efficace sur le scintillement.</td></tr>
+      <tr><td><strong>MSAA</strong></td><td><code>3</code></td><td>Uniquement avec le Forward Shading. Net, populaire en VR.</td></tr>
+    </tbody>
+  </table>
+  <p>Les méthodes temporelles peuvent laisser des traînées (<em>ghosting</em>) derrière les objets rapides. Pour aller plus loin, les constructeurs fournissent leurs upscalers sous forme de plugins : <strong>DLSS</strong> (NVIDIA, cartes RTX), <strong>FSR</strong> (AMD, la plupart des cartes) et <strong>XeSS</strong> (Intel). Proposez-les dans le menu d'options quand ils sont disponibles.</p>
+
+  <h2>Niagara : les effets visuels</h2>
+  <p><strong>Niagara</strong> est le système de particules et d'effets d'UE5 : feu, fumée, étincelles, magie, pluie, impacts de balles. Il est organisé comme une pile de modules que l'on empile du haut vers le bas, sans écrire de code.</p>
+
+  <ul class="tree">
+    <li><span class="node c-orange">NS_Explosion</span><span class="desc">Niagara System : l'asset placé dans le monde ou créé par le code</span>
+      <ul>
+        <li><span class="node c-yellow">Emitter « Flash »</span><span class="desc">Un éclair bref et lumineux</span>
+          <ul>
+            <li><span class="node">Spawn Burst Instantaneous</span><span class="desc">Module : 1 particule d'un coup</span></li>
+            <li><span class="node">Sprite Renderer</span><span class="desc">Renderer : dessine la particule</span></li>
+          </ul>
+        </li>
+        <li><span class="node c-yellow">Emitter « Debris »</span><span class="desc">Morceaux projetés</span>
+          <ul>
+            <li><span class="node">Add Velocity, Gravity Force</span><span class="desc">Modules de mouvement</span></li>
+            <li><span class="node">Mesh Renderer</span><span class="desc">Chaque particule est un petit mesh</span></li>
+          </ul>
+        </li>
+        <li><span class="node c-yellow">Emitter « Smoke »</span><span class="desc">Fumée qui s'élève et se dissipe</span></li>
+      </ul>
+    </li>
+  </ul>
+
+  <p>Chaque émetteur exécute ses modules dans des <strong>étapes</strong> bien définies. Savoir dans quelle étape placer un module est la clé pour comprendre Niagara :</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TD
+    subgraph SYS["Niagara System"]
+        SU["System Spawn / System Update<br>logique commune à tous les émetteurs"]
+        subgraph EM["Emitter"]
+            ES["Emitter Spawn<br>une fois, à l'activation"] --> EU["Emitter Update<br>chaque frame : Spawn Rate, bursts"]
+            EU --> PSP["Particle Spawn<br>à la naissance de chaque particule :<br>position, vitesse, taille, durée de vie"]
+            PSP --> PUP["Particle Update<br>chaque frame, pour chaque particule :<br>forces, couleur, taille"]
+            PUP --> RD["Render<br>Sprite, Mesh, Ribbon, Light"]
+        end
+        SU --> ES
+    end
+</pre>
+    <figcaption>Les étapes d'un émetteur Niagara, de l'activation au rendu.</figcaption>
+  </figure>
+
+  <div class="cards">
+    <div class="card"><span class="card-tag">Sprite</span><h4>Images face caméra</h4><p>Le renderer le plus courant : fumée, étincelles, flammes. Un simple carré texturé toujours tourné vers la caméra.</p></div>
+    <div class="card"><span class="card-tag">Mesh</span><h4>Petits objets 3D</h4><p>Débris, douilles, feuilles qui tombent, rochers d'une explosion.</p></div>
+    <div class="card"><span class="card-tag">Ribbon</span><h4>Rubans continus</h4><p>Traînées d'épée, de missile, de magie : les particules sont reliées en une bande.</p></div>
+    <div class="card"><span class="card-tag">Light</span><h4>Lumières dynamiques</h4><p>Chaque particule peut émettre une petite lumière : à utiliser avec parcimonie.</p></div>
+  </div>
+
+  <h3>Paramètres utilisateur et simulation</h3>
+  <p>Les <strong>User Parameters</strong> (espace de noms <code>User.</code>) sont les « entrées » publiques d'un système : couleur, nombre de particules, rayon. Ils se règlent dans le panneau Details d'un acteur Niagara, ou depuis le gameplay en Blueprint (nœuds <em>Set Niagara Variable</em>) et en C++.</p>
+  <div class="compare">
+    <div class="neutral">
+      <h4>Simulation CPU</h4>
+      <p>Le choix par défaut. Toutes les fonctions sont disponibles (les événements entre émetteurs, par exemple) et les limites de l'effet sont calculées automatiquement. Adapté à quelques centaines ou milliers de particules.</p>
+    </div>
+    <div class="alt">
+      <h4>Simulation GPU</h4>
+      <p><em>Sim Target</em> = <code>GPUComputeSim</code> dans les propriétés de l'émetteur. Des centaines de milliers de particules (pluie, poussière, essaims). Il faut définir des <em>Fixed Bounds</em>, sinon l'effet risque de disparaître en bord d'écran.</p>
+    </div>
+  </div>
+
+  <h3>Déclencher un effet depuis le gameplay</h3>
+  <p>Deux cas de figure : un effet ponctuel à un endroit (impact, explosion) avec <code>SpawnSystemAtLocation</code>, et un effet qui suit un objet (flammes sur un véhicule, aura) avec <code>SpawnSystemAttached</code>. Les deux renvoient un <code>UNiagaraComponent</code> pour modifier ensuite les paramètres. En C++, ajoutez le module <code>"Niagara"</code> aux dépendances de votre <code>Build.cs</code>.</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="Un projectile qui touche une surface fait apparaître l'effet d'impact au point de contact, orienté selon la normale.">
+{
+  "nodes": [
+    { "id": "hit", "type": "event", "title": "Event Hit", "x": 0, "y": 0,
+      "out": [ { "type": "exec" }, { "name": "Other", "type": "object" }, { "name": "Hit Location", "type": "vector" }, { "name": "Hit Normal", "type": "vector" } ] },
+    { "id": "rot", "type": "pure", "title": "Make Rot from X", "x": 200, "y": 150,
+      "in": [ { "name": "X", "type": "vector" } ],
+      "out": [ { "name": "Return Value", "type": "rotator" } ] },
+    { "id": "spawn", "type": "function", "title": "Spawn System at Location", "x": 430, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "System Template", "type": "object", "value": "NS_Impact" }, { "name": "Location", "type": "vector" }, { "name": "Rotation", "type": "rotator" }, { "name": "Auto Destroy", "type": "bool", "value": true } ],
+      "out": [ { "type": "exec" }, { "name": "Return Value", "type": "object" } ] }
+  ],
+  "links": [
+    [ "hit", 0, "spawn", 0 ],
+    [ "hit", 2, "spawn", 2 ],
+    [ "hit", 3, "rot", 0 ],
+    [ "rot", 0, "spawn", 3 ]
+  ]
+}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="ExplosiveBarrel.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "ExplosiveBarrel.generated.h"
+
+class UStaticMeshComponent;
+class UNiagaraSystem;
+class UNiagaraComponent;
+
+UCLASS()
+class MYGAME_API AExplosiveBarrel : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    AExplosiveBarrel();
+
+    UFUNCTION(BlueprintCallable, Category = "Barrel")
+    void Explode();
+
+protected:
+    UPROPERTY(VisibleAnywhere, Category = "Barrel")
+    TObjectPtr<UStaticMeshComponent> Mesh;
+
+    // Effet ponctuel : l'explosion
+    UPROPERTY(EditDefaultsOnly, Category = "Barrel|FX")
+    TObjectPtr<UNiagaraSystem> ExplosionFX;
+
+    // Effet continu : les flammes qui restent sur l'épave
+    UPROPERTY(EditDefaultsOnly, Category = "Barrel|FX")
+    TObjectPtr<UNiagaraSystem> FireFX;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Barrel|FX")
+    FLinearColor FireColor = FLinearColor(1.f, 0.45f, 0.1f);
+
+private:
+    UPROPERTY(Transient)
+    TObjectPtr<UNiagaraComponent> FireComponent;
+
+    bool bExploded = false;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="ExplosiveBarrel.cpp" data-highlight="22,28-30,36-37">
+#include "ExplosiveBarrel.h"
+#include "Components/StaticMeshComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraComponent.h"
+#include "NiagaraSystem.h"
+
+AExplosiveBarrel::AExplosiveBarrel()
+{
+    PrimaryActorTick.bCanEverTick = false;
+    Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
+    RootComponent = Mesh;
+}
+
+void AExplosiveBarrel::Explode()
+{
+    if (bExploded) { return; }
+    bExploded = true;
+
+    // 1. Explosion « tire et oublie » : le composant se détruit à la fin de l'effet
+    if (ExplosionFX)
+    {
+        UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, ExplosionFX, GetActorLocation(), GetActorRotation());
+    }
+
+    // 2. Flammes attachées au mesh : elles suivent ses mouvements
+    if (FireFX)
+    {
+        FireComponent = UNiagaraFunctionLibrary::SpawnSystemAttached(
+            FireFX, Mesh, NAME_None, FVector::ZeroVector, FRotator::ZeroRotator,
+            EAttachLocation::KeepRelativeOffset, /*bAutoDestroy*/ true);
+    }
+
+    if (FireComponent)
+    {
+        // User Parameters déclarés dans le système : User.SpawnRate et User.Color
+        FireComponent->SetVariableFloat(TEXT("SpawnRate"), 80.f);
+        FireComponent->SetVariableLinearColor(TEXT("Color"), FireColor);
+    }
+}
+</script>
+<script type="text/plain" data-lang="csharp" data-file="MyGame.Build.cs (extrait)">
+PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "Niagara" });
+</script>
+    </div>
+  </div>
+
+  <div class="callout perf">
+    <p class="callout-title">Impacts en rafale : pensez au pooling</p>
+    <p>Une mitrailleuse peut créer des dizaines d'impacts par seconde. <code>SpawnSystemAtLocation</code> accepte un paramètre <code>PoolingMethod</code> : avec <code>ENCPoolMethod::AutoRelease</code>, les composants terminés sont recyclés au lieu d'être détruits puis recréés. Réglez aussi la <em>Scalability</em> de vos systèmes (distance maximale, nombre d'instances) dans l'éditeur Niagara.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Vous voulez une tempête de sable de 300 000 particules. Quel réglage est indispensable ?</p>
+    <ul>
+      <li>Un Ribbon Renderer</li>
+      <li data-correct>Une simulation GPU avec des Fixed Bounds</li>
+      <li>Un Light Renderer pour chaque grain</li>
+      <li>Placer tous les modules dans Emitter Spawn</li>
+    </ul>
+    <p class="explain">À cette échelle, seule la simulation GPU tient la charge. Le moteur ne peut pas calculer automatiquement les limites d'un émetteur GPU : sans Fixed Bounds, l'effet peut être coupé (culled) alors qu'il est visible.</p>
+  </div>
+
+  <h2>Construire des environnements</h2>
+  <dl class="defs">
+    <dt>Landscape</dt><dd>Le terrain d'Unreal, édité dans le mode <em>Landscape</em> : <em>Manage</em> (création, taille des composants), <em>Sculpt</em> (élever, lisser, aplanir, éroder) et <em>Paint</em> (peindre des couches). Le matériau de terrain utilise le nœud <em>Landscape Layer Blend</em> : chaque couche (herbe, terre, roche) reçoit un <em>Layer Info</em> et se mélange aux autres selon les poids peints, éventuellement selon la hauteur pour un rendu naturel.</dd>
+    <dt>Foliage</dt><dd>Le mode <em>Foliage</em> peint des milliers d'instances de meshes (arbres, rochers, herbes) rendues en instanciation, donc très économes en draw calls. L'herbe peut aussi être générée automatiquement par le matériau de terrain (<em>Landscape Grass Type</em>).</dd>
+    <dt>PCG</dt><dd>Le framework <em>Procedural Content Generation</em> génère du contenu à partir de graphes de règles : une forêt qui se répartit seule le long d'une route, des clôtures qui suivent une spline. Plugin expérimental en 5.2, il a gagné en maturité au fil des versions : vérifiez son statut dans la vôtre.</dd>
+    <dt>Water</dt><dd>Le plugin Water fournit océans, lacs et rivières qui creusent le terrain et interagissent avec lui, plus un composant de flottaison. Son statut dépend de la version : testez-le avant de bâtir un jeu dessus.</dd>
+    <dt>World Partition</dt><dd>Le découpage automatique des grands mondes en cellules chargées selon la distance, présenté dans <a href="architecture.html">Architecture du moteur</a>.</dd>
+    <dt>HLOD</dt><dd><em>Hierarchical Level of Detail</em> : les cellules lointaines non chargées sont remplacées par des versions fusionnées et simplifiées, générées par <em>Build → Build HLODs</em>. Sans HLOD, l'horizon d'un monde ouvert serait vide.</dd>
+  </dl>
+
+  <h2>La scalabilité</h2>
+  <p>Votre jeu tournera sur des machines très différentes. Unreal regroupe les réglages graphiques en <strong>groupes de scalabilité</strong> (variables console <code>sg.*</code>), chacun de 0 (<em>Low</em>) à 3 (<em>Epic</em>), plus 4 (<em>Cinematic</em>). Dans l'éditeur, le panneau <em>Engine Scalability Settings</em> (menu Settings de la barre d'outils ou menu du viewport, selon votre version) permet de les tester.</p>
+  <table>
+    <thead><tr><th>Groupe</th><th>Ce qu'il contrôle</th></tr></thead>
+    <tbody>
+      <tr><td><code>sg.ResolutionQuality</code></td><td>Résolution de rendu (pourcentage d'écran)</td></tr>
+      <tr><td><code>sg.ViewDistanceQuality</code></td><td>Distance d'affichage des objets</td></tr>
+      <tr><td><code>sg.ShadowQuality</code></td><td>Résolution et distance des ombres</td></tr>
+      <tr><td><code>sg.GlobalIlluminationQuality</code></td><td>Lumen ou solutions plus simples</td></tr>
+      <tr><td><code>sg.ReflectionQuality</code></td><td>Qualité des réflexions</td></tr>
+      <tr><td><code>sg.PostProcessQuality</code></td><td>Bloom, profondeur de champ, flou…</td></tr>
+      <tr><td><code>sg.TextureQuality</code></td><td>Taille du pool de streaming et des mips chargés</td></tr>
+      <tr><td><code>sg.EffectsQuality</code>, <code>sg.FoliageQuality</code>, <code>sg.ShadingQuality</code></td><td>Effets, densité de végétation, complexité des shaders</td></tr>
+    </tbody>
+  </table>
+
+<script type="text/plain" data-lang="console" data-file="Console (touche ²)">
+scalability 1              # tous les groupes en Medium
+sg.ShadowQuality 0         # ombres en Low uniquement
+r.ScreenPercentage 75      # rendu à 75 % de la résolution, reconstruit par TSR
+</script>
+
+  <p>Dans un menu d'options, on passe par <code>UGameUserSettings</code>, qui applique les réglages et les sauvegarde dans <code>GameUserSettings.ini</code> :</p>
+<script type="text/plain" data-lang="cpp" data-file="OptionsMenu.cpp (extrait)">
+#include "GameFramework/GameUserSettings.h"
+
+void UOptionsMenu::ApplyQualityPreset(int32 Level)
+{
+    UGameUserSettings* Settings = UGameUserSettings::GetGameUserSettings();
+    Settings->SetOverallScalabilityLevel(Level); // 0 = Low, 1 = Medium, 2 = High, 3 = Epic
+    Settings->ApplySettings(false);              // applique et écrit GameUserSettings.ini
+}
+</script>
+
+  <p>Pour adapter les réglages par plateforme ou par famille d'appareils (téléphones bas, milieu et haut de gamme), Unreal utilise les <strong>Device Profiles</strong>, déclarés dans <code>Config/DefaultDeviceProfiles.ini</code> :</p>
+<script type="text/plain" data-lang="ini" data-file="DefaultDeviceProfiles.ini">
+[Android_Low DeviceProfile]
+DeviceType=Android
+BaseProfileName=Android
++CVars=sg.ShadowQuality=0
++CVars=r.ScreenPercentage=70
+</script>
+
+  <div class="callout ue">
+    <p class="callout-title">Pour aller plus loin</p>
+    <p>Dans la documentation d'Epic, cherchez « Physically Based Materials », « Lumen Technical Details », « Nanite Virtualized Geometry » et « Niagara Overview ». Le projet gratuit <strong>City Sample</strong> et les contenus d'exemple <em>Content Examples</em> montrent de nombreux matériaux et effets démontés pas à pas.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Un master material et un flash de dégâts</h4>
+    <p>Créez un matériau <code>M_Master</code> avec une texture de couleur teintée par un paramètre <code>Tint</code>, une rugosité réglable (<code>Roughness</code>) et un émissif de flash piloté par <code>FlashColor</code> et <code>FlashAmount</code>. Créez deux instances (<code>MI_Ennemi_Rouge</code> et <code>MI_Ennemi_Bleu</code>), appliquez-les à deux mannequins, et faites clignoter chaque mannequin indépendamment quand il prend des dégâts.</p>
+    <details>
+      <summary>Voir la solution</summary>
+      <ol class="steps">
+        <li><strong>Le graphe</strong>Dans <code>M_Master</code> : un <em>Texture Sample Parameter 2D</em> (<code>BaseTexture</code>) multiplié par un <em>Vector Parameter</em> <code>Tint</code> vers Base Color ; un <em>Scalar Parameter</em> <code>Roughness</code> (défaut 0,5) vers Roughness ; un <em>Vector Parameter</em> <code>FlashColor</code> multiplié par un <em>Scalar Parameter</em> <code>FlashAmount</code> (défaut 0) puis par une constante 20, vers Emissive Color.</li>
+        <li><strong>Les instances</strong>Clic droit sur <code>M_Master</code> → <em>Create Material Instance</em>, deux fois. Dans chaque instance, cochez <code>Tint</code> et <code>Roughness</code> et donnez-leur des valeurs différentes. Aucune compilation n'est nécessaire : le changement est immédiat.</li>
+        <li><strong>Le mannequin</strong>Créez la classe <code>ATargetDummy</code> présentée plus haut (ou son équivalent Blueprint), placez deux instances dans le niveau et assignez une MI différente à chacune.</li>
+        <li><strong>Infliger des dégâts</strong>Depuis votre personnage, un line trace suivi de <code>UGameplayStatics::ApplyDamage</code> sur l'acteur touché (voir <a href="collisions.html">Collisions</a>). Chaque mannequin crée sa propre MID au BeginPlay : seul celui qui est touché clignote, et il garde sa teinte.</li>
+      </ol>
+      <p>Si rien ne clignote : vérifiez l'orthographe exacte de <code>FlashAmount</code> et <code>FlashColor</code>, et que le mesh utilise bien le matériau à l'emplacement 0.</p>
+    </details>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>UE5 utilise un <strong>rendu différé</strong> : géométrie dans le G-Buffer, puis éclairage (Lumen, Virtual Shadow Maps), puis post-process et upscaling TSR.</li>
+      <li>Un matériau <strong>PBR</strong> décrit la matière : Base Color sans lumière, Metallic à 0 ou 1, Roughness pour la netteté des reflets.</li>
+      <li>Un <strong>master material</strong> et ses <strong>instances</strong> évitent les recompilations ; une <strong>MID</strong> permet de modifier un objet précis en jeu.</li>
+      <li>Les données (ORM, masques) se compressent en <strong>Masks, sans sRGB</strong> ; les normal maps en <strong>Normalmap</strong>.</li>
+      <li><strong>Nanite</strong> rend les meshes très détaillés abordables, <strong>Lumen</strong> rend la lumière entièrement dynamique : utilisez alors des lumières <strong>Movable</strong>.</li>
+      <li>Fixez l'<strong>exposition</strong> avant de juger un éclairage.</li>
+      <li><strong>Niagara</strong> s'organise en système, émetteurs et modules ; on le déclenche avec <code>SpawnSystemAtLocation</code> ou <code>SpawnSystemAttached</code>.</li>
+      <li>Les groupes <code>sg.*</code> et <code>UGameUserSettings</code> rendent votre jeu jouable sur toutes les machines.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Enhanced Input &amp; personnage — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="input-personnage">
+<article class="doc">
+
+  <h1>Enhanced Input &amp; personnage</h1>
+  <p class="lead">Un jeu commence par un personnage qui répond bien aux commandes. Ce chapitre explique le système d'entrées d'UE5, <strong>Enhanced Input</strong>, puis construit pas à pas un personnage complet en C++ : déplacement, caméra, saut et sprint. Vous verrez aussi comment régler le Character Movement Component et choisir un style de caméra.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Comprendre les <strong>Input Actions</strong>, <strong>Mapping Contexts</strong>, <strong>Triggers</strong> et <strong>Modifiers</strong></li>
+      <li>Savoir quel événement (<code>Started</code>, <code>Triggered</code>, <code>Completed</code>…) écouter</li>
+      <li>Écrire un personnage à la troisième personne complet en C++ et en Blueprint</li>
+      <li>Régler le <strong>Character Movement Component</strong> et ses modes de déplacement</li>
+      <li>Choisir et configurer une caméra : troisième personne, première personne, vue du dessus</li>
+    </ul>
+  </div>
+
+  <h2>Enhanced Input : les concepts</h2>
+  <p>L'ancien système (<em>Action Mappings</em> et <em>Axis Mappings</em> dans les Project Settings) est remplacé dans UE5 par <strong>Enhanced Input</strong>, activé par défaut dans les nouveaux projets. Son idée centrale : séparer <strong>ce que le joueur veut faire</strong> (sauter, se déplacer) de <strong>la touche qui le déclenche</strong> (barre d'espace, bouton A de la manette). Quatre notions à connaître :</p>
+  <dl class="defs">
+    <dt>Input Action</dt><dd>Un asset qui représente une intention du joueur : <code>IA_Jump</code>, <code>IA_Move</code>. Il définit le type de valeur produite. Votre code n'écoute que des Input Actions, jamais des touches.</dd>
+    <dt>Input Mapping Context</dt><dd>Un asset qui associe des touches à des Input Actions : <code>IMC_Default</code> dit « Espace et bouton A déclenchent <code>IA_Jump</code> ». On peut en activer plusieurs à la fois, avec des priorités.</dd>
+    <dt>Modifier</dt><dd>Transforme la valeur brute d'une touche : inverser un axe, ignorer les petites valeurs d'un stick, multiplier la sensibilité.</dd>
+    <dt>Trigger</dt><dd>Décide <em>quand</em> l'action se déclenche : dès l'appui, au relâchement, après un maintien de 0,5 seconde, sur un double appui…</dd>
+  </dl>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    K["Touche ou stick<br>valeur brute"] --> C["Mapping Contexts actifs<br>le plus prioritaire gagne"]
+    C --> M["Modifiers<br>Negate, Swizzle, Dead Zone"]
+    M --> T["Triggers<br>Pressed, Hold, Tap"]
+    T --> A["Input Action<br>valeur + état"]
+    A --> E["Événements<br>Started, Triggered, Completed"]
+    E --> F["Vos fonctions<br>Move, Jump"]
+</pre>
+    <figcaption>Le trajet d'une entrée, de la touche à votre code. Modifiers et Triggers peuvent être définis sur le mapping (une touche précise) ou sur l'Input Action (toutes ses touches).</figcaption>
+  </figure>
+
+  <h3>Les types de valeur</h3>
+  <table>
+    <thead><tr><th>Value Type</th><th>Type C++</th><th>Exemples</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Digital (bool)</strong></td><td><code>bool</code></td><td>Sauter, tirer, interagir, ouvrir le menu</td></tr>
+      <tr><td><strong>Axis1D (float)</strong></td><td><code>float</code></td><td>Accélérateur d'une voiture, molette de zoom</td></tr>
+      <tr><td><strong>Axis2D (Vector2D)</strong></td><td><code>FVector2D</code></td><td>Déplacement (avant/côté), regard (souris, stick droit)</td></tr>
+      <tr><td><strong>Axis3D (Vector)</strong></td><td><code>FVector</code></td><td>Vol libre (avant, côté, haut), contrôleurs à six axes</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Les Mapping Contexts</h3>
+  <p>Un contexte regroupe les commandes valables dans une situation. Le personnage à pied utilise <code>IMC_Default</code> ; en montant dans un véhicule, on retire ce contexte et on ajoute <code>IMC_Vehicle</code> ; en ouvrant un menu, on ajoute <code>IMC_Menu</code> par-dessus. La <strong>priorité</strong> (un entier) départage deux contextes qui utilisent la même touche : le plus prioritaire consomme l'entrée.</p>
+
+  <h3>Les Triggers</h3>
+  <table>
+    <thead><tr><th>Trigger</th><th>Se déclenche…</th><th>Exemple</th></tr></thead>
+    <tbody>
+      <tr><td><em>Aucun</em> (par défaut)</td><td>À chaque frame tant que la touche est actionnée</td><td>Déplacement, regard</td></tr>
+      <tr><td><strong>Down</strong></td><td>À chaque frame tant que la valeur dépasse le seuil d'actionnement</td><td>Accélérer</td></tr>
+      <tr><td><strong>Pressed</strong></td><td>Une seule fois, au moment de l'appui</td><td>Sauter, recharger</td></tr>
+      <tr><td><strong>Released</strong></td><td>Une seule fois, au relâchement</td><td>Lâcher une flèche chargée</td></tr>
+      <tr><td><strong>Hold</strong></td><td>Après un maintien d'une durée donnée (<em>Hold Time Threshold</em>)</td><td>Maintenir pour fouiller un coffre</td></tr>
+      <tr><td><strong>Hold And Release</strong></td><td>Au relâchement, si la touche a été tenue assez longtemps</td><td>Tir chargé</td></tr>
+      <tr><td><strong>Tap</strong></td><td>Au relâchement, si l'appui a été bref</td><td>Esquive sur appui court, sprint sur appui long</td></tr>
+      <tr><td><strong>Pulse</strong></td><td>À intervalle régulier tant que la touche est tenue</td><td>Défilement d'un menu, tir semi-automatique</td></tr>
+      <tr><td><strong>Chorded Action</strong></td><td>Seulement si une autre Input Action est active en même temps</td><td><kbd>Shift</kbd> + <kbd>E</kbd> = action alternative</td></tr>
+      <tr><td><strong>Combo</strong></td><td>Après une séquence d'actions dans un temps donné (versions récentes)</td><td>Combo de combat léger, léger, lourd</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Les Modifiers</h3>
+  <table>
+    <thead><tr><th>Modifier</th><th>Effet</th><th>Usage</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Negate</strong></td><td>Inverse le signe (par axe X, Y, Z au choix)</td><td>Touche « gauche » ou « reculer », axe Y inversé</td></tr>
+      <tr><td><strong>Swizzle Input Axis Values</strong></td><td>Échange l'ordre des axes (YXZ : la valeur X passe en Y)</td><td>Faire d'une touche simple un « avant » sur l'axe Y</td></tr>
+      <tr><td><strong>Dead Zone</strong></td><td>Ignore les valeurs sous un seuil (bas et haut réglables)</td><td>Sticks de manette qui ne reviennent jamais exactement à 0</td></tr>
+      <tr><td><strong>Scalar</strong></td><td>Multiplie la valeur par un vecteur</td><td>Sensibilité de la souris</td></tr>
+      <tr><td><strong>Smooth</strong></td><td>Lisse la valeur sur plusieurs frames</td><td>Regard plus doux</td></tr>
+      <tr><td><strong>Response Curve</strong></td><td>Applique une courbe (exponentielle ou personnalisée)</td><td>Précision au centre du stick, vitesse aux extrémités</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Les événements ETriggerEvent</h3>
+  <p>À chaque frame, l'action passe par un <strong>état</strong>, et les transitions entre états produisent des événements que vous pouvez écouter :</p>
+  <table>
+    <thead><tr><th>Événement</th><th>Signification</th></tr></thead>
+    <tbody>
+      <tr><td><code>Started</code></td><td>Première frame où la touche est actionnée (le trigger commence à évaluer)</td></tr>
+      <tr><td><code>Ongoing</code></td><td>Le trigger est en cours d'évaluation mais pas encore satisfait (pendant un Hold, par exemple)</td></tr>
+      <tr><td><code>Triggered</code></td><td>Le trigger est satisfait : <strong>c'est l'événement principal</strong>, éventuellement à chaque frame</td></tr>
+      <tr><td><code>Completed</code></td><td>L'action s'arrête après avoir été déclenchée (touche relâchée)</td></tr>
+      <tr><td><code>Canceled</code></td><td>L'évaluation s'est arrêtée sans jamais déclencher (Hold relâché trop tôt)</td></tr>
+    </tbody>
+  </table>
+
+  <figure class="figure">
+    <svg viewBox="0 0 800 300" width="800" role="img" aria-label="Chronologie des événements pour un trigger Hold de 0,5 seconde : appui long et appui court">
+      <line x1="330" y1="30" x2="330" y2="258" stroke="#ffb15c" stroke-width="1.6" stroke-dasharray="6 4"/>
+      <text x="336" y="24" font-size="12" fill="#ffb15c" font-weight="700">Hold Time Threshold = 0,5 s</text>
+      <text x="10" y="44" font-size="13" font-weight="700" fill="currentColor">Appui long (1,2 s)</text>
+      <rect x="90" y="52" width="576" height="16" rx="3" fill="currentColor" fill-opacity="0.15" stroke="currentColor" stroke-opacity="0.5"/>
+      <text x="100" y="64" font-size="11" fill="currentColor">touche enfoncée</text>
+      <rect x="90" y="86" width="240" height="12" rx="3" fill="#b195ff" fill-opacity="0.45"/>
+      <rect x="330" y="86" width="336" height="12" rx="3" fill="#4ade80" fill-opacity="0.45"/>
+      <circle cx="90" cy="92" r="7" fill="#5aa9ff"/>
+      <circle cx="666" cy="92" r="7" fill="#ffd866"/>
+      <g font-size="12" fill="currentColor">
+        <text x="78" y="120" fill="#5aa9ff" font-weight="700">Started</text>
+        <text x="210" y="120" text-anchor="middle">Ongoing à chaque frame</text>
+        <text x="498" y="120" text-anchor="middle" fill="#4ade80" font-weight="700">Triggered à chaque frame</text>
+        <text x="666" y="120" text-anchor="middle" font-weight="700">Completed</text>
+      </g>
+      <text x="10" y="164" font-size="13" font-weight="700" fill="currentColor">Appui court (0,3 s)</text>
+      <rect x="90" y="172" width="144" height="16" rx="3" fill="currentColor" fill-opacity="0.15" stroke="currentColor" stroke-opacity="0.5"/>
+      <rect x="90" y="206" width="144" height="12" rx="3" fill="#b195ff" fill-opacity="0.45"/>
+      <circle cx="90" cy="212" r="7" fill="#5aa9ff"/>
+      <circle cx="234" cy="212" r="7" fill="#ff6b6b"/>
+      <g font-size="12" fill="currentColor">
+        <text x="78" y="240" fill="#5aa9ff" font-weight="700">Started</text>
+        <text x="162" y="240" text-anchor="middle">Ongoing</text>
+        <text x="246" y="240" fill="#ff6b6b" font-weight="700">Canceled</text>
+        <text x="342" y="216" fill="#ff6b6b">relâchée avant le seuil : jamais de Triggered</text>
+      </g>
+      <line x1="90" y1="274" x2="780" y2="274" stroke="currentColor" stroke-opacity="0.6"/>
+      <g font-size="11" fill="currentColor" opacity="0.8" text-anchor="middle">
+        <line x1="90" y1="270" x2="90" y2="278" stroke="currentColor"/><text x="90" y="292">0 s</text>
+        <line x1="330" y1="270" x2="330" y2="278" stroke="currentColor"/><text x="330" y="292">0,5 s</text>
+        <line x1="570" y1="270" x2="570" y2="278" stroke="currentColor"/><text x="570" y="292">1 s</text>
+      </g>
+    </svg>
+    <figcaption>Événements d'une Input Action avec un trigger Hold de 0,5 s. Relâchée trop tôt, l'action produit Canceled et jamais Triggered.</figcaption>
+  </figure>
+
+  <div class="callout tip">
+    <p class="callout-title">Quel événement écouter ?</p>
+    <p>Déplacement et regard : <code>Triggered</code> (à chaque frame). Saut : <code>Started</code> pour <code>Jump</code> et <code>Completed</code> pour <code>StopJumping</code> (la hauteur dépend de la durée d'appui). Sprint ou visée maintenus : <code>Started</code> et <code>Completed</code>. Action ponctuelle avec un trigger Pressed ou Hold : <code>Triggered</code>.</p>
+  </div>
+
+  <h2>Du clavier vers un Axis2D</h2>
+  <p><code>IA_Move</code> produit un <code>FVector2D</code> : X pour le côté (droite positive), Y pour l'avant. Une touche de clavier, elle, ne produit qu'une valeur 1D (1 quand elle est enfoncée), placée sur l'axe X. Les modifiers la déplacent sur le bon axe avec le bon signe :</p>
+  <table>
+    <thead><tr><th>Touche</th><th>Modifiers</th><th>Valeur obtenue</th><th>Pourquoi</th></tr></thead>
+    <tbody>
+      <tr><td><kbd>W</kbd> (avancer)</td><td>Swizzle Input Axis Values (YXZ)</td><td>(0, 1)</td><td>La valeur passe de X à Y</td></tr>
+      <tr><td><kbd>S</kbd> (reculer)</td><td>Swizzle (YXZ) + Negate</td><td>(0, -1)</td><td>Sur Y, puis inversée</td></tr>
+      <tr><td><kbd>D</kbd> (droite)</td><td>Aucun</td><td>(1, 0)</td><td>Déjà sur X, positive</td></tr>
+      <tr><td><kbd>A</kbd> (gauche)</td><td>Negate</td><td>(-1, 0)</td><td>Sur X, inversée</td></tr>
+      <tr><td>Gamepad Left Thumbstick 2D-Axis</td><td>Dead Zone</td><td>(x, y) continu</td><td>Le stick fournit déjà les deux axes</td></tr>
+      <tr><td>Mouse XY 2D-Axis (pour <code>IA_Look</code>)</td><td>Negate sur Y seulement (comme le template)</td><td>(dx, dy)</td><td>Ajuste le sens vertical du regard</td></tr>
+    </tbody>
+  </table>
+  <p>Quand deux touches sont enfoncées (<kbd>W</kbd> + <kbd>D</kbd>), Enhanced Input additionne leurs valeurs : on obtient (1, 1). Le Character Movement Component limite de toute façon la vitesse, donc on ne va pas plus vite en diagonale.</p>
+  <div class="callout warn">
+    <p class="callout-title">Claviers AZERTY</p>
+    <p>Les touches de lettres sont identifiées par la lettre qu'elles portent, pas par leur position : sur un clavier AZERTY, <kbd>W</kbd> et <kbd>A</kbd> ne tombent pas sous la main gauche. Ajoutez des mappings <kbd>Z</kbd> et <kbd>Q</kbd> en plus de <kbd>W</kbd> et <kbd>A</kbd>, ou proposez le remappage des touches (voir plus bas). Vérifiez toujours avec la disposition de clavier de vos joueurs.</p>
+  </div>
+
+  <h2>Mise en place pas à pas</h2>
+  <ol class="steps">
+    <li><strong>Vérifier le plugin</strong>Le plugin <em>Enhanced Input</em> est activé par défaut dans les projets UE5 récents (<em>Edit → Plugins</em> pour le vérifier).</li>
+    <li><strong>Déclarer le module</strong>Ajoutez <code>"EnhancedInput"</code> aux dépendances de <code>MyGame.Build.cs</code> (voir <a href="cpp-bases.html">C++ pour Unreal</a>).
+<script type="text/plain" data-lang="csharp" data-file="MyGame.Build.cs">
+PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput" });
+</script>
+    </li>
+    <li><strong>Classes par défaut</strong>Dans <em>Project Settings → Engine → Input</em>, section <em>Default Classes</em> : <strong>Default Player Input Class</strong> = <code>EnhancedPlayerInput</code> et <strong>Default Input Component Class</strong> = <code>EnhancedInputComponent</code> (valeurs par défaut des projets récents). Elles sont stockées dans <code>DefaultInput.ini</code> :
+<script type="text/plain" data-lang="ini" data-file="Config/DefaultInput.ini">
+[/Script/Engine.InputSettings]
+DefaultPlayerInputClass=/Script/EnhancedInput.EnhancedPlayerInput
+DefaultInputComponentClass=/Script/EnhancedInput.EnhancedInputComponent
+</script>
+    </li>
+    <li><strong>Créer les Input Actions</strong>Dans le Content Browser : clic droit → <em>Input → Input Action</em>. Créez <code>IA_Move</code> et <code>IA_Look</code> (Value Type : Axis2D), <code>IA_Jump</code> et <code>IA_Sprint</code> (Digital).</li>
+    <li><strong>Créer le Mapping Context</strong>Clic droit → <em>Input → Input Mapping Context</em> : <code>IMC_Default</code>. Ajoutez une ligne par action, puis les touches et modifiers du tableau précédent ; <kbd>Space</kbd> et <em>Gamepad Face Button Bottom</em> pour <code>IA_Jump</code>, <kbd>Left Shift</kbd> pour <code>IA_Sprint</code>.</li>
+    <li><strong>Brancher les assets</strong>Dans le Blueprint du personnage (enfant de la classe C++ ci-dessous), renseignez <em>Default Mapping Context</em> et chaque Input Action dans la catégorie <em>Input</em> du panneau Details.</li>
+  </ol>
+
+  <h2>Un personnage complet en C++</h2>
+  <p>Voici un personnage à la troisième personne équivalent au template <em>Third Person</em>, avec un sprint en plus. Sa structure de composants :</p>
+  <ul class="tree">
+    <li><span class="node c-orange">AMyCharacter</span><span class="desc">hérite d'ACharacter</span>
+      <ul>
+        <li><span class="node c-green">CapsuleComponent</span><span class="desc">racine, fournie par ACharacter</span>
+          <ul>
+            <li><span class="node c-green">Mesh</span><span class="desc">SkeletalMeshComponent, fourni par ACharacter</span></li>
+            <li><span class="node c-blue">CameraBoom</span><span class="desc">USpringArmComponent : tient la caméra à distance, recule devant les murs</span>
+              <ul><li><span class="node c-blue">FollowCamera</span><span class="desc">UCameraComponent au bout du bras</span></li></ul>
+            </li>
+          </ul>
+        </li>
+        <li><span class="node">CharacterMovement</span><span class="desc">UCharacterMovementComponent : marche, saut, chute, nage</span></li>
+      </ul>
+    </li>
+  </ul>
+
+<script type="text/plain" data-lang="cpp" data-file="MyCharacter.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Character.h"
+#include "InputActionValue.h"
+#include "MyCharacter.generated.h"
+
+class USpringArmComponent;
+class UCameraComponent;
+class UInputMappingContext;
+class UInputAction;
+
+UCLASS()
+class MYGAME_API AMyCharacter : public ACharacter
+{
+    GENERATED_BODY()
+
+public:
+    AMyCharacter();
+
+protected:
+    virtual void BeginPlay() override;
+    virtual void NotifyControllerChanged() override;
+    virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
+
+    void Move(const FInputActionValue& Value);
+    void Look(const FInputActionValue& Value);
+    void StartSprint();
+    void StopSprint();
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
+    TObjectPtr<USpringArmComponent> CameraBoom;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
+    TObjectPtr<UCameraComponent> FollowCamera;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Input")
+    TObjectPtr<UInputMappingContext> DefaultMappingContext;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Input")
+    TObjectPtr<UInputAction> MoveAction;      // IA_Move
+
+    UPROPERTY(EditDefaultsOnly, Category = "Input")
+    TObjectPtr<UInputAction> LookAction;      // IA_Look
+
+    UPROPERTY(EditDefaultsOnly, Category = "Input")
+    TObjectPtr<UInputAction> JumpAction;      // IA_Jump
+
+    UPROPERTY(EditDefaultsOnly, Category = "Input")
+    TObjectPtr<UInputAction> SprintAction;    // IA_Sprint
+
+    UPROPERTY(EditDefaultsOnly, Category = "Movement", meta = (ClampMin = "0.0"))
+    float WalkSpeed = 400.f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Movement", meta = (ClampMin = "0.0"))
+    float SprintSpeed = 700.f;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="MyCharacter.cpp">
+#include "MyCharacter.h"
+#include "Camera/CameraComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "Engine/LocalPlayer.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/Controller.h"
+#include "GameFramework/SpringArmComponent.h"
+#include "EnhancedInputComponent.h"
+#include "EnhancedInputSubsystems.h"
+#include "InputActionValue.h"
+
+AMyCharacter::AMyCharacter()
+{
+    PrimaryActorTick.bCanEverTick = false;
+
+    GetCapsuleComponent()->InitCapsuleSize(42.f, 96.f);
+
+    // Le corps ne copie pas la rotation de la caméra...
+    bUseControllerRotationPitch = false;
+    bUseControllerRotationYaw = false;
+    bUseControllerRotationRoll = false;
+
+    // ...il se tourne vers la direction de son déplacement
+    UCharacterMovementComponent* Movement = GetCharacterMovement();
+    Movement->bOrientRotationToMovement = true;
+    Movement->RotationRate = FRotator(0.f, 500.f, 0.f);
+    Movement->JumpZVelocity = 700.f;
+    Movement->AirControl = 0.35f;
+    Movement->BrakingDecelerationWalking = 2000.f;
+
+    CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
+    CameraBoom->SetupAttachment(RootComponent);
+    CameraBoom->TargetArmLength = 400.f;
+    CameraBoom->bUsePawnControlRotation = true;          // le bras suit la Control Rotation
+
+    FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
+    FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
+    FollowCamera->bUsePawnControlRotation = false;       // c'est le bras qui tourne, pas la caméra
+}
+
+void AMyCharacter::BeginPlay()
+{
+    Super::BeginPlay();
+    // Ici et pas dans le constructeur : la valeur du Blueprint est connue
+    GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+}
+
+void AMyCharacter::NotifyControllerChanged()
+{
+    Super::NotifyControllerChanged();
+
+    // Appelé à chaque possession : ajoute le contexte au joueur local qui nous contrôle
+    if (APlayerController* PC = Cast<APlayerController>(GetController()))
+    {
+        if (UEnhancedInputLocalPlayerSubsystem* Subsystem =
+                ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()))
+        {
+            Subsystem->AddMappingContext(DefaultMappingContext, 0);
+        }
+    }
+}
+
+void AMyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
+{
+    Super::SetupPlayerInputComponent(PlayerInputComponent);
+
+    if (UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(PlayerInputComponent))
+    {
+        EIC->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AMyCharacter::Move);
+        EIC->BindAction(LookAction, ETriggerEvent::Triggered, this, &AMyCharacter::Look);
+        EIC->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
+        EIC->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+        EIC->BindAction(SprintAction, ETriggerEvent::Started, this, &AMyCharacter::StartSprint);
+        EIC->BindAction(SprintAction, ETriggerEvent::Completed, this, &AMyCharacter::StopSprint);
+    }
+}
+
+void AMyCharacter::Move(const FInputActionValue& Value)
+{
+    const FVector2D Input = Value.Get<FVector2D>();
+    if (!Controller)
+    {
+        return;
+    }
+
+    // On ne garde que le lacet (yaw) de la caméra : « avant » = où regarde la caméra, à plat
+    const FRotator YawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f);
+    const FVector Forward = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
+    const FVector Right = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
+
+    AddMovementInput(Forward, Input.Y);
+    AddMovementInput(Right, Input.X);
+}
+
+void AMyCharacter::Look(const FInputActionValue& Value)
+{
+    const FVector2D Input = Value.Get<FVector2D>();
+    AddControllerYawInput(Input.X);      // modifie la Control Rotation, pas le Pawn
+    AddControllerPitchInput(Input.Y);
+}
+
+void AMyCharacter::StartSprint()
+{
+    GetCharacterMovement()->MaxWalkSpeed = SprintSpeed;
+}
+
+void AMyCharacter::StopSprint()
+{
+    GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+}
+</script>
+
+  <dl class="defs">
+    <dt><code>AddMovementInput</code></dt><dd>Ne déplace rien directement : elle accumule une direction souhaitée, que le Character Movement Component consomme à son tick en appliquant accélération, friction et collisions.</dd>
+    <dt><code>AddControllerYawInput</code></dt><dd>Fait tourner la <strong>Control Rotation</strong> du contrôleur (la direction de visée), pas le personnage. C'est le Spring Arm qui la suit.</dd>
+    <dt><code>FRotationMatrix(...).GetUnitAxis</code></dt><dd>Donne les axes « avant » (X) et « droite » (Y) d'une rotation. Voir <a href="maths.html">Maths du jeu vidéo</a>.</dd>
+  </dl>
+
+  <div class="callout info">
+    <p class="callout-title">Pourquoi NotifyControllerChanged et pas BeginPlay ?</p>
+    <p>Quand un personnage réapparaît en cours de partie, son <code>BeginPlay</code> s'exécute pendant le spawn, <em>avant</em> que le PlayerController ne le possède : <code>GetController()</code> est encore nul et le contexte n'est jamais ajouté. <code>NotifyControllerChanged</code> est appelée à chaque changement de contrôleur, donc au bon moment. C'est l'approche des templates récents ; ajouter le contexte dans le <code>BeginPlay</code> du PlayerController est une autre solution courante.</p>
+  </div>
+
+  <p>La même logique de déplacement en Blueprint. Le nœud d'événement porte le nom de l'Input Action ; sa sortie <em>Action Value</em> se décompose avec <em>Break Vector 2D</em> :</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="Déplacement en Blueprint (version simplifiée : le template ne garde que le Yaw de la Control Rotation avant de calculer les vecteurs).">
+{
+  "nodes": [
+    { "id": "ia", "type": "event", "title": "EnhancedInputAction IA_Move", "x": 0, "y": 0,
+      "out": [ { "name": "Triggered", "type": "exec" }, { "name": "Action Value", "type": "struct" } ] },
+    { "id": "rot", "type": "pure", "title": "Get Control Rotation", "x": 0, "y": 190,
+      "out": [ { "name": "Return Value", "type": "rotator" } ] },
+    { "id": "brk", "type": "pure", "title": "Break Vector 2D", "x": 290, "y": 100,
+      "in": [ { "name": "In Vec", "type": "struct" } ],
+      "out": [ { "name": "X", "type": "double" }, { "name": "Y", "type": "double" } ] },
+    { "id": "fwd", "type": "pure", "title": "Get Forward Vector", "x": 290, "y": 226,
+      "in": [ { "name": "In Rot", "type": "rotator" } ],
+      "out": [ { "name": "Return Value", "type": "vector" } ] },
+    { "id": "right", "type": "pure", "title": "Get Right Vector", "x": 290, "y": 320,
+      "in": [ { "name": "In Rot", "type": "rotator" } ],
+      "out": [ { "name": "Return Value", "type": "vector" } ] },
+    { "id": "add1", "type": "function", "title": "Add Movement Input", "x": 560, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "World Direction", "type": "vector" }, { "name": "Scale Value", "type": "float", "value": "1.0" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "add2", "type": "function", "title": "Add Movement Input", "x": 560, "y": 170,
+      "in": [ { "type": "exec" }, { "name": "World Direction", "type": "vector" }, { "name": "Scale Value", "type": "float", "value": "1.0" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ia", 0, "add1", 0 ],
+    [ "ia", 1, "brk", 0 ],
+    [ "rot", 0, "fwd", 0 ],
+    [ "rot", 0, "right", 0 ],
+    [ "fwd", 0, "add1", 1 ],
+    [ "brk", 1, "add1", 2 ],
+    [ "add1", 0, "add2", 0 ],
+    [ "right", 0, "add2", 1 ],
+    [ "brk", 0, "add2", 2 ]
+  ]
+}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="MyCharacter.cpp">
+void AMyCharacter::Move(const FInputActionValue& Value)
+{
+    const FVector2D Input = Value.Get<FVector2D>();
+    if (!Controller)
+    {
+        return;
+    }
+
+    const FRotator YawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f);
+    AddMovementInput(FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X), Input.Y);
+    AddMovementInput(FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y), Input.X);
+}
+</script>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <p class="callout-title">Sprint et multijoueur</p>
+    <p>Changer <code>MaxWalkSpeed</code> uniquement sur le client fonctionne en solo, mais en réseau le serveur, qui ignore le sprint, corrige sans cesse la position du joueur (saccades). Il faut faire passer l'information au serveur, idéalement via les mécanismes de prédiction du Character Movement Component. Voir <a href="multijoueur.html">Réseau &amp; multijoueur</a>.</p>
+  </div>
+
+  <h2>Pawn ou PlayerController ?</h2>
+  <p>Les entrées peuvent être liées dans le Pawn (<code>SetupPlayerInputComponent</code>) ou dans le PlayerController (<code>SetupInputComponent</code>). La règle : ce qui dépend du <strong>corps</strong> va dans le Pawn, ce qui doit fonctionner <strong>même sans corps</strong> va dans le PlayerController.</p>
+  <div class="compare">
+    <div class="neutral">
+      <h4>Dans le Pawn / Character</h4>
+      <ul>
+        <li>Se déplacer, sauter, s'accroupir</li>
+        <li>Tirer, recharger l'arme tenue</li>
+        <li>Commandes propres à un véhicule (dans le Pawn véhicule)</li>
+      </ul>
+    </div>
+    <div class="alt">
+      <h4>Dans le PlayerController</h4>
+      <ul>
+        <li>Menu pause, tableau des scores, chat</li>
+        <li>Carte du monde, inventaire global</li>
+        <li>Tout ce qui doit marcher pendant la mort ou en spectateur</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Changer de contexte</h3>
+<script type="text/plain" data-lang="cpp" data-file="MyPlayerController.cpp">
+void AMyPlayerController::EnterVehicle(APawn* Vehicle)
+{
+    if (UEnhancedInputLocalPlayerSubsystem* Subsystem =
+            ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
+    {
+        Subsystem->RemoveMappingContext(OnFootContext);
+        Subsystem->AddMappingContext(VehicleContext, 0);
+    }
+    Possess(Vehicle);
+}
+
+void AMyPlayerController::OpenMap()
+{
+    if (UEnhancedInputLocalPlayerSubsystem* Subsystem =
+            ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
+    {
+        // Par-dessus le contexte de jeu : priorité plus haute, ses touches gagnent
+        Subsystem->AddMappingContext(MapContext, 10);
+    }
+}
+</script>
+
+  <h3>Modes d'entrée et curseur</h3>
+  <p>Le <strong>mode d'entrée</strong> dit qui reçoit le clavier et la souris : le jeu, l'interface, ou les deux.</p>
+  <table>
+    <thead><tr><th>Mode</th><th>Usage</th></tr></thead>
+    <tbody>
+      <tr><td><code>FInputModeGameOnly</code></td><td>En jeu : la souris est capturée pour la caméra</td></tr>
+      <tr><td><code>FInputModeUIOnly</code></td><td>Menu principal, pause : seuls les widgets reçoivent les entrées</td></tr>
+      <tr><td><code>FInputModeGameAndUI</code></td><td>Inventaire, jeux de stratégie : cliquer sur l'interface et le monde</td></tr>
+    </tbody>
+  </table>
+<script type="text/plain" data-lang="cpp" data-file="MyPlayerController.cpp">
+void AMyPlayerController::ShowPauseMenu(UUserWidget* PauseWidget)
+{
+    FInputModeUIOnly Mode;
+    Mode.SetWidgetToFocus(PauseWidget->TakeWidget());
+    SetInputMode(Mode);
+    bShowMouseCursor = true;
+}
+
+void AMyPlayerController::ResumeGame()
+{
+    SetInputMode(FInputModeGameOnly());
+    bShowMouseCursor = false;
+}
+</script>
+  <p>Ces notions sont développées dans <a href="ui.html">Interfaces avec UMG</a>.</p>
+
+  <h2>Le Character Movement Component</h2>
+  <p>Le <code>UCharacterMovementComponent</code> (CMC) est l'un des composants les plus riches du moteur : marche sur les pentes, marches d'escalier, saut, chute, nage, vol, plateformes mobiles, et prédiction réseau. Ses réglages se trouvent dans le panneau Details du composant <em>Character Movement</em>. Les principaux :</p>
+  <table>
+    <thead><tr><th>Propriété</th><th>Défaut</th><th>Effet</th></tr></thead>
+    <tbody>
+      <tr><td><code>MaxWalkSpeed</code></td><td>600</td><td>Vitesse maximale au sol (cm/s)</td></tr>
+      <tr><td><code>MaxAcceleration</code></td><td>2048</td><td>Vitesse à laquelle on atteint la vitesse maximale : bas = lourd, haut = nerveux</td></tr>
+      <tr><td><code>BrakingDecelerationWalking</code></td><td>2048</td><td>Freinage quand on lâche les commandes</td></tr>
+      <tr><td><code>GroundFriction</code></td><td>8</td><td>Adhérence : faible = glissant, comme sur la glace</td></tr>
+      <tr><td><code>JumpZVelocity</code></td><td>420</td><td>Vitesse verticale au départ du saut : fixe sa hauteur</td></tr>
+      <tr><td><code>AirControl</code></td><td>0.05</td><td>Contrôle en l'air, de 0 (aucun) à 1 (total)</td></tr>
+      <tr><td><code>GravityScale</code></td><td>1</td><td>Multiplicateur de gravité : 2 donne des sauts plus « secs »</td></tr>
+      <tr><td><code>bOrientRotationToMovement</code></td><td>false</td><td>Le personnage se tourne vers sa direction de déplacement</td></tr>
+      <tr><td><code>RotationRate</code></td><td>(0, 360, 0)</td><td>Vitesse de cette rotation, en degrés par seconde</td></tr>
+      <tr><td><code>bUseControllerDesiredRotation</code></td><td>false</td><td>Se tourne progressivement vers la Control Rotation (à la vitesse <code>RotationRate</code>)</td></tr>
+      <tr><td><code>MaxStepHeight</code></td><td>45</td><td>Hauteur maximale d'une marche franchissable</td></tr>
+      <tr><td><code>SetWalkableFloorAngle()</code></td><td>≈ 44,8°</td><td>Pente maximale sur laquelle on peut marcher</td></tr>
+      <tr><td><code>MaxWalkSpeedCrouched</code></td><td>300</td><td>Vitesse accroupi</td></tr>
+      <tr><td><code>NavAgentProps.bCanCrouch</code></td><td>false</td><td>Autorise <code>Crouch()</code> (case <em>Can Crouch</em> dans l'éditeur)</td></tr>
+    </tbody>
+  </table>
+  <p class="small muted">Les valeurs par défaut sont celles du composant ; les templates d'Epic en changent plusieurs (le Third Person utilise par exemple <code>JumpZVelocity = 700</code> et <code>AirControl = 0.35</code>).</p>
+
+  <h3>Les modes de déplacement</h3>
+  <p>Le CMC fonctionne comme une machine à états : à chaque instant, le personnage est dans un <strong>mode de déplacement</strong> (<code>EMovementMode</code>) qui détermine la physique appliquée.</p>
+  <figure class="diagram">
+<pre class="mermaid">
+stateDiagram-v2
+    state "MOVE_Walking<br>au sol" as Walking
+    state "MOVE_Falling<br>saut ou chute" as Falling
+    state "MOVE_Swimming<br>dans un volume d'eau" as Swimming
+    state "MOVE_Flying<br>vol libre" as Flying
+    state "MOVE_NavWalking<br>déplacement sur NavMesh" as NavWalking
+    state "MOVE_Custom<br>votre propre physique" as Custom
+    [*] --> Walking
+    Walking --> Falling : saut ou bord du vide
+    Falling --> Walking : atterrissage
+    Walking --> Swimming : entre dans l'eau
+    Swimming --> Walking : sort de l'eau
+    Walking --> Flying : SetMovementMode
+    Flying --> Falling : SetMovementMode
+    Walking --> NavWalking : réglage de l'IA
+    Walking --> Custom : SetMovementMode
+</pre>
+    <figcaption>Les modes de déplacement du Character Movement Component et leurs transitions typiques.</figcaption>
+  </figure>
+
+<script type="text/plain" data-lang="cpp" data-file="MyCharacter.cpp">
+// Accroupissement : la capsule rétrécit, la vitesse passe à MaxWalkSpeedCrouched
+GetCharacterMovement()->GetNavAgentPropertiesRef().bCanCrouch = true;   // dans le constructeur
+Crouch();       // demande d'accroupissement
+UnCrouch();     // se relever (si la place le permet)
+
+// Double saut : propriété d'ACharacter
+JumpMaxCount = 2;
+
+// Propulsion : tremplin, explosion, dash
+// bXYOverride / bZOverride : remplacer la vitesse sur ces axes au lieu de l'ajouter
+LaunchCharacter(FVector(0.f, 0.f, 1200.f), false, true);
+
+// Changer de mode à la main (jetpack, échelle...)
+GetCharacterMovement()->SetMovementMode(MOVE_Flying);
+</script>
+
+  <h2>La caméra</h2>
+  <h3>Control Rotation et rotation du Pawn</h3>
+  <p>Deux rotations coexistent et il est essentiel de ne pas les confondre. La <strong>Control Rotation</strong> appartient au Controller : c'est la direction dans laquelle le joueur <em>regarde</em> (modifiée par la souris ou le stick droit). La <strong>rotation du Pawn</strong> est l'orientation de son <em>corps</em>. Des options décident si l'une copie l'autre.</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 800 300" width="800" role="img" aria-label="Vue du dessus : à gauche la caméra libre où le corps suit le déplacement, à droite la première personne où le corps suit la Control Rotation">
+      <defs>
+        <marker id="inp-arrow-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#5aa9ff"/></marker>
+        <marker id="inp-arrow-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#4ade80"/></marker>
+      </defs>
+      <rect x="10" y="10" width="380" height="280" rx="10" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.25"/>
+      <rect x="410" y="10" width="380" height="280" rx="10" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.25"/>
+      <text x="26" y="36" font-size="14" font-weight="700" fill="currentColor">3e personne (vue du dessus)</text>
+      <text x="426" y="36" font-size="14" font-weight="700" fill="currentColor">1re personne (vue du dessus)</text>
+      <line x1="200" y1="150" x2="200" y2="62" stroke="#5aa9ff" stroke-width="3" marker-end="url(#inp-arrow-b)"/>
+      <text x="210" y="70" font-size="12" fill="#5aa9ff" font-weight="700">Control Rotation</text>
+      <text x="210" y="86" font-size="11" fill="#5aa9ff">(souris, stick droit)</text>
+      <line x1="200" y1="150" x2="320" y2="150" stroke="#4ade80" stroke-width="3" marker-end="url(#inp-arrow-g)"/>
+      <text x="236" y="140" font-size="12" fill="#4ade80" font-weight="700">rotation du Pawn</text>
+      <text x="236" y="176" font-size="11" fill="#4ade80">suit le déplacement</text>
+      <circle cx="200" cy="150" r="20" fill="currentColor" fill-opacity="0.12" stroke="currentColor" stroke-width="1.5"/>
+      <line x1="200" y1="172" x2="200" y2="234" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <text x="208" y="210" font-size="11" fill="currentColor" opacity="0.8">Spring Arm</text>
+      <rect x="186" y="236" width="28" height="18" rx="3" fill="#5aa9ff" fill-opacity="0.3" stroke="#5aa9ff"/>
+      <text x="40" y="250" font-size="11" fill="currentColor" opacity="0.8">caméra derrière,</text>
+      <text x="40" y="264" font-size="11" fill="currentColor" opacity="0.8">dans l'axe de la</text>
+      <text x="40" y="278" font-size="11" fill="currentColor" opacity="0.8">Control Rotation</text>
+      <line x1="592" y1="150" x2="592" y2="62" stroke="#5aa9ff" stroke-width="3" marker-end="url(#inp-arrow-b)"/>
+      <line x1="608" y1="150" x2="608" y2="62" stroke="#4ade80" stroke-width="3" marker-end="url(#inp-arrow-g)"/>
+      <text x="584" y="70" font-size="12" fill="#5aa9ff" font-weight="700" text-anchor="end">Control Rotation</text>
+      <text x="616" y="70" font-size="12" fill="#4ade80" font-weight="700">rotation du Pawn</text>
+      <text x="616" y="86" font-size="11" fill="#4ade80">= yaw de la Control Rotation</text>
+      <circle cx="600" cy="150" r="20" fill="currentColor" fill-opacity="0.12" stroke="currentColor" stroke-width="1.5"/>
+      <rect x="590" y="141" width="20" height="14" rx="2" fill="#5aa9ff" fill-opacity="0.35" stroke="#5aa9ff"/>
+      <text x="600" y="198" font-size="11" fill="currentColor" opacity="0.8" text-anchor="middle">caméra dans la tête</text>
+      <text x="26" y="118" font-size="11" fill="currentColor" opacity="0.8">bOrientRotationToMovement</text>
+      <text x="26" y="132" font-size="11" fill="currentColor" opacity="0.8">= true</text>
+      <text x="426" y="250" font-size="11" fill="currentColor" opacity="0.8">bUseControllerRotationYaw = true</text>
+      <text x="426" y="264" font-size="11" fill="currentColor" opacity="0.8">Camera : bUsePawnControlRotation = true</text>
+    </svg>
+    <figcaption>À gauche, la caméra tourne librement autour d'un corps qui suit son déplacement. À droite, le corps tourne avec le regard.</figcaption>
+  </figure>
+
+  <h3>Trois styles de caméra</h3>
+  <table>
+    <thead><tr><th>Réglage</th><th>3e personne</th><th>1re personne</th><th>Vue du dessus</th></tr></thead>
+    <tbody>
+      <tr><td>Spring Arm</td><td>Oui, 300 à 400 cm</td><td>Non : caméra sur la capsule ou la tête</td><td>Oui, 800 à 1500 cm, incliné à -60° environ</td></tr>
+      <tr><td>SpringArm <code>bUsePawnControlRotation</code></td><td>true</td><td>—</td><td>false, rotation absolue (<code>SetUsingAbsoluteRotation(true)</code>)</td></tr>
+      <tr><td>Camera <code>bUsePawnControlRotation</code></td><td>false</td><td>true</td><td>false</td></tr>
+      <tr><td>Pawn <code>bUseControllerRotationYaw</code></td><td>false</td><td>true</td><td>false</td></tr>
+      <tr><td>CMC <code>bOrientRotationToMovement</code></td><td>true</td><td>false</td><td>true</td></tr>
+      <tr><td>SpringArm <code>bDoCollisionTest</code></td><td>true</td><td>—</td><td>false</td></tr>
+      <tr><td>Curseur</td><td>Caché</td><td>Caché</td><td>Visible (clic pour se déplacer ou viser)</td></tr>
+    </tbody>
+  </table>
+
+<script type="text/plain" data-lang="cpp" data-file="CameraSetups.cpp">
+// Troisième personne : options utiles du Spring Arm
+CameraBoom->bDoCollisionTest = true;          // raccourcit le bras devant un mur
+CameraBoom->ProbeSize = 12.f;                 // rayon de la sphère de test
+CameraBoom->ProbeChannel = ECC_Camera;        // canal de collision testé
+CameraBoom->bEnableCameraLag = true;          // la caméra suit avec un léger retard
+CameraBoom->CameraLagSpeed = 10.f;
+CameraBoom->SocketOffset = FVector(0.f, 60.f, 40.f);   // caméra « par-dessus l'épaule »
+
+// Première personne : caméra fixée à la capsule, tourne avec la Control Rotation
+FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FirstPersonCamera"));
+FirstPersonCamera->SetupAttachment(GetCapsuleComponent());
+FirstPersonCamera->SetRelativeLocation(FVector(-10.f, 0.f, 60.f));
+FirstPersonCamera->bUsePawnControlRotation = true;
+
+// Vue du dessus : bras fixe, indépendant de la rotation du personnage
+CameraBoom->SetUsingAbsoluteRotation(true);
+CameraBoom->SetRelativeRotation(FRotator(-60.f, 0.f, 0.f));
+CameraBoom->TargetArmLength = 1200.f;
+CameraBoom->bDoCollisionTest = false;
+</script>
+
+  <h3>Limiter le regard et secouer la caméra</h3>
+  <p>L'angle vertical (pitch) maximal se règle sur le <strong>PlayerCameraManager</strong>, l'objet du PlayerController qui calcule la vue finale :</p>
+<script type="text/plain" data-lang="cpp" data-file="MyPlayerController.cpp">
+#include "Camera/PlayerCameraManager.h"
+
+void AMyPlayerController::BeginPlay()
+{
+    Super::BeginPlay();
+    if (PlayerCameraManager)
+    {
+        PlayerCameraManager->ViewPitchMin = -60.f;   // regarder vers le bas
+        PlayerCameraManager->ViewPitchMax = 45.f;    // regarder vers le haut
+    }
+}
+</script>
+  <p>Les <strong>camera shakes</strong> (tremblements lors d'une explosion ou d'un coup) sont des classes dérivées de <code>UCameraShakeBase</code>, créées en Blueprint avec un <em>Root Shake Pattern</em> (oscillation, bruit de Perlin…). On les joue avec <code>PlayerController-&gt;ClientStartCameraShake(ShakeClass)</code> ou le nœud <em>Start Camera Shake</em>.</p>
+
+  <h2>Manette, mobile et remappage</h2>
+  <ul>
+    <li><strong>Manette</strong> : ajoutez simplement les touches de manette dans le même Mapping Context (<em>Gamepad Left Thumbstick 2D-Axis</em> avec Dead Zone, <em>Gamepad Face Button Bottom</em>…). Vos Input Actions et votre code ne changent pas : c'est tout l'intérêt d'Enhanced Input.</li>
+    <li><strong>Mobile</strong> : les joysticks virtuels (<em>Touch Interface</em>, réglable dans <em>Project Settings → Input</em>) produisent des valeurs de sticks de manette, donc les mêmes mappings fonctionnent. Les écrans tactiles exposent aussi des touches <em>Touch</em>. Les options exactes varient selon votre version du moteur.</li>
+    <li><strong>Remappage par le joueur</strong> : les versions récentes d'UE5 proposent les <em>Enhanced Input User Settings</em> (à activer dans <em>Project Settings → Engine → Enhanced Input</em>). On marque les mappings comme remappables (<em>Player Mappable Key Settings</em>), puis on modifie et sauvegarde les touches via <code>UEnhancedInputUserSettings</code>. Cette API a évolué entre les versions et a longtemps été marquée expérimentale : suivez la documentation de votre version, et inspirez-vous du projet Lyra.</li>
+  </ul>
+
+  <div class="quiz">
+    <p class="q">Sur quel <code>ETriggerEvent</code> lier la fonction <code>Move</code> d'un personnage pour qu'il avance tant que la touche est enfoncée ?</p>
+    <ul>
+      <li><code>Started</code></li>
+      <li data-correct><code>Triggered</code></li>
+      <li><code>Completed</code></li>
+      <li><code>Ongoing</code></li>
+    </ul>
+    <p class="explain">Sans trigger particulier, l'action est déclenchée à chaque frame tant que la touche est actionnée : <code>Triggered</code> arrive donc en continu. <code>Started</code> n'arrive qu'une fois, au premier appui.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Une action « fouiller » utilise un trigger Hold de 1 seconde. Le joueur relâche la touche après 0,4 seconde. Quel événement reçoit-il en dernier ?</p>
+    <ul>
+      <li><code>Triggered</code></li>
+      <li><code>Completed</code></li>
+      <li data-correct><code>Canceled</code></li>
+      <li>Aucun événement</li>
+    </ul>
+    <p class="explain">Le trigger a commencé à évaluer (<code>Started</code>, puis <code>Ongoing</code>) mais n'a jamais été satisfait : son interruption produit <code>Canceled</code>. <code>Completed</code> ne suit qu'une action réellement déclenchée.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Dans un jeu à la troisième personne, la caméra tourne bien avec la souris, mais le personnage reste toujours orienté face à la caméra, même en marchant de côté. Que faut-il changer ?</p>
+    <ul>
+      <li>Mettre <code>bUsePawnControlRotation</code> à true sur la caméra</li>
+      <li data-correct>Mettre <code>bUseControllerRotationYaw</code> à false et <code>bOrientRotationToMovement</code> à true</li>
+      <li>Augmenter <code>RotationRate</code></li>
+      <li>Ajouter un modifier Negate sur <code>IA_Look</code></li>
+    </ul>
+    <p class="explain">Avec <code>bUseControllerRotationYaw</code>, le Pawn copie le yaw de la Control Rotation. Pour un personnage qui se tourne vers sa direction de marche, il faut le désactiver et laisser le CMC orienter le corps (<code>bOrientRotationToMovement</code>).</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Une esquive rapide (dash)</h4>
+    <p>Ajoutez au personnage une action <code>IA_Dash</code> (Digital, trigger Pressed, touche <kbd>Left Alt</kbd> et bouton droit de la manette). Le dash propulse le personnage dans la direction de son déplacement (ou devant lui s'il est immobile), puis n'est plus utilisable pendant une seconde. Exposez la force et le temps de recharge aux designers, et un événement Blueprint <code>OnDash</code> pour l'effet visuel.</p>
+    <details>
+      <summary>Voir la solution</summary>
+<script type="text/plain" data-lang="cpp" data-file="MyCharacter.h (ajouts)">
+protected:
+    UPROPERTY(EditDefaultsOnly, Category = "Input")
+    TObjectPtr<UInputAction> DashAction;      // IA_Dash
+
+    UPROPERTY(EditDefaultsOnly, Category = "Dash", meta = (ClampMin = "0.0"))
+    float DashStrength = 1500.f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Dash", meta = (ClampMin = "0.0"))
+    float DashCooldown = 1.f;
+
+    // Traînée, son, particules : laissés au Blueprint
+    UFUNCTION(BlueprintImplementableEvent, Category = "Dash")
+    void OnDash();
+
+    void Dash();
+    void ResetDash();
+
+private:
+    FTimerHandle DashCooldownHandle;
+    bool bCanDash = true;
+</script>
+<script type="text/plain" data-lang="cpp" data-file="MyCharacter.cpp (ajouts)">
+#include "TimerManager.h"
+
+// Dans SetupPlayerInputComponent, avec les autres BindAction :
+EIC->BindAction(DashAction, ETriggerEvent::Triggered, this, &AMyCharacter::Dash);
+
+void AMyCharacter::Dash()
+{
+    if (!bCanDash)
+    {
+        return;
+    }
+
+    // Direction voulue par le joueur à la dernière frame, sinon devant le personnage
+    FVector Direction = GetLastMovementInputVector();
+    if (Direction.IsNearlyZero())
+    {
+        Direction = GetActorForwardVector();
+    }
+    Direction.Z = 0.f;
+    Direction.Normalize();
+
+    // XY remplacé : dash net quelle que soit la vitesse actuelle
+    // Z remplacé par 0 : en l'air, le dash annule la chute (dash aérien horizontal)
+    LaunchCharacter(Direction * DashStrength, true, true);
+
+    bCanDash = false;
+    GetWorldTimerManager().SetTimer(DashCooldownHandle, this, &AMyCharacter::ResetDash, DashCooldown, false);
+    OnDash();
+}
+
+void AMyCharacter::ResetDash()
+{
+    bCanDash = true;
+}
+</script>
+      <p>Au sol, le freinage et la friction réduisent vite l'élan : si le dash vous semble court, augmentez <code>DashStrength</code> ou baissez temporairement <code>GroundFriction</code> pendant le dash. Pour afficher la recharge dans l'interface, une fonction <code>BlueprintPure</code> peut renvoyer <code>GetWorldTimerManager().GetTimerRemaining(DashCooldownHandle)</code>.</p>
+    </details>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Input Action = intention, Mapping Context = touches, Modifiers = transformation de la valeur, Triggers = moment du déclenchement.</li>
+      <li><code>Triggered</code> pour le continu, <code>Started</code>/<code>Completed</code> pour le maintien ; <code>Canceled</code> si un trigger échoue.</li>
+      <li>Ajoutez le contexte via <code>UEnhancedInputLocalPlayerSubsystem</code> et liez les actions dans <code>SetupPlayerInputComponent</code> avec <code>BindAction</code>.</li>
+      <li><code>AddMovementInput</code> exprime une intention ; le Character Movement Component applique accélération, friction et collisions.</li>
+      <li>Control Rotation (regard) et rotation du Pawn (corps) sont distinctes ; trois options décident qui suit qui.</li>
+      <li>Le corps dans le Pawn, ce qui doit survivre à la mort dans le PlayerController.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

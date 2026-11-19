@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>C++ pour Unreal : les bases — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="cpp-bases">
+<article class="doc">
+
+  <h1>C++ pour Unreal : les bases</h1>
+  <p class="lead">Le C++ d'Unreal n'est pas tout à fait le C++ des manuels : il est enrichi de macros, de types maison et d'un système de réflexion qui le relie à l'éditeur et aux Blueprints. Ce chapitre vous donne les rappels de C++ indispensables, puis tout ce qu'Unreal ajoute par-dessus, pour écrire vos premières classes avec confiance.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Comprendre <strong>pourquoi</strong> et <strong>comment</strong> le C++ et les Blueprints travaillent ensemble</li>
+      <li>Réviser les notions de C++ indispensables : classes, héritage, pointeurs, références, <code>const</code></li>
+      <li>Lire et écrire une classe Unreal complète : <code>UCLASS</code>, <code>GENERATED_BODY</code>, <code>UPROPERTY</code>, <code>UFUNCTION</code></li>
+      <li>Utiliser les types du moteur : <code>FString</code>, <code>FName</code>, <code>FText</code>, <code>TArray</code>, <code>TMap</code>, <code>TSet</code></li>
+      <li>Créer des objets, journaliser, déboguer et organiser son code en <strong>modules</strong></li>
+    </ul>
+  </div>
+
+  <h2>Pourquoi le C++ dans Unreal ?</h2>
+  <p>Unreal propose deux façons de programmer : les <strong>Blueprints</strong> (scripting visuel, voir <a href="blueprints.html">Blueprints</a>) et le <strong>C++</strong>. Ce ne sont pas des concurrents : les projets professionnels utilisent presque toujours les deux. Le C++ apporte quatre choses que les Blueprints n'offrent pas, ou mal :</p>
+  <dl class="defs">
+    <dt>Performance</dt><dd>Le C++ est compilé en code machine. Une boucle sur 10 000 éléments, un algorithme de recherche de chemin ou un calcul exécuté à chaque frame sont nettement plus rapides qu'en Blueprint, dont chaque nœud passe par une machine virtuelle.</dd>
+    <dt>Accès complet au moteur</dt><dd>Seule une partie de l'API est exposée aux Blueprints. En C++, vous pouvez tout utiliser, hériter de n'importe quelle classe et surcharger ses fonctions virtuelles.</dd>
+    <dt>Travail en équipe</dt><dd>Un fichier texte se compare (<em>diff</em>), se fusionne (<em>merge</em>) et se relit dans Git. Un Blueprint est un fichier binaire : deux personnes ne peuvent pas le modifier en même temps.</dd>
+    <dt>Architecture</dt><dd>Classes de base, interfaces, systèmes réutilisables entre plusieurs projets : le C++ structure mieux les gros projets.</dd>
+  </dl>
+
+  <h3>C++ et Blueprint : un duo</h3>
+  <p>La règle d'or chez Epic et dans la plupart des studios : <strong>la logique et les données de base en C++, le contenu et les réglages en Blueprint</strong>. Vous écrivez une classe C++ <code>AWeaponBase</code> qui sait tirer et recharger, et qui expose ses variables et fonctions. Puis vous créez des Blueprints enfants (<code>BP_Rifle</code>, <code>BP_Shotgun</code>) dans lesquels un game designer choisit le mesh, les sons, les dégâts, sans toucher au code.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    subgraph CPP["Classe C++ : AWeaponBase"]
+        L["Logique<br>tir, munitions, cadence"]
+        P["UPROPERTY<br>Damage, FireRate, Mesh"]
+        F["UFUNCTION<br>Fire, Reload, OnFired"]
+    end
+    subgraph BP["Blueprint enfant : BP_Rifle"]
+        A["Assets<br>mesh, sons, effets"]
+        V["Valeurs<br>Damage = 25, FireRate = 8"]
+        E["Événements<br>OnFired : recul, son"]
+    end
+    CPP -- "classe parente de" --> BP
+    P -.->|réglées dans| V
+    F -.->|appelées ou implémentées dans| E
+</pre>
+    <figcaption>Le C++ fournit la structure et la logique ; le Blueprint enfant fournit les assets et les valeurs.</figcaption>
+  </figure>
+
+  <div class="compare">
+    <div class="neutral">
+      <h4>Plutôt en C++</h4>
+      <ul>
+        <li>Classes de base du gameplay (personnage, arme, ennemi)</li>
+        <li>Systèmes : inventaire, sauvegarde, santé, réseau</li>
+        <li>Calculs lourds ou exécutés à chaque frame</li>
+        <li>Tout ce qui doit être relu et versionné</li>
+      </ul>
+    </div>
+    <div class="alt">
+      <h4>Plutôt en Blueprint</h4>
+      <ul>
+        <li>Choix des assets (meshes, sons, matériaux, effets)</li>
+        <li>Réglage des valeurs par les designers</li>
+        <li>Scripts de niveau, cinématiques, prototypes</li>
+        <li>Réactions visuelles à des événements C++</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Rappels de C++ essentiels</h2>
+  <p>Cette section ne remplace pas un cours de C++, mais elle couvre ce que vous croiserez dans chaque fichier Unreal. Si une notion vous est inconnue, prenez le temps de l'expérimenter dans un petit projet.</p>
+
+  <h3>Types, fonctions et classes</h3>
+  <p>Une <strong>classe</strong> regroupe des données (les <em>membres</em>) et des fonctions qui les manipulent (les <em>méthodes</em>). Les <strong>spécificateurs d'accès</strong> contrôlent qui peut y toucher : <code>public</code> (tout le monde), <code>protected</code> (la classe et ses enfants), <code>private</code> (la classe seule).</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Rappels.cpp">
+// Une fonction : type de retour, nom, paramètres
+int32 Add(int32 A, int32 B)
+{
+    return A + B;
+}
+
+class FInventorySlot
+{
+public:
+    // Constructeur : appelé à la création de l'objet
+    FInventorySlot(int32 InCapacity) : Capacity(InCapacity) {}
+
+    bool IsFull() const { return Count >= Capacity; }   // const : ne modifie pas l'objet
+    void AddItem() { if (!IsFull()) { ++Count; } }
+
+private:
+    int32 Capacity = 1;   // valeur par défaut
+    int32 Count = 0;
+};
+
+FInventorySlot Slot(5);   // un objet de la classe
+Slot.AddItem();
+</script>
+
+  <h3>Pourquoi séparer .h et .cpp</h3>
+  <p>Chaque classe est découpée en deux fichiers. Le <strong>header</strong> (<code>.h</code>) contient la <em>déclaration</em> : le « contrat » de la classe (ses membres, les signatures de ses fonctions). Le fichier source (<code>.cpp</code>) contient la <em>définition</em> : le corps des fonctions.</p>
+  <p>La raison est mécanique : <code>#include</code> copie littéralement le contenu d'un fichier dans un autre. Les autres classes n'ont besoin que du contrat pour vous utiliser, donc elles incluent votre <code>.h</code>. Conséquence pratique très importante : <strong>modifier un <code>.cpp</code> ne recompile que ce fichier</strong>, alors que <strong>modifier un <code>.h</code> recompile tous les fichiers qui l'incluent</strong>, directement ou indirectement. Dans un gros projet, la différence se compte en minutes.</p>
+
+  <h3>Héritage, virtual et override</h3>
+  <p>L'<strong>héritage</strong> permet de créer une classe à partir d'une autre : elle récupère tout ce que possède la classe parente et peut le spécialiser. Une fonction marquée <code>virtual</code> peut être redéfinie par les classes enfants ; le mot-clé <code>override</code> demande au compilateur de vérifier que vous redéfinissez bien une fonction existante (une faute de frappe devient une erreur de compilation au lieu d'un bug silencieux).</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Heritage.cpp">
+class FEnemy
+{
+public:
+    virtual ~FEnemy() = default;
+    virtual float GetDamage() const { return 10.f; }
+};
+
+class FBoss : public FEnemy           // FBoss hérite de FEnemy
+{
+public:
+    virtual float GetDamage() const override
+    {
+        return FEnemy::GetDamage() * 3.f;   // appelle la version du parent
+    }
+};
+
+FEnemy* Enemy = new FBoss();   // (exemple C++ pur : jamais de new pour un UObject !)
+Enemy->GetDamage();            // 30 : la version de FBoss est appelée (polymorphisme)
+</script>
+
+  <p>Dans Unreal, vous n'écrirez presque jamais <code>FEnemy::GetDamage()</code> : la macro <code>GENERATED_BODY()</code> définit automatiquement <code>Super</code>, un alias vers la classe parente. On écrit donc <code>Super::BeginPlay()</code>, <code>Super::Tick(DeltaTime)</code>, etc.</p>
+
+  <h3>Pointeurs et références</h3>
+  <p>Une variable occupe une case en mémoire, repérée par une <strong>adresse</strong>. Un <strong>pointeur</strong> (<code>T*</code>) est une variable qui contient une adresse : il « pointe » vers un objet, peut changer de cible, et peut ne pointer sur rien (<code>nullptr</code>). Une <strong>référence</strong> (<code>T&amp;</code>) est un autre nom pour une variable existante : elle est liée une fois pour toutes et ne peut pas être nulle.</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 800 330" width="800" role="img" aria-label="Schéma mémoire : variables sur la pile, un pointeur vers une variable, une référence alias, un pointeur vers un objet sur le tas et un pointeur nul">
+      <defs>
+        <marker id="cpb-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+        <marker id="cpb-arrow-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#5aa9ff"/></marker>
+      </defs>
+      <text x="20" y="22" font-size="14" font-weight="700" fill="currentColor">Pile (stack) : variables locales</text>
+      <text x="460" y="22" font-size="14" font-weight="700" fill="currentColor">Tas (heap) : objets dynamiques</text>
+      <rect x="10" y="34" width="410" height="284" rx="10" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.25"/>
+      <rect x="450" y="34" width="340" height="284" rx="10" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.25"/>
+      <g font-size="13" fill="currentColor">
+        <rect x="70" y="56" width="200" height="36" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-opacity="0.4"/>
+        <rect x="270" y="56" width="110" height="36" fill="#4ade80" fill-opacity="0.15" stroke="currentColor" stroke-opacity="0.4"/>
+        <text x="80" y="79">int32 Health</text><text x="262" y="79" text-anchor="end" font-size="11" opacity="0.6">0x1000</text>
+        <text x="325" y="79" text-anchor="middle" font-weight="700">100</text>
+        <rect x="70" y="104" width="200" height="36" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-opacity="0.4"/>
+        <rect x="270" y="104" width="110" height="36" fill="none" stroke="currentColor" stroke-opacity="0.4" stroke-dasharray="4 3"/>
+        <text x="80" y="127">int32&amp; Ref</text><text x="325" y="127" text-anchor="middle" font-size="12" opacity="0.75">(pas de case)</text>
+        <rect x="70" y="152" width="200" height="36" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-opacity="0.4"/>
+        <rect x="270" y="152" width="110" height="36" fill="#5aa9ff" fill-opacity="0.15" stroke="currentColor" stroke-opacity="0.4"/>
+        <text x="80" y="175">int32* Ptr</text><text x="325" y="175" text-anchor="middle" font-weight="700">0x1000</text>
+        <rect x="70" y="200" width="200" height="36" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-opacity="0.4"/>
+        <rect x="270" y="200" width="110" height="36" fill="#5aa9ff" fill-opacity="0.15" stroke="currentColor" stroke-opacity="0.4"/>
+        <text x="80" y="223">AEnemy* Target</text><text x="325" y="223" text-anchor="middle" font-weight="700">0x7F30</text>
+        <rect x="70" y="248" width="200" height="36" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-opacity="0.4"/>
+        <rect x="270" y="248" width="110" height="36" fill="#ff6b6b" fill-opacity="0.15" stroke="currentColor" stroke-opacity="0.4"/>
+        <text x="80" y="271">AEnemy* Other</text><text x="325" y="271" text-anchor="middle" font-weight="700" fill="#ff6b6b">nullptr</text>
+      </g>
+      <path d="M70 122 C 36 122, 36 74, 66 74" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#cpb-arrow)"/>
+      <text x="16" y="102" font-size="11" fill="currentColor" opacity="0.8">alias</text>
+      <path d="M380 170 C 414 170, 414 74, 384 74" fill="none" stroke="#5aa9ff" stroke-width="2" marker-end="url(#cpb-arrow-b)"/>
+      <path d="M380 218 C 430 218, 440 195, 476 195" fill="none" stroke="#5aa9ff" stroke-width="2" marker-end="url(#cpb-arrow-b)"/>
+      <rect x="480" y="150" width="280" height="90" rx="8" fill="#5aa9ff" fill-opacity="0.12" stroke="#5aa9ff"/>
+      <text x="498" y="176" font-size="14" font-weight="700" fill="currentColor">Objet AEnemy</text>
+      <text x="498" y="198" font-size="12" fill="currentColor" opacity="0.75">adresse 0x7F30</text>
+      <text x="498" y="220" font-size="12" fill="currentColor" opacity="0.75">Health = 80, Speed = 600</text>
+      <path d="M380 266 L 470 284" fill="none" stroke="#ff6b6b" stroke-width="2" stroke-dasharray="5 4"/>
+      <text x="478" y="290" font-size="13" fill="#ff6b6b" font-weight="700">ne pointe sur rien :</text>
+      <text x="478" y="308" font-size="12" fill="#ff6b6b">toujours tester avant usage</text>
+      <text x="470" y="64" font-size="12" fill="currentColor" opacity="0.75">Créés par SpawnActor ou NewObject,</text>
+      <text x="470" y="82" font-size="12" fill="currentColor" opacity="0.75">libérés par le garbage collector.</text>
+      <text x="470" y="100" font-size="12" fill="currentColor" opacity="0.75">On y accède toujours par pointeur.</text>
+    </svg>
+    <figcaption>Un pointeur stocke une adresse (flèches bleues) ; une référence n'est qu'un autre nom pour une variable existante ; un pointeur nul ne désigne rien.</figcaption>
+  </figure>
+
+<script type="text/plain" data-lang="cpp" data-file="Pointeurs.cpp">
+int32 Health = 100;
+int32& Ref = Health;      // référence : Ref EST Health
+int32* Ptr = &Health;     // pointeur : contient l'adresse de Health
+Ref = 80;                 // Health vaut 80
+*Ptr = 60;                // * « déréférence » : Health vaut 60
+
+// En Unreal, les objets (Actors, composants…) se manipulent par pointeur
+AActor* Target = GetOwner();
+if (Target != nullptr)    // ou simplement : if (Target)
+{
+    Target->SetActorHiddenInGame(true);   // -> : accès à un membre via un pointeur
+}
+
+// Passer un gros objet par référence constante : pas de copie, pas de modification
+void PrintName(const FString& Name);
+</script>
+
+  <div class="callout danger">
+    <p class="callout-title">Le crash numéro un des débutants</p>
+    <p>Utiliser <code>-&gt;</code> sur un pointeur nul fait planter l'éditeur instantanément (« Access violation reading location 0x0000… »). Testez <strong>toujours</strong> un pointeur qui peut être nul avant de vous en servir : résultat d'un <code>Cast</code>, d'une recherche, d'une variable assignée dans l'éditeur. Pour les objets Unreal, préférez <code>IsValid(Ptr)</code>, qui vérifie aussi que l'objet n'est pas en cours de destruction (voir <a href="cpp-avance.html">C++ avancé</a>).</p>
+  </div>
+
+  <h3>const, auto, boucles et lambdas</h3>
+  <ul>
+    <li><code>const</code> sur une variable : elle ne changera plus. Sur une méthode (<code>float GetHealth() const</code>) : la méthode promet de ne pas modifier l'objet. Sur un paramètre (<code>const FString&amp;</code>) : la fonction lit sans copier ni modifier.</li>
+    <li><code>auto</code> laisse le compilateur déduire le type. Pratique pour les types longs, mais le standard d'Epic recommande d'écrire le type quand il aide à la lecture.</li>
+    <li>La <strong>boucle range-for</strong> parcourt un conteneur sans indice : <code>for (AActor* Actor : Actors)</code>.</li>
+    <li>Une <strong>lambda</strong> est une petite fonction anonyme, écrite sur place. Les crochets indiquent ce qu'elle capture : <code>[this]</code>, <code>[Damage]</code> (copie), <code>[&amp;Total]</code> (référence).</li>
+  </ul>
+
+<script type="text/plain" data-lang="cpp" data-file="Moderne.cpp">
+const float MaxSpeed = 600.f;
+auto* Character = Cast<ACharacter>(OtherActor);   // auto* : on voit que c'est un pointeur
+
+float Total = 0.f;
+for (const float Damage : DamageHistory)
+{
+    Total += Damage;
+}
+
+// Lambda : trier les ennemis du plus proche au plus éloigné
+const FVector Origin = GetActorLocation();
+Enemies.Sort([Origin](const AActor& A, const AActor& B)
+{
+    return FVector::DistSquared(Origin, A.GetActorLocation()) < FVector::DistSquared(Origin, B.GetActorLocation());
+});
+</script>
+  <p class="small muted">Remarque : quand on trie un <code>TArray</code> de pointeurs avec <code>Sort</code>, Unreal passe au prédicat des <em>références</em> vers les objets pointés, d'où <code>const AActor&amp;</code> ci-dessus.</p>
+
+  <h3>Déclarations anticipées ou includes</h3>
+  <p>Dans un header, si vous ne manipulez un type que par pointeur ou référence, vous n'avez pas besoin de connaître sa définition complète : une <strong>déclaration anticipée</strong> (<em>forward declaration</em>) suffit. On inclut le vrai header seulement dans le <code>.cpp</code>, là où l'on appelle ses fonctions.</p>
+  <div class="compare">
+    <div class="good">
+      <h4>Déclaration anticipée dans le .h</h4>
+<script type="text/plain" data-lang="cpp" data-file="Weapon.h">
+class USoundBase;          // « ce type existe »
+class UNiagaraSystem;
+
+UPROPERTY(EditDefaultsOnly)
+TObjectPtr<USoundBase> FireSound;
+</script>
+    </div>
+    <div class="bad">
+      <h4>Include complet dans le .h</h4>
+<script type="text/plain" data-lang="cpp" data-file="Weapon.h">
+#include "Sound/SoundBase.h"
+#include "NiagaraSystem.h"
+// Chaque fichier qui inclut Weapon.h
+// inclut aussi ces headers : compilation
+// plus lente, dépendances en cascade.
+</script>
+    </div>
+  </div>
+  <div class="callout perf">
+    <p class="callout-title">Temps de compilation</p>
+    <p>Prenez le réflexe : <strong>déclarations anticipées dans les <code>.h</code>, includes dans les <code>.cpp</code></strong>. Le header de la classe parente, lui, doit toujours être inclus (le compilateur doit connaître la classe dont on hérite), de même que les types utilisés par valeur (une <code>struct</code> membre, un <code>enum</code>).</p>
+  </div>
+
+  <h2>Anatomie d'une classe Unreal</h2>
+  <p>Voici le header complet d'un bonus de soin. Les lignes surlignées sont celles qu'Unreal ajoute au C++ classique ; chacune a un rôle précis.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="HealthPickup.h" data-highlight="1,3-5,9-10,12">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "HealthPickup.generated.h"
+
+class USphereComponent;
+
+UCLASS()
+class MYGAME_API AHealthPickup : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    AHealthPickup();
+
+protected:
+    virtual void BeginPlay() override;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pickup")
+    TObjectPtr<USphereComponent> Collision;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pickup", meta = (ClampMin = "0.0"))
+    float HealAmount = 25.f;
+
+    UFUNCTION(BlueprintCallable, Category = "Pickup")
+    void Consume(AActor* Consumer);
+};
+</script>
+
+  <dl class="defs">
+    <dt><code>#pragma once</code></dt><dd>Empêche que le fichier soit inclus deux fois dans la même unité de compilation (sinon : « redefinition of class »).</dd>
+    <dt><code>CoreMinimal.h</code></dt><dd>Le strict nécessaire du moteur : types de base (<code>int32</code>, <code>FString</code>, <code>FVector</code>, <code>TArray</code>…), macros, maths.</dd>
+    <dt>Header du parent</dt><dd><code>GameFramework/Actor.h</code> : obligatoire pour hériter d'<code>AActor</code>.</dd>
+    <dt><code>HealthPickup.generated.h</code></dt><dd>Fichier produit par l'Unreal Header Tool. Il doit porter le nom du fichier et être <strong>le dernier include</strong>, sinon UHT refuse de compiler.</dd>
+    <dt><code>UCLASS()</code></dt><dd>Déclare la classe au système de réflexion. Accepte des spécificateurs : <code>Blueprintable</code>, <code>Abstract</code>, <code>Config = Game</code>…</dd>
+    <dt><code>MYGAME_API</code></dt><dd>Macro d'export du module (nom du module en majuscules + <code>_API</code>). Elle rend la classe utilisable depuis d'autres modules.</dd>
+    <dt><code>GENERATED_BODY()</code></dt><dd>Insère le code généré par UHT : informations de réflexion, typedef <code>Super</code>, constructeurs spéciaux. Toujours en première ligne du corps de la classe.</dd>
+  </dl>
+
+<script type="text/plain" data-lang="cpp" data-file="HealthPickup.cpp" data-highlight="16">
+#include "HealthPickup.h"
+#include "Components/SphereComponent.h"
+
+AHealthPickup::AHealthPickup()
+{
+    PrimaryActorTick.bCanEverTick = false;
+
+    Collision = CreateDefaultSubobject<USphereComponent>(TEXT("Collision"));
+    RootComponent = Collision;
+    Collision->InitSphereRadius(50.f);
+}
+
+void AHealthPickup::BeginPlay()
+{
+    // Toujours appeler la version du parent, sinon le moteur ne fait pas son travail
+    Super::BeginPlay();
+}
+
+void AHealthPickup::Consume(AActor* Consumer)
+{
+    UE_LOG(LogTemp, Log, TEXT("%s récupère %.0f PV"), *GetNameSafe(Consumer), HealAmount);
+    Destroy();
+}
+</script>
+
+  <div class="callout warn">
+    <p class="callout-title">Oublier Super::</p>
+    <p>Surcharger <code>BeginPlay</code>, <code>Tick</code> ou <code>EndPlay</code> sans appeler <code>Super::</code> casse des comportements de manière silencieuse : par exemple, l'événement <em>BeginPlay</em> des Blueprints enfants ne se déclenche plus, ou les composants ne sont pas initialisés. Mettez l'appel à <code>Super::</code> en première ligne (en dernière ligne pour <code>EndPlay</code> est aussi courant).</p>
+  </div>
+
+  <h2>Réflexion et Unreal Header Tool</h2>
+  <p>Le C++ standard n'a pas de <strong>réflexion</strong> : à l'exécution, un programme ne peut pas lister les variables d'une classe ni appeler une fonction à partir de son nom. Unreal comble ce manque avec un outil, l'<strong>Unreal Header Tool</strong> (UHT), qui lit vos headers <em>avant</em> le compilateur, repère les macros <code>UCLASS</code>, <code>UPROPERTY</code>, <code>UFUNCTION</code>, et génère le code qui décrit vos classes au moteur.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    UBT["Unreal Build Tool<br>lit les .Build.cs"] --> UHT["Unreal Header Tool<br>analyse les macros"]
+    H["HealthPickup.h"] --> UHT
+    UHT --> G["HealthPickup.generated.h<br>HealthPickup.gen.cpp"]
+    H --> CC["Compilateur C++<br>MSVC ou Clang"]
+    S["HealthPickup.cpp"] --> CC
+    G --> CC
+    CC --> LNK["Éditeur de liens<br>linker"]
+    LNK --> DLL["Module du jeu<br>dans Binaries"]
+    DLL --> ED["Éditeur et jeu<br>réflexion disponible"]
+</pre>
+    <figcaption>La chaîne de compilation : UHT génère du code à partir de vos macros, puis le compilateur C++ traite le tout.</figcaption>
+  </figure>
+
+  <p>Ce que la réflexion rend possible :</p>
+  <div class="cards">
+    <div class="card"><span class="card-tag">Éditeur</span><h4>Panneau Details</h4><p>Les <code>UPROPERTY</code> apparaissent et se règlent dans l'éditeur, avec catégories, bornes et infobulles.</p></div>
+    <div class="card"><span class="card-tag">Blueprint</span><h4>Nœuds et variables</h4><p>Les classes, fonctions et variables marquées deviennent utilisables et dérivables en Blueprint.</p></div>
+    <div class="card"><span class="card-tag">Mémoire</span><h4>Garbage collection</h4><p>Le moteur suit les pointeurs <code>UPROPERTY</code> pour savoir quels objets sont encore utilisés.</p></div>
+    <div class="card"><span class="card-tag">Données</span><h4>Sérialisation et réseau</h4><p>Sauvegarde des assets et niveaux, réplication des propriétés, lecture des fichiers <code>.ini</code>.</p></div>
+  </div>
+
+  <div class="callout warn">
+    <p class="callout-title">Les macros ont des règles</p>
+    <p>UHT n'est pas un compilateur complet : les <code>UPROPERTY</code> et <code>UFUNCTION</code> doivent se trouver dans le header, dans une classe <code>UCLASS</code> ou une struct <code>USTRUCT</code>. UHT ne gère qu'un sous-ensemble des types C++ (pas de <code>std::vector</code>, pas de <code>unsigned int</code> exposé au Blueprint, etc.). Les erreurs UHT apparaissent avant la compilation, avec le nom du fichier et la ligne.</p>
+  </div>
+
+  <h2>UPROPERTY : exposer des variables</h2>
+  <p>Une variable marquée <code>UPROPERTY(...)</code> est connue du moteur. Les spécificateurs entre parenthèses décident de sa visibilité dans l'éditeur, dans les graphes Blueprint, et de son comportement (sauvegarde, réseau, configuration).</p>
+
+  <table>
+    <thead><tr><th>Spécificateur</th><th>Effet</th></tr></thead>
+    <tbody>
+      <tr><td><code>EditAnywhere</code></td><td>Modifiable dans les Class Defaults du Blueprint <strong>et</strong> sur chaque instance placée dans un niveau</td></tr>
+      <tr><td><code>EditDefaultsOnly</code></td><td>Modifiable uniquement dans les Class Defaults (même valeur pour toutes les instances)</td></tr>
+      <tr><td><code>EditInstanceOnly</code></td><td>Modifiable uniquement sur les instances du niveau (ex. : la porte que ce levier ouvre)</td></tr>
+      <tr><td><code>VisibleAnywhere</code></td><td>Affichée partout, en lecture seule</td></tr>
+      <tr><td><code>VisibleDefaultsOnly</code> / <code>VisibleInstanceOnly</code></td><td>Affichée en lecture seule, seulement dans les Class Defaults / seulement sur les instances</td></tr>
+      <tr><td><code>BlueprintReadOnly</code></td><td>Lisible dans les graphes Blueprint (nœud Get uniquement)</td></tr>
+      <tr><td><code>BlueprintReadWrite</code></td><td>Lisible et modifiable dans les graphes (nœuds Get et Set)</td></tr>
+      <tr><td><code>Category = "Combat|Armes"</code></td><td>Range la variable dans une catégorie du panneau Details (<code>|</code> crée des sous-catégories)</td></tr>
+      <tr><td><code>meta = (ClampMin = "0", ClampMax = "100")</code></td><td>Bornes imposées à la saisie dans l'éditeur</td></tr>
+      <tr><td><code>meta = (UIMin = "0", UIMax = "10")</code></td><td>Bornes du curseur glissé à la souris (on peut taper une valeur hors de cette plage)</td></tr>
+      <tr><td><code>meta = (AllowPrivateAccess = "true")</code></td><td>Permet <code>BlueprintReadOnly</code>/<code>ReadWrite</code> sur un membre <code>private</code></td></tr>
+      <tr><td><code>meta = (EditCondition = "bCanFly")</code></td><td>Grisée tant que le booléen <code>bCanFly</code> est faux</td></tr>
+      <tr><td><code>Transient</code></td><td>Jamais sauvegardée : repart de la valeur par défaut au chargement</td></tr>
+      <tr><td><code>Replicated</code></td><td>Synchronisée du serveur vers les clients (voir <a href="multijoueur.html">Réseau &amp; multijoueur</a>)</td></tr>
+      <tr><td><code>SaveGame</code></td><td>Marque la propriété pour les sauvegardes faites avec une archive « SaveGame » (sérialisation manuelle d'Actors)</td></tr>
+      <tr><td><code>Config</code></td><td>Valeur lue dans un fichier <code>.ini</code> ; la classe doit déclarer <code>UCLASS(Config = Game)</code></td></tr>
+    </tbody>
+  </table>
+
+<script type="text/plain" data-lang="cpp" data-file="Turret.h">
+// Réglée par le designer dans BP_Turret, identique pour toutes les tourelles
+UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Turret", meta = (ClampMin = "0.1", UIMax = "10.0"))
+float FireRate = 2.f;
+
+// Réglée tourelle par tourelle dans le niveau
+UPROPERTY(EditInstanceOnly, Category = "Turret")
+TObjectPtr<AActor> InitialTarget;
+
+UPROPERTY(EditAnywhere, Category = "Turret")
+bool bCanRotate = true;
+
+// Grisée si bCanRotate est faux
+UPROPERTY(EditAnywhere, Category = "Turret", meta = (EditCondition = "bCanRotate"))
+float RotationSpeed = 90.f;
+
+// Lisible par les Blueprints malgré private
+private:
+UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Turret", meta = (AllowPrivateAccess = "true"))
+int32 ShotsFired = 0;
+</script>
+
+  <h3>Valeurs par défaut et instances</h3>
+  <p>Toute classe Unreal possède un objet modèle, le <strong>CDO</strong> (<em>Class Default Object</em>), construit avec votre constructeur C++. Un Blueprint enfant a ses propres valeurs par défaut (le bouton <strong>Class Defaults</strong> de l'éditeur de Blueprint), qui écrasent celles du C++. Enfin, chaque instance posée dans le niveau peut à son tour écraser certaines valeurs. Les spécificateurs <code>Edit…</code> disent à quel étage la modification est autorisée.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    C["Constructeur C++<br>RotationSpeed = 90"] --> CDO["CDO de ARotatingPlatform<br>RotationSpeed = 90"]
+    CDO -- "EditDefaultsOnly ou EditAnywhere" --> BPD["Class Defaults de BP_Platform<br>RotationSpeed = 45"]
+    BPD --> I1["Instance A du niveau<br>45, valeur héritée"]
+    BPD -- "EditInstanceOnly ou EditAnywhere" --> I2["Instance B du niveau<br>120, valeur modifiée"]
+</pre>
+    <figcaption>Les valeurs descendent du C++ vers le Blueprint, puis vers chaque instance ; chaque étage peut les écraser si le spécificateur l'autorise.</figcaption>
+  </figure>
+
+  <div class="callout warn">
+    <p class="callout-title">VisibleAnywhere pour les pointeurs de composants</p>
+    <p>Déclarez les composants avec <code>VisibleAnywhere</code>, pas <code>EditAnywhere</code>. « Visible » porte sur le <strong>pointeur</strong> : on ne peut pas remplacer le composant par un autre, mais toutes les propriétés du composant (mesh, matériau, rayon…) restent modifiables dans le panneau Details. Avec <code>EditAnywhere</code>, l'éditeur propose de changer le pointeur lui-même, ce qui mène à des composants perdus ou des Blueprints corrompus.</p>
+  </div>
+
+  <h2>UFUNCTION : exposer des fonctions</h2>
+  <p>De la même manière, <code>UFUNCTION(...)</code> rend une fonction visible du moteur. C'est indispensable pour l'appeler depuis un Blueprint, la lier à un événement dynamique (<code>AddDynamic</code>) ou en faire une fonction réseau.</p>
+
+  <table>
+    <thead><tr><th>Spécificateur</th><th>Effet</th><th>Nœud Blueprint</th></tr></thead>
+    <tbody>
+      <tr><td><code>BlueprintCallable</code></td><td>Appelable depuis un graphe</td><td>Nœud bleu avec pins d'exécution</td></tr>
+      <tr><td><code>BlueprintPure</code></td><td>Appelable, sans effet de bord (getter, calcul) ; souvent <code>const</code></td><td>Nœud vert sans pin d'exécution</td></tr>
+      <tr><td><code>BlueprintImplementableEvent</code></td><td>Déclarée en C++, <strong>sans corps C++</strong> : implémentée dans le Blueprint. Appelée depuis le C++</td><td>Événement rouge (ou fonction si elle renvoie une valeur)</td></tr>
+      <tr><td><code>BlueprintNativeEvent</code></td><td>Comportement par défaut en C++ dans <code>Nom_Implementation()</code>, que le Blueprint peut remplacer (et appeler via <em>Parent</em>)</td><td>Événement surchargeable</td></tr>
+      <tr><td><code>CallInEditor</code></td><td>Affiche un bouton dans le panneau Details de l'éditeur (fonction sans paramètre)</td><td>Bouton</td></tr>
+      <tr><td><code>Exec</code></td><td>Commande tapable dans la console, seulement dans certaines classes (PlayerController, Pawn possédé, HUD, GameMode, GameInstance, CheatManager)</td><td>Aucun</td></tr>
+      <tr><td><code>Server</code>, <code>Client</code>, <code>NetMulticast</code> + <code>Reliable</code> / <code>Unreliable</code></td><td>Fonctions réseau (RPC), voir <a href="multijoueur.html">Réseau &amp; multijoueur</a></td><td>Selon le cas</td></tr>
+    </tbody>
+  </table>
+
+<script type="text/plain" data-lang="cpp" data-file="ShieldCharacter.h">
+UFUNCTION(BlueprintCallable, Category = "Shield")
+void ActivateShield(float Duration);
+
+UFUNCTION(BlueprintPure, Category = "Shield")
+float GetHealthPercent() const;
+
+// Pas de corps C++ : c'est le Blueprint qui l'implémente (son, effet de caméra…)
+UFUNCTION(BlueprintImplementableEvent, Category = "Shield")
+void OnDamageTaken(float Damage);
+
+// Corps C++ par défaut dans OnShieldBroken_Implementation(), remplaçable en Blueprint
+UFUNCTION(BlueprintNativeEvent, Category = "Shield")
+void OnShieldBroken();
+virtual void OnShieldBroken_Implementation();
+
+UFUNCTION(CallInEditor, Category = "Debug")
+void ResetShieldForTesting();
+
+UFUNCTION(Exec)
+void GodMode();   // seulement si la classe est un PlayerController, CheatManager…
+</script>
+
+<script type="text/plain" data-lang="cpp" data-file="ShieldCharacter.cpp">
+void AShieldCharacter::OnShieldBroken_Implementation()
+{
+    // Comportement par défaut ; un Blueprint enfant peut le remplacer
+    UE_LOG(LogTemp, Warning, TEXT("Bouclier brisé"));
+}
+
+void AShieldCharacter::HandleIncomingDamage(float Damage)
+{
+    ShieldPoints -= Damage;
+    OnDamageTaken(Damage);   // appelle l'implémentation Blueprint (rien si absente)
+    if (ShieldPoints <= 0.f)
+    {
+        OnShieldBroken();    // on appelle le nom SANS _Implementation
+    }
+}
+</script>
+
+  <p>Côté Blueprint enfant, ces déclarations deviennent des nœuds : l'événement <em>On Damage Taken</em> se place dans l'Event Graph, <em>Get Health Percent</em> est un nœud pur et <em>Activate Shield</em> un nœud d'appel classique.</p>
+
+<script type="application/json" class="bp-graph" data-caption="Dans BP_ShieldCharacter : l'événement implémentable déclenche le bouclier si la vie passe sous 25 %.">
+{
+  "nodes": [
+    { "id": "ev", "type": "event", "title": "Event On Damage Taken", "x": 0, "y": 0,
+      "out": [ { "type": "exec" }, { "name": "Damage", "type": "float" } ] },
+    { "id": "getp", "type": "pure", "title": "Get Health Percent", "x": 0, "y": 140,
+      "out": [ { "name": "Return Value", "type": "float" } ] },
+    { "id": "lt", "type": "op", "title": "<", "x": 250, "y": 140,
+      "in": [ { "type": "float" }, { "type": "float", "value": "0.25" } ], "out": [ { "type": "bool" } ] },
+    { "id": "br", "type": "flow", "title": "Branch", "x": 410, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Condition", "type": "bool" } ],
+      "out": [ { "name": "True", "type": "exec" }, { "name": "False", "type": "exec" } ] },
+    { "id": "act", "type": "function", "title": "Activate Shield", "x": 608, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Duration", "type": "float", "value": "3.0" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ev", 0, "br", 0 ],
+    [ "getp", 0, "lt", 0 ],
+    [ "lt", 0, "br", 1 ],
+    [ "br", 0, "act", 0 ]
+  ]
+}
+</script>
+
+  <div class="callout tip">
+    <p class="callout-title">Implementable ou Native ?</p>
+    <p>Choisissez <code>BlueprintImplementableEvent</code> quand le C++ n'a rien à faire par défaut (jouer un effet, un son). Choisissez <code>BlueprintNativeEvent</code> quand il existe un comportement par défaut raisonnable que certains Blueprints voudront remplacer. Dans les deux cas, le C++ appelle la fonction par son nom normal, jamais <code>_Implementation</code> directement.</p>
+  </div>
+
+  <h2>USTRUCT et UENUM</h2>
+  <p>Une <strong>struct</strong> regroupe des données sans comportement complexe : les statistiques d'une arme, une ligne de Data Table, une récompense. Une <strong>énumération</strong> représente un choix parmi une liste fermée : type d'arme, état d'une porte, difficulté. Exposées au moteur, elles deviennent utilisables dans l'éditeur et en Blueprint.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="WeaponTypes.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "WeaponTypes.generated.h"
+
+UENUM(BlueprintType)
+enum class EWeaponType : uint8          // uint8 obligatoire pour BlueprintType
+{
+    Pistol    UMETA(DisplayName = "Pistolet"),
+    Rifle     UMETA(DisplayName = "Fusil d'assaut"),
+    Shotgun   UMETA(DisplayName = "Shotgun"),
+    Launcher  UMETA(DisplayName = "Lance-roquettes")
+};
+
+USTRUCT(BlueprintType)
+struct FWeaponData
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon")
+    EWeaponType Type = EWeaponType::Pistol;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon", meta = (ClampMin = "0.0"))
+    float Damage = 10.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon", meta = (ClampMin = "1"))
+    int32 MagazineSize = 12;
+};
+</script>
+  <ul>
+    <li>Le préfixe <code>F</code> est obligatoire pour une <code>USTRUCT</code>, <code>E</code> pour une <code>UENUM</code>.</li>
+    <li><code>GENERATED_BODY()</code> est aussi requis dans une struct ; elle n'a pas besoin de macro <code>_API</code> tant qu'elle n'a pas de fonctions utilisées depuis d'autres modules.</li>
+    <li><code>UMETA(DisplayName = "...")</code> change le nom affiché dans l'éditeur sans changer le nom C++.</li>
+    <li>Une <code>USTRUCT</code> ne peut pas contenir de <code>UFUNCTION</code> : la logique reste dans les classes.</li>
+  </ul>
+
+  <h2>Types de base et chaînes de caractères</h2>
+  <h3>Nombres et booléens</h3>
+  <p>Unreal définit ses propres types numériques pour garantir la même taille sur toutes les plateformes : <code>int32</code> (l'entier standard), <code>uint8</code> (octet, 0 à 255, utilisé pour les énumérations), <code>int64</code> (grands nombres : argent d'un jeu de gestion, horodatages). N'utilisez pas <code>int</code> ou <code>long</code> nus dans les déclarations exposées.</p>
+  <p>Côté décimaux, <code>float</code> (32 bits) reste le type courant des variables de gameplay, mais depuis UE5 les types mathématiques comme <code>FVector</code>, <code>FRotator</code> et <code>FTransform</code> utilisent des <code>double</code> (64 bits) : c'est ce qui permet les très grands mondes (<em>Large World Coordinates</em>). Les variables « Float » des Blueprints sont d'ailleurs des doubles en interne. Si vous avez besoin d'un vecteur en <code>float</code>, il existe <code>FVector3f</code>.</p>
+  <p>Les booléens portent le préfixe <code>b</code> : <code>bIsDead</code>, <code>bCanJump</code>. L'éditeur l'enlève automatiquement à l'affichage (« Is Dead »).</p>
+
+  <h3>FString, FName et FText</h3>
+  <table>
+    <thead><tr><th>Type</th><th>Nature</th><th>Usage typique</th></tr></thead>
+    <tbody>
+      <tr><td><code>FString</code></td><td>Chaîne modifiable, allouée dynamiquement</td><td>Manipulation, concaténation, logs, débogage, chemins de fichiers</td></tr>
+      <tr><td><code>FName</code></td><td>Identifiant immuable, insensible à la casse, stocké une seule fois dans une table globale ; comparaison très rapide</td><td>Noms de sockets, d'os, de lignes de Data Table, identifiants internes</td></tr>
+      <tr><td><code>FText</code></td><td>Texte destiné au joueur, <strong>localisable</strong> (traduisible)</td><td>Tout ce qui s'affiche à l'écran : interface, dialogues, noms d'objets</td></tr>
+    </tbody>
+  </table>
+
+<script type="text/plain" data-lang="cpp" data-file="Conversions.cpp">
+FString Str = TEXT("Excalibur");      // TEXT() : littéral de caractères larges, toujours l'utiliser
+
+FName Name = FName(*Str);            // FString -> FName (* donne le TCHAR* de la chaîne)
+FString FromName = Name.ToString();  // FName -> FString
+FText Text = FText::FromString(Str); // FString -> FText (non localisé : à éviter pour l'interface finale)
+FString FromText = Text.ToString();  // FText -> FString
+FText FromName2 = FText::FromName(Name);
+
+// Formatage
+FString Msg = FString::Printf(TEXT("%s inflige %d dégâts (%.1f %%)"), *Str, 42, 12.5f);
+FString Num = FString::FromInt(42);
+FString Concat = Str + TEXT(" +1");
+
+// Analyse d'un nombre
+FString Input = TEXT("150");
+if (Input.IsNumeric())
+{
+    const int32 Value = FCString::Atoi(*Input);    // 150
+    const float Ratio = FCString::Atof(TEXT("0.5"));
+}
+
+// Texte localisable pour l'interface
+FText Label = FText::Format(NSLOCTEXT("HUD", "AmmoFmt", "Munitions : {0}"), FText::AsNumber(30));
+</script>
+  <div class="callout warn">
+    <p class="callout-title">L'étoile devant les FString</p>
+    <p><code>FString::Printf</code> et <code>UE_LOG</code> attendent un <code>TCHAR*</code> pour <code>%s</code>. Passer un <code>FString</code> sans <code>*</code> compile parfois mais affiche n'importe quoi ou plante. Écrivez toujours <code>*MaChaine</code>, et <code>*Name.ToString()</code> pour un <code>FName</code>.</p>
+  </div>
+
+  <h2>Conteneurs : TArray, TMap, TSet</h2>
+  <p>Unreal fournit ses propres conteneurs, compatibles avec la réflexion (donc utilisables en <code>UPROPERTY</code> et en Blueprint), à la place de <code>std::vector</code> ou <code>std::map</code>.</p>
+
+  <h3>TArray : le tableau dynamique</h3>
+<script type="text/plain" data-lang="cpp" data-file="TArray.cpp">
+TArray<int32> Scores;
+Scores.Add(10);                    // [10]
+Scores.Add(25);                    // [10, 25]
+Scores.Emplace(40);                // construit l'élément directement dans le tableau
+Scores.Num();                      // 3 éléments
+Scores[0];                         // 10 (accès par indice, vérifié seulement hors Shipping)
+Scores.IsValidIndex(5);            // false
+Scores.Contains(25);               // true
+int32 Index = Scores.Find(25);     // 1, ou INDEX_NONE (-1) si absent
+Index = Scores.IndexOfByKey(40);   // 2 (accepte une clé d'un autre type si == existe)
+Scores.Remove(25);                 // retire TOUTES les occurrences de 25
+Scores.RemoveAt(0);                // retire l'élément d'indice 0
+Scores.Sort();                     // tri croissant
+Scores.Sort([](int32 A, int32 B) { return A > B; });   // tri décroissant
+
+for (int32 Score : Scores)         // parcours
+{
+    UE_LOG(LogTemp, Log, TEXT("Score : %d"), Score);
+}
+
+// Structs : chercher avec un prédicat
+const FWeaponData* Found = Weapons.FindByPredicate([](const FWeaponData& W)
+{
+    return W.Type == EWeaponType::Shotgun;
+});                                // pointeur, nullptr si rien trouvé
+</script>
+
+  <h3>TMap et TSet</h3>
+  <p>Un <code>TMap</code> associe une <strong>clé</strong> unique à une <strong>valeur</strong> (un dictionnaire) ; un <code>TSet</code> est un ensemble de valeurs uniques. Les deux offrent une recherche quasi instantanée, quelle que soit leur taille, mais <strong>ne garantissent aucun ordre</strong>.</p>
+<script type="text/plain" data-lang="cpp" data-file="TMap.cpp">
+TMap<FName, int32> Ammo;
+Ammo.Add(TEXT("Pistol"), 30);
+Ammo.Add(TEXT("Rifle"), 120);
+Ammo.Add(TEXT("Pistol"), 45);              // clé existante : la valeur est remplacée
+
+// Find renvoie un POINTEUR vers la valeur, nullptr si la clé est absente
+if (int32* RifleAmmo = Ammo.Find(TEXT("Rifle")))
+{
+    *RifleAmmo -= 1;                        // modifie directement la valeur stockée
+}
+Ammo.Contains(TEXT("Rocket"));             // false
+Ammo.FindOrAdd(TEXT("Rocket")) += 2;       // crée la clé avec 0 si besoin, puis ajoute 2
+Ammo.Remove(TEXT("Pistol"));
+
+for (const TPair<FName, int32>& Pair : Ammo)
+{
+    UE_LOG(LogTemp, Log, TEXT("%s : %d"), *Pair.Key.ToString(), Pair.Value);
+}
+
+TSet<FName> UnlockedLevels;
+UnlockedLevels.Add(TEXT("Forest"));
+UnlockedLevels.Add(TEXT("Forest"));        // ignoré : déjà présent
+const bool bHasCave = UnlockedLevels.Contains(TEXT("Cave"));
+</script>
+
+  <div class="callout danger">
+    <p class="callout-title">Ne jamais retirer pendant un parcours range-for</p>
+    <p>Modifier un <code>TArray</code> pendant qu'une boucle <code>for (X : Array)</code> le parcourt déclenche une assertion (« Array has changed during ranged-for iteration ») ou, en Shipping, un comportement indéfini. Parcourez à l'envers avec des indices, ou utilisez <code>RemoveAll</code>.</p>
+  </div>
+<script type="text/plain" data-lang="cpp" data-file="Suppression.cpp">
+// MAUVAIS : le tableau change pendant le parcours
+for (AActor* Enemy : Enemies)
+{
+    if (!IsValid(Enemy)) { Enemies.Remove(Enemy); }   // assertion !
+}
+
+// BON : parcours à l'envers, les indices restants ne bougent pas
+for (int32 i = Enemies.Num() - 1; i >= 0; --i)
+{
+    if (!IsValid(Enemies[i])) { Enemies.RemoveAt(i); }
+}
+
+// ENCORE MIEUX : une seule ligne
+Enemies.RemoveAll([](const AActor* Enemy) { return !IsValid(Enemy); });
+</script>
+
+  <h2>Créer des objets</h2>
+  <p>En C++ classique on crée un objet avec <code>new</code>. Pour un <code>UObject</code>, c'est interdit : le moteur doit enregistrer l'objet (réflexion, garbage collector, monde). Il existe trois façons de créer des objets Unreal, chacune pour un usage précis.</p>
+  <table>
+    <thead><tr><th>Fonction</th><th>Pour créer</th><th>Quand</th></tr></thead>
+    <tbody>
+      <tr><td><code>CreateDefaultSubobject&lt;T&gt;(TEXT("Nom"))</code></td><td>Un composant ou sous-objet par défaut</td><td><strong>Uniquement dans le constructeur</strong></td></tr>
+      <tr><td><code>NewObject&lt;T&gt;(Outer)</code></td><td>Un <code>UObject</code> qui n'est pas un Actor (objet d'inventaire, quête…)</td><td>À l'exécution</td></tr>
+      <tr><td><code>GetWorld()-&gt;SpawnActor&lt;T&gt;(...)</code></td><td>Un Actor dans le monde</td><td>À l'exécution (BeginPlay, événements…)</td></tr>
+    </tbody>
+  </table>
+
+<script type="text/plain" data-lang="cpp" data-file="WeaponSpawner.cpp">
+// .h : TSubclassOf limite le choix aux classes dérivées de AWeaponPickup
+UPROPERTY(EditDefaultsOnly, Category = "Spawner")
+TSubclassOf<AWeaponPickup> PickupClass;
+
+UPROPERTY()
+TObjectPtr<UInventory> Inventory;   // UPROPERTY : le garbage collector garde l'objet en vie
+
+// .cpp
+void AWeaponSpawner::BeginPlay()
+{
+    Super::BeginPlay();
+
+    // Un UObject simple ; « this » est son Outer (son propriétaire)
+    Inventory = NewObject<UInventory>(this);
+
+    // Un Actor : classe choisie dans l'éditeur (BP_Pickup_Shotgun par exemple)
+    if (PickupClass)
+    {
+        FActorSpawnParameters Params;
+        Params.Owner = this;
+        AWeaponPickup* Pickup = GetWorld()->SpawnActor<AWeaponPickup>(
+            PickupClass, GetActorLocation(), GetActorRotation(), Params);
+    }
+}
+</script>
+
+  <h3>Cast, IsA et CastChecked</h3>
+  <p>Un <strong>cast</strong> convertit un pointeur vers un type plus précis. <code>Cast&lt;T&gt;</code> vérifie le type réel de l'objet et renvoie <code>nullptr</code> s'il ne correspond pas : c'est sûr, mais il faut tester le résultat.</p>
+<script type="text/plain" data-lang="cpp" data-file="Cast.cpp">
+// Le cas courant : « est-ce un personnage ? »
+if (ACharacter* Character = Cast<ACharacter>(OtherActor))
+{
+    Character->Jump();
+}
+
+// Seulement tester le type, sans conversion
+if (OtherActor->IsA<APawn>()) { /* ... */ }
+
+// Quand le type est garanti par la conception : plante (en développement) si on se trompe
+AMyGameMode* GM = CastChecked<AMyGameMode>(GetWorld()->GetAuthGameMode());
+</script>
+
+  <h2>Logs et débogage</h2>
+  <h3>UE_LOG et ses niveaux</h3>
+  <p><code>UE_LOG(Catégorie, Verbosité, TEXT("format"), arguments...)</code> écrit dans l'<strong>Output Log</strong> de l'éditeur (menu <em>Window → Output Log</em>) et dans le fichier <code>Saved/Logs/MyGame.log</code>. <code>LogTemp</code> est une catégorie fourre-tout, pratique pour démarrer.</p>
+  <table>
+    <thead><tr><th>Verbosité</th><th>Effet</th></tr></thead>
+    <tbody>
+      <tr><td><code>Fatal</code></td><td>Écrit le message puis <strong>arrête le programme</strong> (crash volontaire)</td></tr>
+      <tr><td><code>Error</code></td><td>En rouge</td></tr>
+      <tr><td><code>Warning</code></td><td>En jaune</td></tr>
+      <tr><td><code>Display</code></td><td>Toujours affiché, y compris dans la console</td></tr>
+      <tr><td><code>Log</code></td><td>Niveau normal, visible dans l'Output Log</td></tr>
+      <tr><td><code>Verbose</code>, <code>VeryVerbose</code></td><td>Masqués par défaut : informations détaillées à activer au besoin</td></tr>
+    </tbody>
+  </table>
+
+  <p>Pour filtrer facilement vos messages, créez votre propre catégorie : déclarée dans un header, définie dans un <code>.cpp</code>.</p>
+<script type="text/plain" data-lang="cpp" data-file="MyGame.h">
+#pragma once
+
+#include "CoreMinimal.h"
+
+// Nom, verbosité par défaut, verbosité maximale compilée
+DECLARE_LOG_CATEGORY_EXTERN(LogMyGame, Log, All);
+</script>
+<script type="text/plain" data-lang="cpp" data-file="MyGame.cpp">
+#include "MyGame.h"
+#include "Modules/ModuleManager.h"
+
+DEFINE_LOG_CATEGORY(LogMyGame);
+
+IMPLEMENT_PRIMARY_GAME_MODULE(FDefaultGameModuleImpl, MyGame, "MyGame");
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Debug.cpp">
+#include "MyGame.h"
+#include "Engine/Engine.h"
+#include "DrawDebugHelpers.h"
+#include "Logging/StructuredLog.h"
+
+void AEnemy::DebugState()
+{
+    // %s attend un TCHAR* : d'où l'étoile devant le FString
+    UE_LOG(LogMyGame, Warning, TEXT("%s : %.1f PV, mort : %s"),
+        *GetName(), Health, bIsDead ? TEXT("oui") : TEXT("non"));
+
+    // UE 5.2+ : logs structurés, arguments nommés, pas de TEXT() ni d'étoile
+    UE_LOGFMT(LogMyGame, Log, "Ennemi {Name} : {Health} PV", GetName(), Health);
+
+    // Message à l'écran pendant 5 secondes (clé -1 : nouvelle ligne à chaque appel)
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Yellow,
+            FString::Printf(TEXT("PV : %.0f"), Health));
+    }
+
+    // Formes de débogage dans le monde, pendant 2 secondes
+    DrawDebugSphere(GetWorld(), GetActorLocation(), AttackRadius, 16, FColor::Red, false, 2.f);
+    DrawDebugLine(GetWorld(), GetActorLocation(), TargetLocation, FColor::Green, false, 2.f, 0, 2.f);
+}
+</script>
+
+  <h3>check et ensure</h3>
+  <p>Les <strong>assertions</strong> vérifient une hypothèse du programmeur. Elles signalent un bug le plus tôt possible, au lieu de laisser le jeu continuer dans un état incohérent.</p>
+<script type="text/plain" data-lang="cpp" data-file="Assertions.cpp">
+check(WeaponClass != nullptr);                     // faux : arrêt immédiat (retiré en Shipping)
+checkf(Index >= 0, TEXT("Index invalide : %d"), Index);
+
+if (!ensure(Target))                               // faux : log + pile d'appels, le jeu continue
+{
+    return;                                        // ensure ne se signale qu'une fois par session
+}
+ensureMsgf(Health > 0.f, TEXT("%s est déjà mort"), *GetName());
+</script>
+  <p>Règle simple : <code>check</code> pour « ceci ne peut pas arriver, continuer serait pire qu'un crash », <code>ensure</code> pour « ceci ne devrait pas arriver, mais on peut s'en remettre ». Attention : l'expression d'un <code>check</code> n'est pas évaluée en Shipping, n'y mettez jamais d'appel qui a un effet nécessaire (utilisez <code>verify</code> pour ça).</p>
+
+  <h2>Modules et Build.cs</h2>
+  <p>Le code d'Unreal est découpé en <strong>modules</strong> : des bibliothèques compilées séparément (Core, Engine, UMG, AIModule…). Votre jeu est lui-même un module. Pour utiliser les classes d'un autre module, il faut le déclarer comme <strong>dépendance</strong> dans le fichier <code>MyGame.Build.cs</code>, écrit en C# et lu par l'Unreal Build Tool.</p>
+
+  <ul class="tree">
+    <li><span class="node c-blue">Source/</span>
+      <ul>
+        <li><span class="node">MyGame.Target.cs</span><span class="desc">cible « jeu »</span></li>
+        <li><span class="node">MyGameEditor.Target.cs</span><span class="desc">cible « éditeur »</span></li>
+        <li><span class="node c-green">MyGame/</span><span class="desc">le module principal</span>
+          <ul>
+            <li><span class="node c-orange">MyGame.Build.cs</span><span class="desc">dépendances du module</span></li>
+            <li><span class="node">MyGame.h / MyGame.cpp</span><span class="desc">déclaration du module, catégorie de log</span></li>
+            <li><span class="node">Public/</span><span class="desc">headers utilisables par d'autres modules (optionnel)</span></li>
+            <li><span class="node">Private/</span><span class="desc">fichiers .cpp et headers internes (optionnel)</span></li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+  </ul>
+
+<script type="text/plain" data-lang="csharp" data-file="MyGame.Build.cs">
+using UnrealBuildTool;
+
+public class MyGame : ModuleRules
+{
+    public MyGame(ReadOnlyTargetRules Target) : base(Target)
+    {
+        PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+
+        // Modules dont les types apparaissent dans NOS headers publics
+        PublicDependencyModuleNames.AddRange(new string[]
+        {
+            "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput"
+        });
+
+        // Modules utilisés seulement dans nos .cpp
+        PrivateDependencyModuleNames.AddRange(new string[]
+        {
+            "UMG", "Slate", "SlateCore",
+            "AIModule", "NavigationSystem", "GameplayTasks",
+            "Niagara", "GameplayTags", "PhysicsCore"
+        });
+    }
+}
+</script>
+
+  <table>
+    <thead><tr><th>Module</th><th>Ce qu'il apporte</th></tr></thead>
+    <tbody>
+      <tr><td><code>Core</code></td><td>Types de base, conteneurs, chaînes, maths</td></tr>
+      <tr><td><code>CoreUObject</code></td><td><code>UObject</code>, réflexion, garbage collector</td></tr>
+      <tr><td><code>Engine</code></td><td><code>AActor</code>, <code>UWorld</code>, composants, <code>UGameplayStatics</code></td></tr>
+      <tr><td><code>InputCore</code></td><td>Touches et boutons (<code>FKey</code>, <code>EKeys</code>)</td></tr>
+      <tr><td><code>EnhancedInput</code></td><td>Input Actions, Mapping Contexts (voir <a href="input-personnage.html">Enhanced Input</a>)</td></tr>
+      <tr><td><code>UMG</code></td><td>Widgets (<code>UUserWidget</code>, <code>UButton</code>…)</td></tr>
+      <tr><td><code>Slate</code>, <code>SlateCore</code></td><td>Framework d'interface bas niveau sur lequel repose UMG</td></tr>
+      <tr><td><code>AIModule</code></td><td><code>AAIController</code>, Behavior Trees, Blackboard, perception</td></tr>
+      <tr><td><code>NavigationSystem</code></td><td>NavMesh et requêtes de navigation</td></tr>
+      <tr><td><code>GameplayTasks</code></td><td>Tâches asynchrones utilisées par les tâches d'IA et le GAS</td></tr>
+      <tr><td><code>Niagara</code></td><td>Effets de particules (<code>UNiagaraComponent</code>)</td></tr>
+      <tr><td><code>GameplayTags</code></td><td><code>FGameplayTag</code>, <code>FGameplayTagContainer</code></td></tr>
+      <tr><td><code>GameplayAbilities</code></td><td>Gameplay Ability System (le plugin doit être activé)</td></tr>
+      <tr><td><code>NetCore</code></td><td>Outils réseau avancés (Push Model, Fast Array Serializer)</td></tr>
+      <tr><td><code>PhysicsCore</code></td><td>Matériaux physiques (<code>UPhysicalMaterial</code>), types de surface</td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>Public ou Private ?</strong> Une dépendance publique est transmise aux modules qui dépendent du vôtre ; une dépendance privée reste interne. Pour un module de jeu unique, la différence est faible : mettez en public ce dont vos headers ont besoin, le reste en privé.</p>
+
+  <div class="callout warn">
+    <p class="callout-title">« unresolved external symbol » = module manquant</p>
+    <p>L'erreur de l'éditeur de liens <code>LNK2019: unresolved external symbol</code> (ou <code>undefined reference</code> sous Linux) signifie presque toujours que le header a été trouvé mais pas le code compilé : ajoutez le module de la classe utilisée dans <code>Build.cs</code>. Le nom du module figure en haut de la page de documentation de chaque classe (rubrique <em>Module</em>).</p>
+  </div>
+
+  <h2>Compiler sans douleur</h2>
+  <ol class="steps">
+    <li><strong>Modification dans un .cpp</strong>Utilisez <strong>Live Coding</strong> : <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F11</kbd> dans l'éditeur (ou le bouton en bas à droite). Le code est recompilé et injecté sans fermer l'éditeur.</li>
+    <li><strong>Modification dans un .h</strong>Nouvelle <code>UPROPERTY</code>, nouvelle <code>UFUNCTION</code>, nouvelle classe, changement de spécificateurs : fermez l'éditeur, compilez depuis l'IDE (configuration <em>Development Editor</em>), puis relancez. Live Coding sait parfois gérer ces cas selon votre version, mais c'est la première source de Blueprints corrompus.</li>
+    <li><strong>Fichiers ajoutés hors de l'IDE</strong>Régénérez les fichiers de projet : clic droit sur le <code>.uproject</code> → <em>Generate Visual Studio project files</em> (Windows), ou depuis l'éditeur dans le menu <em>Tools</em> (« Refresh … Project », le libellé dépend de l'IDE).</li>
+    <li><strong>Erreurs incompréhensibles</strong>Fermez l'éditeur et l'IDE, supprimez les dossiers <code>Binaries</code> et <code>Intermediate</code> du projet (ils sont entièrement régénérés), régénérez les fichiers de projet et recompilez. Ne touchez pas à <code>Content</code>, <code>Config</code> ni <code>Source</code>.</li>
+  </ol>
+
+  <div class="callout ue">
+    <p class="callout-title">Le standard de code d'Epic</p>
+    <p>Cherchez « Coding Standard » dans la documentation d'Unreal. L'essentiel : PascalCase pour tout (<code>MaxHealth</code>, <code>GetHealth()</code>), préfixes de types (<code>A</code>, <code>U</code>, <code>F</code>, <code>E</code>, <code>I</code>, <code>T</code>), <code>b</code> pour les booléens, accolades sur leur propre ligne, <code>TEXT()</code> autour des littéraux, types Unreal plutôt que la bibliothèque standard. Suivre ce standard rend votre code lisible par n'importe quel développeur Unreal.</p>
+  </div>
+
+  <h2>Exemple complet : une plateforme tournante</h2>
+  <p>Mettons tout cela en pratique avec une plateforme qui tourne sur elle-même. Sa vitesse est réglable dans l'éditeur, modifiable depuis un Blueprint, et le Blueprint enfant peut réagir aux changements de vitesse (son, lumière).</p>
+
+<script type="text/plain" data-lang="cpp" data-file="RotatingPlatform.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "RotatingPlatform.generated.h"
+
+class UStaticMeshComponent;
+
+UCLASS()
+class MYGAME_API ARotatingPlatform : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    ARotatingPlatform();
+
+    virtual void Tick(float DeltaTime) override;
+
+    // Appelable depuis un Blueprint (levier, bouton, cinématique…)
+    UFUNCTION(BlueprintCallable, Category = "Platform")
+    void SetRotationSpeed(float NewSpeed);
+
+    UFUNCTION(BlueprintPure, Category = "Platform")
+    float GetRotationSpeed() const { return RotationSpeed; }
+
+protected:
+    // Implémenté dans le Blueprint enfant : son, effet, lumière
+    UFUNCTION(BlueprintImplementableEvent, Category = "Platform")
+    void OnSpeedChanged(float NewSpeed);
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Platform")
+    TObjectPtr<UStaticMeshComponent> Mesh;
+
+    // Degrés par seconde autour de l'axe vertical
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Platform", meta = (ClampMin = "0.0", ClampMax = "720.0", UIMax = "360.0"))
+    float RotationSpeed = 90.f;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="RotatingPlatform.cpp">
+#include "RotatingPlatform.h"
+#include "Components/StaticMeshComponent.h"
+
+ARotatingPlatform::ARotatingPlatform()
+{
+    PrimaryActorTick.bCanEverTick = true;
+
+    Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
+    RootComponent = Mesh;
+    Mesh->SetMobility(EComponentMobility::Movable);   // un objet qui bouge doit être Movable
+}
+
+void ARotatingPlatform::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+
+    // Degrés par seconde x durée de la frame : même vitesse à 30 ou 144 FPS
+    const FRotator DeltaRotation(0.f, RotationSpeed * DeltaTime, 0.f);
+    AddActorLocalRotation(DeltaRotation);
+}
+
+void ARotatingPlatform::SetRotationSpeed(float NewSpeed)
+{
+    RotationSpeed = FMath::Max(0.f, NewSpeed);
+    OnSpeedChanged(RotationSpeed);
+}
+</script>
+
+  <p>Créez ensuite un Blueprint enfant <code>BP_RotatingPlatform</code> (clic droit sur la classe C++ dans le Content Browser → <em>Create Blueprint class based on…</em>), choisissez un mesh, puis utilisez les nœuds générés :</p>
+
+<script type="application/json" class="bp-graph" data-caption="Dans BP_RotatingPlatform : on accélère la plateforme au démarrage et on joue un son à chaque changement de vitesse.">
+{
+  "nodes": [
+    { "id": "begin", "type": "event", "title": "Event BeginPlay", "x": 0, "y": 0, "out": [ { "type": "exec" } ] },
+    { "id": "set", "type": "function", "title": "Set Rotation Speed", "subtitle": "Target is Rotating Platform", "x": 230, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object", "value": "self" }, { "name": "New Speed", "type": "float", "value": "180.0" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "ev", "type": "event", "title": "Event On Speed Changed", "x": 0, "y": 180,
+      "out": [ { "type": "exec" }, { "name": "New Speed", "type": "float" } ] },
+    { "id": "snd", "type": "function", "title": "Play Sound 2D", "x": 300, "y": 180,
+      "in": [ { "type": "exec" }, { "name": "Sound", "type": "object", "value": "S_Whoosh" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "begin", 0, "set", 0 ],
+    [ "ev", 0, "snd", 0 ]
+  ]
+}
+</script>
+
+  <div class="quiz">
+    <p class="q">Où doit se trouver la ligne <code>#include "MaClasse.generated.h"</code> ?</p>
+    <ul>
+      <li>En premier, avant <code>CoreMinimal.h</code></li>
+      <li>Dans le fichier <code>.cpp</code></li>
+      <li data-correct>En dernier parmi les includes du header</li>
+      <li>N'importe où, l'ordre n'a pas d'importance</li>
+    </ul>
+    <p class="explain">L'Unreal Header Tool exige que le header généré soit le dernier include du fichier <code>.h</code> : il contient des macros qui dépendent de tout ce qui a été inclus avant. Sinon, UHT s'arrête avec une erreur explicite.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Vous voulez que le designer règle les dégâts d'un type d'ennemi dans son Blueprint, mais pas ennemi par ennemi dans le niveau. Quel spécificateur choisir ?</p>
+    <ul>
+      <li><code>EditAnywhere</code></li>
+      <li data-correct><code>EditDefaultsOnly</code></li>
+      <li><code>EditInstanceOnly</code></li>
+      <li><code>VisibleAnywhere</code></li>
+    </ul>
+    <p class="explain"><code>EditDefaultsOnly</code> n'autorise la modification que dans les Class Defaults : tous les ennemis de ce Blueprint partagent la valeur. <code>EditAnywhere</code> permettrait aussi de la changer sur chaque instance.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Que renvoie <code>Ammo.Find(TEXT("Rocket"))</code> sur un <code>TMap&lt;FName, int32&gt;</code> qui ne contient pas cette clé ?</p>
+    <ul>
+      <li>0</li>
+      <li>-1 (<code>INDEX_NONE</code>)</li>
+      <li data-correct><code>nullptr</code></li>
+      <li>Le programme plante</li>
+    </ul>
+    <p class="explain"><code>TMap::Find</code> renvoie un pointeur vers la valeur, ou <code>nullptr</code> si la clé est absente. Il faut donc tester le résultat avant de le déréférencer. <code>FindRef</code> renvoie une copie (valeur par défaut si absente) et <code>FindOrAdd</code> crée l'entrée.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Un ramassable d'arme exposé au Blueprint</h4>
+    <p>Créez une énumération <code>EWeaponType</code> et une struct <code>FWeaponData</code> (nom affiché, type, dégâts, cadence de tir, taille du chargeur) utilisables en Blueprint. Puis créez un Actor <code>AWeaponPickup</code> : une sphère de collision racine, un mesh sans collision, une variable <code>FWeaponData</code> réglable dans l'éditeur, une fonction pure <code>GetDamagePerSecond</code>, et un événement <code>OnPickedUp</code> implémenté en Blueprint quand un personnage le touche. Créez enfin <code>BP_Pickup_Shotgun</code> avec ses propres valeurs.</p>
+    <details>
+      <summary>Voir la solution</summary>
+<script type="text/plain" data-lang="cpp" data-file="WeaponTypes.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "WeaponTypes.generated.h"
+
+UENUM(BlueprintType)
+enum class EWeaponType : uint8
+{
+    Pistol    UMETA(DisplayName = "Pistolet"),
+    Rifle     UMETA(DisplayName = "Fusil d'assaut"),
+    Shotgun   UMETA(DisplayName = "Shotgun"),
+    Launcher  UMETA(DisplayName = "Lance-roquettes")
+};
+
+USTRUCT(BlueprintType)
+struct FWeaponData
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon")
+    FText DisplayName;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon")
+    EWeaponType Type = EWeaponType::Pistol;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon", meta = (ClampMin = "0.0"))
+    float Damage = 10.f;
+
+    // Tirs par seconde
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon", meta = (ClampMin = "0.1"))
+    float FireRate = 2.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon", meta = (ClampMin = "1"))
+    int32 MagazineSize = 12;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="WeaponPickup.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "WeaponTypes.h"                 // FWeaponData est utilisé par valeur : include obligatoire
+#include "WeaponPickup.generated.h"
+
+class USphereComponent;
+class UStaticMeshComponent;
+
+UCLASS()
+class MYGAME_API AWeaponPickup : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    AWeaponPickup();
+
+    UFUNCTION(BlueprintPure, Category = "Weapon")
+    float GetDamagePerSecond() const { return WeaponData.Damage * WeaponData.FireRate; }
+
+protected:
+    virtual void BeginPlay() override;
+
+    UFUNCTION()
+    void OnOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+
+    // Son, effet, ajout à l'inventaire : laissé au Blueprint
+    UFUNCTION(BlueprintImplementableEvent, Category = "Weapon")
+    void OnPickedUp(AActor* Collector);
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    TObjectPtr<USphereComponent> Collision;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    TObjectPtr<UStaticMeshComponent> Mesh;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
+    FWeaponData WeaponData;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="WeaponPickup.cpp">
+#include "WeaponPickup.h"
+#include "Components/SphereComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "GameFramework/Character.h"
+
+AWeaponPickup::AWeaponPickup()
+{
+    PrimaryActorTick.bCanEverTick = false;
+
+    Collision = CreateDefaultSubobject<USphereComponent>(TEXT("Collision"));
+    RootComponent = Collision;
+    Collision->InitSphereRadius(60.f);
+    Collision->SetCollisionProfileName(TEXT("OverlapAllDynamic"));
+
+    Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
+    Mesh->SetupAttachment(RootComponent);
+    Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+}
+
+void AWeaponPickup::BeginPlay()
+{
+    Super::BeginPlay();
+    Collision->OnComponentBeginOverlap.AddDynamic(this, &AWeaponPickup::OnOverlapBegin);
+}
+
+void AWeaponPickup::OnOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+{
+    if (!Cast<ACharacter>(OtherActor))
+    {
+        return;   // seuls les personnages ramassent les armes
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("%s ramasse %s (%.1f DPS)"),
+        *OtherActor->GetName(), *WeaponData.DisplayName.ToString(), GetDamagePerSecond());
+
+    OnPickedUp(OtherActor);
+    Destroy();
+}
+</script>
+      <p>Dans l'éditeur, créez <code>BP_Pickup_Shotgun</code> à partir d'<code>AWeaponPickup</code>, choisissez un mesh, réglez <em>Weapon Data</em> (Type = Shotgun, Damage = 60, Fire Rate = 1, Magazine Size = 6), puis implémentez <em>Event On Picked Up</em> pour jouer un son. La fonction <em>Get Damage Per Second</em> apparaît comme nœud vert dans n'importe quel graphe qui a une référence au ramassable.</p>
+    </details>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>C++ pour la logique, les systèmes et les classes de base ; Blueprint enfant pour les assets et les réglages.</li>
+      <li>Déclarations dans le <code>.h</code>, définitions dans le <code>.cpp</code> ; déclarations anticipées dans les headers pour compiler plus vite.</li>
+      <li>Une classe Unreal : <code>UCLASS()</code>, <code>MYGAME_API</code>, <code>GENERATED_BODY()</code>, <code>.generated.h</code> en dernier include, <code>Super::</code> dans les surcharges.</li>
+      <li><code>UPROPERTY</code> et <code>UFUNCTION</code> exposent au moteur ; leurs spécificateurs règlent l'édition, l'accès Blueprint, la sauvegarde et le réseau.</li>
+      <li><code>FString</code> pour manipuler, <code>FName</code> pour identifier, <code>FText</code> pour afficher ; <code>TArray</code>, <code>TMap</code>, <code>TSet</code> pour stocker.</li>
+      <li>Jamais de <code>new</code> pour un UObject : <code>CreateDefaultSubobject</code>, <code>NewObject</code> ou <code>SpawnActor</code>. Toujours tester les pointeurs.</li>
+      <li>Un module manquant dans <code>Build.cs</code> donne « unresolved external symbol ».</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>

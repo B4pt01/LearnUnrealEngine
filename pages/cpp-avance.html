@@ -1,0 +1,1316 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>C++ avancé : vie des objets — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="cpp-avance">
+<article class="doc">
+
+  <h1>C++ avancé : vie des objets</h1>
+  <p class="lead">Écrire une classe ne suffit pas : il faut savoir <em>quand</em> le moteur appelle chacune de ses fonctions, comment les objets communiquent sans se connaître, et comment la mémoire est gérée. Ce chapitre couvre le cycle de vie des Actors et des composants, le Tick, les timers, les delegates, les interfaces et le garbage collector : les outils quotidiens d'un programmeur gameplay.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Connaître l'ordre exact des appels, du <strong>constructeur</strong> à la <strong>destruction</strong></li>
+      <li>Faire apparaître des Actors proprement, y compris en <strong>spawn différé</strong></li>
+      <li>Maîtriser le <strong>Tick</strong>, ses groupes, et le remplacer par des <strong>timers</strong> quand c'est possible</li>
+      <li>Faire communiquer les objets avec les <strong>delegates</strong> et les <strong>interfaces</strong></li>
+      <li>Comprendre le <strong>garbage collector</strong>, les types de pointeurs et le chargement asynchrone</li>
+    </ul>
+  </div>
+
+  <h2>Le cycle de vie d'un Actor</h2>
+  <p>Un Actor peut naître de deux façons : il est <strong>placé dans un niveau</strong> depuis l'éditeur et chargé avec ce niveau, ou il est <strong>créé en cours de partie</strong> par <code>SpawnActor</code>. Les deux chemins diffèrent au début, puis se rejoignent pour l'initialisation des composants et <code>BeginPlay</code>.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart TD
+    subgraph LOAD["Actor placé dans le niveau"]
+        L1["Constructeur<br>à partir du CDO"] --> L2["PostInitProperties"]
+        L2 --> L3["PostLoad<br>données lues sur le disque"]
+    end
+    subgraph SPAWN["Actor créé par SpawnActor"]
+        S1["Constructeur<br>à partir du CDO"] --> S2["PostInitProperties"]
+        S2 --> S3["PostActorCreated"]
+        S3 --> S4["OnConstruction<br>Construction Script"]
+    end
+    L3 --> C1["PreInitializeComponents"]
+    S4 --> C1
+    C1 --> C2["InitializeComponent<br>de chaque composant concerné"]
+    C2 --> C3["PostInitializeComponents"]
+    C3 --> B["BeginPlay"]
+    B --> T["Tick<br>à chaque frame"]
+    T --> T
+    T --> E["EndPlay<br>avec un EEndPlayReason"]
+    E --> D["BeginDestroy puis FinishDestroy<br>mémoire libérée par le GC"]
+</pre>
+    <figcaption>Les deux chemins de naissance d'un Actor se rejoignent à l'initialisation des composants.</figcaption>
+  </figure>
+
+  <p>Point souvent oublié : le constructeur C++ s'exécute aussi pour le <strong>CDO</strong> (<em>Class Default Object</em>), l'objet modèle de la classe, créé au chargement du module, bien avant qu'un niveau existe. C'est pour cela qu'il ne faut rien y faire qui dépende du monde.</p>
+
+  <h3>Constructeur ou BeginPlay ?</h3>
+  <div class="compare">
+    <div class="good">
+      <h4>Dans le constructeur</h4>
+      <ul>
+        <li>Créer les composants (<code>CreateDefaultSubobject</code>) et les attacher</li>
+        <li>Donner des valeurs par défaut aux variables</li>
+        <li>Régler <code>PrimaryActorTick</code>, la collision par défaut des composants</li>
+      </ul>
+    </div>
+    <div class="bad">
+      <h4>Jamais dans le constructeur</h4>
+      <ul>
+        <li><code>GetWorld()</code>, <code>SpawnActor</code>, timers : le monde n'existe pas encore pour le CDO</li>
+        <li>Chercher d'autres Actors, le joueur, le GameMode</li>
+        <li>Lire une valeur réglée dans le Blueprint enfant : elle n'est pas encore appliquée</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <p class="callout-title">Les valeurs du Blueprint arrivent après le constructeur</p>
+    <p>Si le constructeur fait <code>GetCharacterMovement()-&gt;MaxWalkSpeed = WalkSpeed;</code> et que le designer a réglé <code>WalkSpeed = 300</code> dans le Blueprint enfant, le constructeur lit encore la valeur C++. Les valeurs du Blueprint et de l'instance sont copiées <em>après</em> le corps du constructeur. Faites ce genre de calcul dans <code>BeginPlay</code>, <code>PostInitializeComponents</code> ou <code>OnConstruction</code>.</p>
+  </div>
+
+  <h3>Qui fait quoi</h3>
+  <table>
+    <thead><tr><th>Fonction</th><th>Quand</th><th>À utiliser pour</th></tr></thead>
+    <tbody>
+      <tr><td>Constructeur</td><td>Création de tout objet, y compris le CDO</td><td>Composants, valeurs par défaut</td></tr>
+      <tr><td><code>PostInitProperties</code></td><td>Juste après l'initialisation des propriétés</td><td>Valeurs dérivées d'autres propriétés (rare)</td></tr>
+      <tr><td><code>PostLoad</code></td><td>Objet chargé depuis le disque</td><td>Corriger ou convertir d'anciennes données</td></tr>
+      <tr><td><code>OnConstruction(const FTransform&amp;)</code></td><td>Spawn, et dans l'éditeur à chaque déplacement ou modification</td><td>Construction procédurale visible dans l'éditeur (le <em>Construction Script</em> en C++)</td></tr>
+      <tr><td><code>PreInitializeComponents</code></td><td>Avant l'initialisation des composants</td><td>Rare</td></tr>
+      <tr><td><code>PostInitializeComponents</code></td><td>Tous les composants sont initialisés</td><td>Lier des composants entre eux, s'abonner à leurs événements</td></tr>
+      <tr><td><code>BeginPlay</code></td><td>Le jeu commence pour cet Actor</td><td>Trouver d'autres Actors, lancer des timers, démarrer la logique</td></tr>
+      <tr><td><code>Tick(float DeltaTime)</code></td><td>À chaque frame, si activé</td><td>Ce qui doit vraiment évoluer en continu</td></tr>
+      <tr><td><code>EndPlay(EEndPlayReason::Type)</code></td><td>L'Actor quitte le jeu</td><td>Arrêter les timers, se désabonner, sauvegarder</td></tr>
+      <tr><td><code>BeginDestroy</code> / <code>FinishDestroy</code></td><td>Le garbage collector libère l'objet</td><td>Libérer des ressources non-UObject (très rare en gameplay)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>EndPlay et ses raisons</h3>
+  <p><code>EndPlay</code> reçoit la raison de la fin de vie de l'Actor. Elle permet par exemple de ne sauvegarder la progression qu'à la fermeture du jeu, ou de ne lâcher le butin d'un ennemi que s'il a réellement été détruit.</p>
+  <table>
+    <thead><tr><th><code>EEndPlayReason</code></th><th>Situation</th></tr></thead>
+    <tbody>
+      <tr><td><code>Destroyed</code></td><td>Appel explicite de <code>Destroy()</code></td></tr>
+      <tr><td><code>LevelTransition</code></td><td>Changement de niveau (<code>OpenLevel</code>)</td></tr>
+      <tr><td><code>EndPlayInEditor</code></td><td>Arrêt d'une session Play In Editor</td></tr>
+      <tr><td><code>RemovedFromWorld</code></td><td>Le niveau streamé qui le contient est déchargé</td></tr>
+      <tr><td><code>Quit</code></td><td>Fermeture de l'application</td></tr>
+    </tbody>
+  </table>
+<script type="text/plain" data-lang="cpp" data-file="Enemy.cpp">
+void AEnemy::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    if (EndPlayReason == EEndPlayReason::Destroyed)
+    {
+        SpawnLoot();                                   // seulement s'il a été tué
+    }
+    GetWorldTimerManager().ClearAllTimersForObject(this);
+    Super::EndPlay(EndPlayReason);
+}
+</script>
+
+  <h2>Le cycle de vie des composants</h2>
+  <p>Les composants ont leur propre cycle, piloté par leur Actor. La différence principale est l'<strong>enregistrement</strong> (<em>register</em>) : un composant enregistré existe dans la scène (rendu, physique). Cela arrive aussi dans l'éditeur, pas seulement en jeu.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    R["OnRegister<br>ajouté à la scène<br>aussi dans l'éditeur"] --> I["InitializeComponent<br>si bWantsInitializeComponent"]
+    I --> B["BeginPlay"]
+    B --> T["TickComponent<br>si le tick est activé"]
+    T --> T
+    T --> E["EndPlay"]
+    E --> U["OnUnregister<br>retiré de la scène"]
+</pre>
+    <figcaption>Cycle de vie d'un composant. InitializeComponent n'est appelé que si le composant le demande.</figcaption>
+  </figure>
+
+<script type="text/plain" data-lang="cpp" data-file="InventoryComponent.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Components/ActorComponent.h"
+#include "InventoryComponent.generated.h"
+
+UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
+class MYGAME_API UInventoryComponent : public UActorComponent
+{
+    GENERATED_BODY()
+
+public:
+    UInventoryComponent();
+
+    virtual void InitializeComponent() override;
+    virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+
+protected:
+    virtual void BeginPlay() override;
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="InventoryComponent.cpp">
+#include "InventoryComponent.h"
+
+UInventoryComponent::UInventoryComponent()
+{
+    bWantsInitializeComponent = true;            // sinon InitializeComponent n'est jamais appelé
+    PrimaryComponentTick.bCanEverTick = true;
+    PrimaryComponentTick.TickInterval = 0.5f;    // deux fois par seconde suffisent
+}
+
+void UInventoryComponent::InitializeComponent()
+{
+    Super::InitializeComponent();
+    // Avant le BeginPlay de l'Actor : préparer les données internes
+}
+
+void UInventoryComponent::BeginPlay()
+{
+    Super::BeginPlay();
+    // GetOwner() est l'Actor qui possède le composant
+}
+
+void UInventoryComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+    Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+    // Exemple : faire expirer les objets périssables
+}
+
+void UInventoryComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    Super::EndPlay(EndPlayReason);
+}
+</script>
+  <p>Le spécificateur <code>meta = (BlueprintSpawnableComponent)</code> permet d'ajouter ce composant à n'importe quel Blueprint via le bouton <strong>+ Add</strong>.</p>
+
+  <h2>Faire apparaître et détruire des Actors</h2>
+  <h3>FActorSpawnParameters</h3>
+  <p><code>SpawnActor</code> accepte une structure de paramètres. Les trois champs les plus utiles :</p>
+  <dl class="defs">
+    <dt><code>Owner</code></dt><dd>L'Actor propriétaire (l'arme possède son projectile). Utilisé par le réseau et pour ignorer des collisions.</dd>
+    <dt><code>Instigator</code></dt><dd>Le Pawn responsable des actions de l'objet : celui à qui attribuer les dégâts.</dd>
+    <dt><code>SpawnCollisionHandlingOverride</code></dt><dd>Que faire si l'emplacement est occupé : <code>AlwaysSpawn</code>, <code>AdjustIfPossibleButAlwaysSpawn</code>, <code>AdjustIfPossibleButDontSpawnIfColliding</code>, <code>DontSpawnIfColliding</code>.</dd>
+  </dl>
+<script type="text/plain" data-lang="cpp" data-file="Weapon.cpp">
+FActorSpawnParameters Params;
+Params.Owner = this;
+Params.Instigator = GetInstigator();
+Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+AProjectile* Projectile = GetWorld()->SpawnActor<AProjectile>(
+    ProjectileClass, MuzzleLocation, MuzzleRotation, Params);
+
+if (!Projectile)
+{
+    UE_LOG(LogTemp, Warning, TEXT("Spawn refusé (collision ou classe invalide)"));
+}
+</script>
+
+  <h3>Le spawn différé</h3>
+  <p>Avec <code>SpawnActor</code>, <code>BeginPlay</code> s'exécute <strong>avant</strong> que la fonction ne vous rende la main. Si l'Actor a besoin d'une donnée dès son <code>BeginPlay</code> (le niveau d'un ennemi, l'équipe d'un soldat), il est trop tard pour la lui donner. <code>SpawnActorDeferred</code> crée l'Actor mais suspend son initialisation jusqu'à l'appel de <code>FinishSpawning</code>.</p>
+<script type="text/plain" data-lang="cpp" data-file="WaveSpawner.cpp" data-highlight="9,16,18">
+#include "WaveSpawner.h"
+#include "Enemy.h"
+
+void AWaveSpawner::SpawnEnemy(int32 WaveNumber)
+{
+    const FTransform SpawnTransform(GetActorRotation(), GetActorLocation());
+
+    // 1. Création sans OnConstruction ni BeginPlay
+    AEnemy* Enemy = GetWorld()->SpawnActorDeferred<AEnemy>(
+        EnemyClass, SpawnTransform, this, nullptr,
+        ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn);
+
+    if (Enemy)
+    {
+        // 2. Configuration AVANT le BeginPlay de l'ennemi
+        Enemy->SetLevel(WaveNumber);
+        // 3. Fin de l'initialisation : OnConstruction, composants, BeginPlay
+        Enemy->FinishSpawning(SpawnTransform);
+    }
+}
+</script>
+  <p>En Blueprint, l'équivalent est d'exposer des variables avec <em>Expose on Spawn</em> (spécificateur <code>meta = (ExposeOnSpawn = "true")</code>) : elles apparaissent alors comme pins du nœud <em>Spawn Actor from Class</em>.</p>
+
+  <h3>Destroy et SetLifeSpan</h3>
+  <ul>
+    <li><code>Destroy()</code> retire l'Actor du jeu : <code>EndPlay(Destroyed)</code> est appelé, puis la mémoire est libérée plus tard par le garbage collector.</li>
+    <li><code>SetLifeSpan(5.f)</code> programme la destruction dans 5 secondes ; <code>InitialLifeSpan</code>, réglé dans le constructeur, fait de même dès l'apparition (douilles, impacts, projectiles).</li>
+  </ul>
+
+  <h2>Le Tick en détail</h2>
+  <p>Le <strong>Tick</strong> est une fonction appelée à chaque frame avec <code>DeltaTime</code>, la durée de la frame précédente en secondes. Multiplier une vitesse par <code>DeltaTime</code> rend le mouvement indépendant du nombre d'images par seconde.</p>
+<script type="text/plain" data-lang="cpp" data-file="Turret.cpp">
+ATurret::ATurret()
+{
+    PrimaryActorTick.bCanEverTick = true;           // false : le tick ne pourra JAMAIS être activé
+    PrimaryActorTick.bStartWithTickEnabled = false; // activé plus tard, quand une cible apparaît
+    PrimaryActorTick.TickInterval = 0.1f;           // 10 fois par seconde au lieu de chaque frame
+    PrimaryActorTick.TickGroup = TG_PostPhysics;    // après la simulation physique
+}
+
+void ATurret::OnTargetAcquired(AActor* NewTarget)
+{
+    Target = NewTarget;
+    SetActorTickEnabled(true);
+    AddTickPrerequisiteActor(NewTarget);            // la tourelle tique APRÈS sa cible
+}
+
+void ATurret::OnTargetLost()
+{
+    RemoveTickPrerequisiteActor(Target);
+    Target = nullptr;
+    SetActorTickEnabled(false);                     // plus de cible : plus de tick
+}
+</script>
+
+  <h3>Les groupes de tick</h3>
+  <p>Une frame est découpée en <strong>groupes de tick</strong>. Le groupe détermine si votre code voit les positions d'avant ou d'après la simulation physique. Par défaut, tout tique en <code>TG_PrePhysics</code>.</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 800 260" width="800" role="img" aria-label="Déroulement d'une frame : TG_PrePhysics, TG_DuringPhysics en parallèle de la simulation physique, TG_PostPhysics, mise à jour de la caméra, TG_PostUpdateWork">
+      <defs>
+        <marker id="cpa-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+      </defs>
+      <line x1="20" y1="24" x2="780" y2="24" stroke="currentColor" stroke-width="1.5" marker-end="url(#cpa-arrow)"/>
+      <text x="22" y="16" font-size="12" fill="currentColor" opacity="0.8">Une frame (le temps s'écoule vers la droite)</text>
+      <text x="20" y="52" font-size="12" fill="currentColor" opacity="0.7">Game thread</text>
+      <rect x="20" y="60" width="180" height="44" rx="6" fill="#5aa9ff" fill-opacity="0.2" stroke="#5aa9ff"/>
+      <text x="110" y="87" font-size="13" font-weight="700" fill="currentColor" text-anchor="middle">TG_PrePhysics</text>
+      <rect x="210" y="60" width="240" height="44" rx="6" fill="#b195ff" fill-opacity="0.2" stroke="#b195ff"/>
+      <text x="330" y="87" font-size="13" font-weight="700" fill="currentColor" text-anchor="middle">TG_DuringPhysics</text>
+      <rect x="460" y="60" width="160" height="44" rx="6" fill="#4ade80" fill-opacity="0.2" stroke="#4ade80"/>
+      <text x="540" y="87" font-size="13" font-weight="700" fill="currentColor" text-anchor="middle">TG_PostPhysics</text>
+      <rect x="640" y="60" width="140" height="44" rx="6" fill="#ffd866" fill-opacity="0.2" stroke="#ffd866"/>
+      <text x="710" y="87" font-size="13" font-weight="700" fill="currentColor" text-anchor="middle">TG_PostUpdateWork</text>
+      <text x="20" y="128" font-size="12" fill="currentColor" opacity="0.7">Physique</text>
+      <rect x="210" y="136" width="240" height="34" rx="6" fill="#ffb15c" fill-opacity="0.25" stroke="#ffb15c"/>
+      <text x="330" y="158" font-size="13" font-weight="700" fill="currentColor" text-anchor="middle">Simulation physique (Chaos)</text>
+      <line x1="630" y1="56" x2="630" y2="176" stroke="currentColor" stroke-dasharray="4 4" opacity="0.6"/>
+      <text x="630" y="190" font-size="11" fill="currentColor" text-anchor="middle" opacity="0.8">mise à jour caméra</text>
+      <g font-size="12" fill="currentColor" opacity="0.85">
+        <text x="20" y="214">Groupe par défaut :</text>
+        <text x="20" y="230">personnages, IA,</text>
+        <text x="20" y="246">logique de jeu</text>
+        <text x="210" y="214">En parallèle de la physique :</text>
+        <text x="210" y="230">ce qui n'en dépend pas</text>
+        <text x="210" y="246">(effets cosmétiques)</text>
+        <text x="460" y="214">Positions finales connues :</text>
+        <text x="460" y="230">laser de visée, suivi</text>
+        <text x="460" y="246">d'un objet physique</text>
+        <text x="650" y="214">Après la caméra :</text>
+        <text x="650" y="230">ce qui doit coller</text>
+        <text x="650" y="246">à la vue finale</text>
+      </g>
+    </svg>
+    <figcaption>Les principaux groupes de tick d'une frame (le moteur en a aussi d'autres, internes, comme TG_StartPhysics et TG_EndPhysics).</figcaption>
+  </figure>
+
+  <div class="callout perf">
+    <p class="callout-title">Préférez l'événementiel</p>
+    <p>Cent Actors qui vérifient une condition à chaque frame coûtent cher, même s'ils ne font rien la plupart du temps. Avant d'écrire un Tick, demandez-vous si un <strong>événement</strong> (overlap, delegate), un <strong>timer</strong> ou un <strong>tick ralenti</strong> (<code>TickInterval</code>) ne suffirait pas. Désactivez le tick (<code>bCanEverTick = false</code>) dans toutes les classes qui n'en ont pas besoin : c'est la première optimisation recommandée par Epic.</p>
+  </div>
+
+  <h2>Les timers</h2>
+  <p>Un <strong>timer</strong> appelle une fonction après un délai, une fois ou en boucle. Il est géré par le <code>FTimerManager</code> du monde, accessible depuis un Actor via <code>GetWorldTimerManager()</code> (ou <code>GetWorld()-&gt;GetTimerManager()</code> ailleurs). Chaque timer est identifié par un <code>FTimerHandle</code>, qui sert ensuite à l'arrêter ou l'interroger.</p>
+  <p>Exemple classique : une arme automatique qui tire tant que la gâchette est enfoncée, à une cadence fixe, sans pouvoir tirer plus vite en martelant le bouton.</p>
+
+  <div class="tabs">
+    <div class="tab" data-label="Blueprint">
+<script type="application/json" class="bp-graph" data-caption="Set Timer by Event appelle Fire Shot toutes les 0,1 s ; le handle sert à arrêter le timer au relâchement.">
+{
+  "nodes": [
+    { "id": "ia", "type": "event", "title": "EnhancedInputAction IA_Fire", "x": 0, "y": 0,
+      "out": [ { "name": "Started", "type": "exec" }, { "name": "Completed", "type": "exec" } ] },
+    { "id": "ce", "type": "custom", "title": "Fire Shot", "x": 0, "y": 140,
+      "out": [ { "type": "delegate" }, { "type": "exec" } ] },
+    { "id": "var", "type": "var", "title": "Fire Timer", "x": 60, "y": 270, "out": [ { "type": "struct" } ] },
+    { "id": "st", "type": "function", "title": "Set Timer by Event", "x": 290, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Event", "type": "delegate" }, { "name": "Time", "type": "float", "value": "0.1" }, { "name": "Looping", "type": "bool", "value": true } ],
+      "out": [ { "type": "exec" }, { "name": "Return Value", "type": "struct" } ] },
+    { "id": "set", "type": "set", "title": "SET", "x": 570, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Fire Timer", "type": "struct" } ],
+      "out": [ { "type": "exec" }, { "type": "struct" } ] },
+    { "id": "clr", "type": "function", "title": "Clear and Invalidate Timer by Handle", "x": 290, "y": 200,
+      "in": [ { "type": "exec" }, { "name": "Handle", "type": "struct" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ia", 0, "st", 0 ],
+    [ "ce", 0, "st", 1 ],
+    [ "st", 0, "set", 0 ],
+    [ "st", 1, "set", 1 ],
+    [ "ia", 1, "clr", 0 ],
+    [ "var", 0, "clr", 1 ]
+  ]
+}
+</script>
+    </div>
+    <div class="tab" data-label="C++">
+<script type="text/plain" data-lang="cpp" data-file="AutoRifle.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "AutoRifle.generated.h"
+
+UCLASS()
+class MYGAME_API AAutoRifle : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    UFUNCTION(BlueprintCallable, Category = "Weapon")
+    void StartFire();
+
+    UFUNCTION(BlueprintCallable, Category = "Weapon")
+    void StopFire();
+
+protected:
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+    void FireShot();
+
+    // Tirs par seconde
+    UPROPERTY(EditDefaultsOnly, Category = "Weapon", meta = (ClampMin = "0.1"))
+    float FireRate = 10.f;
+
+private:
+    FTimerHandle FireTimerHandle;
+    double LastFireTime = -1000.0;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="AutoRifle.cpp">
+#include "AutoRifle.h"
+#include "TimerManager.h"
+
+void AAutoRifle::StartFire()
+{
+    const float Interval = 1.f / FireRate;
+    const double Now = GetWorld()->GetTimeSeconds();
+
+    // Premier tir dès que possible, sans dépasser la cadence si on martèle la gâchette
+    const float FirstDelay = static_cast<float>(FMath::Max(LastFireTime + Interval - Now, 0.0));
+
+    // SetTimer(Handle, Objet, Fonction, Intervalle, Boucle, PremierDélai)
+    GetWorldTimerManager().SetTimer(FireTimerHandle, this, &AAutoRifle::FireShot, Interval, true, FirstDelay);
+}
+
+void AAutoRifle::StopFire()
+{
+    GetWorldTimerManager().ClearTimer(FireTimerHandle);
+}
+
+void AAutoRifle::FireShot()
+{
+    LastFireTime = GetWorld()->GetTimeSeconds();
+    UE_LOG(LogTemp, Log, TEXT("Pan !"));
+    // Ligne de tir, munitions, recul...
+}
+
+void AAutoRifle::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    GetWorldTimerManager().ClearAllTimersForObject(this);
+    Super::EndPlay(EndPlayReason);
+}
+</script>
+    </div>
+  </div>
+
+  <figure class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    participant J as Joueur
+    participant W as AAutoRifle
+    participant TM as TimerManager
+    J->>W: Appuie sur la gâchette (StartFire)
+    W->>TM: SetTimer(FireShot, 0.1 s, en boucle)
+    TM->>W: FireShot
+    TM->>W: FireShot (0.1 s plus tard)
+    TM->>W: FireShot
+    J->>W: Relâche la gâchette (StopFire)
+    W->>TM: ClearTimer(FireTimerHandle)
+    Note over W,TM: Plus aucun appel
+</pre>
+    <figcaption>Le TimerManager rappelle FireShot à intervalle régulier jusqu'à ce que le timer soit effacé.</figcaption>
+  </figure>
+
+  <h3>Delegates de timer et lambdas</h3>
+  <p>Pour passer des paramètres à la fonction appelée, ou pour écrire le code directement sur place, on construit un <code>FTimerDelegate</code>.</p>
+<script type="text/plain" data-lang="cpp" data-file="Respawn.cpp">
+// Avec paramètre : RespawnEnemy(AActor* SpawnPoint) sera appelée dans 3 s
+FTimerDelegate RespawnDelegate = FTimerDelegate::CreateUObject(this, &ASpawner::RespawnEnemy, SpawnPoint);
+GetWorldTimerManager().SetTimer(RespawnHandle, RespawnDelegate, 3.f, false);
+
+// Avec une lambda : capturer un pointeur FAIBLE, l'objet peut mourir entre-temps
+TWeakObjectPtr<ASpawner> WeakThis(this);
+GetWorldTimerManager().SetTimer(FlashHandle, FTimerDelegate::CreateLambda([WeakThis]()
+{
+    if (ASpawner* Self = WeakThis.Get())
+    {
+        Self->StopFlashing();
+    }
+}), 0.5f, false);
+
+// Exécuter une fonction à la frame suivante (pratique pour attendre une initialisation)
+GetWorldTimerManager().SetTimerForNextTick(this, &ASpawner::LateInit);
+</script>
+
+  <table>
+    <thead><tr><th>Fonction du TimerManager</th><th>Rôle</th></tr></thead>
+    <tbody>
+      <tr><td><code>ClearTimer(Handle)</code></td><td>Arrête et invalide le timer</td></tr>
+      <tr><td><code>PauseTimer(Handle)</code> / <code>UnPauseTimer(Handle)</code></td><td>Met en pause et reprend (le temps restant est conservé)</td></tr>
+      <tr><td><code>IsTimerActive(Handle)</code></td><td>Vrai si le timer existe et n'est pas en pause</td></tr>
+      <tr><td><code>GetTimerRemaining(Handle)</code></td><td>Secondes avant le prochain déclenchement (utile pour une barre de recharge)</td></tr>
+      <tr><td><code>SetTimerForNextTick(...)</code></td><td>Appel unique à la frame suivante</td></tr>
+      <tr><td><code>ClearAllTimersForObject(this)</code></td><td>Arrête tous les timers liés à cet objet</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <p class="callout-title">Lambdas et objets détruits</p>
+    <p>Une lambda qui capture <code>this</code> en pointeur brut peut s'exécuter après la destruction de l'objet et planter. <code>CreateUObject</code> est protégé (le timer ne s'exécute plus si l'objet est détruit) ; pour une lambda, capturez un <code>TWeakObjectPtr</code> ou utilisez <code>FTimerDelegate::CreateWeakLambda(this, ...)</code>.</p>
+  </div>
+
+  <h2>Les delegates</h2>
+  <p>Un <strong>delegate</strong> est une variable qui contient une ou plusieurs fonctions à appeler plus tard. C'est l'implémentation Unreal du patron <strong>observateur</strong> : un objet annonce « il s'est passé quelque chose » sans savoir qui écoute. Le composant de santé n'a pas à connaître le HUD, le GameMode ou le système de succès : chacun s'abonne à l'événement qui l'intéresse.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    HC["UHealthComponent<br>OnDeath.Broadcast"]
+    HC -- "notifie" --> A["Personnage<br>active le ragdoll"]
+    HC -- "notifie" --> B["HUD<br>affiche l'écran de mort"]
+    HC -- "notifie" --> C["GameMode<br>compte les éliminations"]
+    HC -- "notifie" --> D["Succès<br>100 ennemis vaincus"]
+</pre>
+    <figcaption>Le patron observateur : l'émetteur diffuse, les abonnés réagissent. Ajouter un abonné ne demande aucune modification de l'émetteur.</figcaption>
+  </figure>
+
+  <h3>Les types de delegates</h3>
+  <table>
+    <thead><tr><th>Macro de déclaration</th><th>Abonnés</th><th>Blueprint</th><th>Liaison</th><th>Appel</th></tr></thead>
+    <tbody>
+      <tr><td><code>DECLARE_DELEGATE(FOnX)</code></td><td>Un seul</td><td>Non</td><td><code>BindUObject</code>, <code>BindLambda</code>, <code>BindRaw</code>, <code>BindSP</code></td><td><code>Execute</code>, <code>ExecuteIfBound</code></td></tr>
+      <tr><td><code>DECLARE_DELEGATE_OneParam(FOnX, float)</code>, <code>_TwoParams</code>…</td><td>Un seul</td><td>Non</td><td>Idem</td><td>Idem</td></tr>
+      <tr><td><code>DECLARE_DELEGATE_RetVal(bool, FCanX)</code></td><td>Un seul</td><td>Non</td><td>Idem</td><td><code>Execute</code> renvoie la valeur</td></tr>
+      <tr><td><code>DECLARE_MULTICAST_DELEGATE_OneParam(FOnX, int32)</code></td><td>Plusieurs</td><td>Non</td><td><code>AddUObject</code>, <code>AddLambda</code>, <code>AddWeakLambda</code></td><td><code>Broadcast</code></td></tr>
+      <tr><td><code>DECLARE_DYNAMIC_DELEGATE_OneParam(FOnX, bool, bSuccess)</code></td><td>Un seul</td><td>Paramètre de fonction</td><td><code>BindDynamic</code>, <code>BindUFunction</code></td><td><code>ExecuteIfBound</code></td></tr>
+      <tr><td><code>DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnX, AActor*, Killer)</code></td><td>Plusieurs</td><td>Oui : Event Dispatcher via <code>BlueprintAssignable</code></td><td><code>AddDynamic</code>, <code>AddUniqueDynamic</code>, <code>RemoveDynamic</code></td><td><code>Broadcast</code></td></tr>
+      <tr><td><code>DECLARE_EVENT_OneParam(AOwner, FOnX, bool)</code></td><td>Plusieurs</td><td>Non</td><td>Comme un multicast</td><td><code>Broadcast</code> réservé à la classe propriétaire</td></tr>
+    </tbody>
+  </table>
+  <p>Les delegates <strong>dynamiques</strong> sont sérialisables et utilisables en Blueprint, mais plus lents (les fonctions sont retrouvées par leur nom) et exigent des fonctions <code>UFUNCTION()</code>. Leurs paramètres se déclarent avec le type <strong>et</strong> le nom. Les delegates natifs, plus rapides, sont réservés au C++.</p>
+
+<script type="text/plain" data-lang="cpp" data-file="Delegates.cpp">
+// Déclarations : en haut d'un header, hors de toute classe
+DECLARE_DELEGATE_OneParam(FOnAmmoChanged, int32);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnScoreChanged, AActor*, int32);
+
+// Membres d'une classe
+FOnAmmoChanged OnAmmoChanged;
+FOnScoreChanged OnScoreChanged;
+
+// Liaison d'un delegate simple (une seule fonction à la fois)
+OnAmmoChanged.BindUObject(this, &UAmmoWidget::UpdateAmmo);
+OnAmmoChanged.BindLambda([](int32 Ammo) { UE_LOG(LogTemp, Log, TEXT("Munitions : %d"), Ammo); });
+
+// Abonnements à un multicast
+OnScoreChanged.AddUObject(this, &AScoreBoard::HandleScore);
+FDelegateHandle Handle = OnScoreChanged.AddLambda([](AActor* Scorer, int32 NewScore) { /* ... */ });
+OnScoreChanged.Remove(Handle);         // retire une lambda grâce à son handle
+OnScoreChanged.RemoveAll(this);        // retire tout ce que « this » a abonné
+
+// Appels
+OnAmmoChanged.ExecuteIfBound(12);      // Execute() planterait si rien n'est lié
+OnScoreChanged.Broadcast(PlayerPawn, 150);   // sans danger même sans abonné
+</script>
+
+  <h3>Exemple complet : un composant de santé</h3>
+  <p>Le cas d'école : un <code>UHealthComponent</code> réutilisable par le joueur, les ennemis et les objets destructibles. Il diffuse deux événements, utilisables aussi bien en C++ qu'en Blueprint.</p>
+<script type="text/plain" data-lang="cpp" data-file="HealthComponent.h" data-highlight="7-8,30-34">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Components/ActorComponent.h"
+#include "HealthComponent.generated.h"
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHealthChanged, float, NewHealth, float, Delta);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDeath, AActor*, Killer);
+
+UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
+class MYGAME_API UHealthComponent : public UActorComponent
+{
+    GENERATED_BODY()
+
+public:
+    UHealthComponent();
+
+    UFUNCTION(BlueprintCallable, Category = "Health")
+    void ApplyDamage(float Amount, AActor* DamageCauser);
+
+    UFUNCTION(BlueprintCallable, Category = "Health")
+    void Heal(float Amount);
+
+    UFUNCTION(BlueprintPure, Category = "Health")
+    float GetHealth() const { return Health; }
+
+    UFUNCTION(BlueprintPure, Category = "Health")
+    bool IsDead() const { return Health <= 0.f; }
+
+    UPROPERTY(BlueprintAssignable, Category = "Health")
+    FOnHealthChanged OnHealthChanged;
+
+    UPROPERTY(BlueprintAssignable, Category = "Health")
+    FOnDeath OnDeath;
+
+protected:
+    virtual void BeginPlay() override;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Health", meta = (ClampMin = "1.0"))
+    float MaxHealth = 100.f;
+
+    UPROPERTY(VisibleInstanceOnly, Category = "Health")
+    float Health = 0.f;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="HealthComponent.cpp">
+#include "HealthComponent.h"
+
+UHealthComponent::UHealthComponent()
+{
+    PrimaryComponentTick.bCanEverTick = false;   // tout est événementiel
+}
+
+void UHealthComponent::BeginPlay()
+{
+    Super::BeginPlay();
+    Health = MaxHealth;                          // valeur du Blueprint disponible ici
+}
+
+void UHealthComponent::ApplyDamage(float Amount, AActor* DamageCauser)
+{
+    if (Amount <= 0.f || IsDead())
+    {
+        return;
+    }
+
+    const float OldHealth = Health;
+    Health = FMath::Clamp(Health - Amount, 0.f, MaxHealth);
+    OnHealthChanged.Broadcast(Health, Health - OldHealth);
+
+    if (IsDead())
+    {
+        OnDeath.Broadcast(DamageCauser);
+    }
+}
+
+void UHealthComponent::Heal(float Amount)
+{
+    if (Amount <= 0.f || IsDead())
+    {
+        return;
+    }
+
+    const float OldHealth = Health;
+    Health = FMath::Min(Health + Amount, MaxHealth);
+    OnHealthChanged.Broadcast(Health, Health - OldHealth);
+}
+</script>
+
+  <p>L'ennemi s'abonne aux événements de son composant. Les fonctions liées avec <code>AddDynamic</code> doivent être des <code>UFUNCTION()</code> avec exactement les mêmes types de paramètres que le delegate.</p>
+<script type="text/plain" data-lang="cpp" data-file="EnemyCharacter.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Character.h"
+#include "EnemyCharacter.generated.h"
+
+class UHealthComponent;
+
+UCLASS()
+class MYGAME_API AEnemyCharacter : public ACharacter
+{
+    GENERATED_BODY()
+
+public:
+    AEnemyCharacter();
+
+protected:
+    virtual void BeginPlay() override;
+
+    UFUNCTION()
+    void HandleHealthChanged(float NewHealth, float Delta);
+
+    UFUNCTION()
+    void HandleDeath(AActor* Killer);
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    TObjectPtr<UHealthComponent> HealthComponent;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="EnemyCharacter.cpp">
+#include "EnemyCharacter.h"
+#include "HealthComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
+
+AEnemyCharacter::AEnemyCharacter()
+{
+    HealthComponent = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComponent"));
+}
+
+void AEnemyCharacter::BeginPlay()
+{
+    Super::BeginPlay();
+    HealthComponent->OnHealthChanged.AddDynamic(this, &AEnemyCharacter::HandleHealthChanged);
+    HealthComponent->OnDeath.AddDynamic(this, &AEnemyCharacter::HandleDeath);
+}
+
+void AEnemyCharacter::HandleHealthChanged(float NewHealth, float Delta)
+{
+    UE_LOG(LogTemp, Log, TEXT("%s : %.0f PV (variation %.0f)"), *GetName(), NewHealth, Delta);
+}
+
+void AEnemyCharacter::HandleDeath(AActor* Killer)
+{
+    // Ragdoll : la capsule ne bloque plus, le mesh devient physique
+    GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    GetCharacterMovement()->DisableMovement();
+    GetMesh()->SetCollisionProfileName(TEXT("Ragdoll"));
+    GetMesh()->SetSimulatePhysics(true);
+    SetLifeSpan(10.f);
+}
+</script>
+
+  <p>En Blueprint, grâce à <code>BlueprintAssignable</code>, le delegate se comporte comme un <strong>Event Dispatcher</strong> : sélectionnez le composant, puis dans le panneau Details cliquez sur le <strong>+</strong> à côté de <em>On Death</em>, ou utilisez le nœud <em>Bind Event to On Death</em> :</p>
+<script type="application/json" class="bp-graph" data-caption="Abonnement à OnDeath depuis un Blueprint : le carré rouge du custom event est un delegate.">
+{
+  "nodes": [
+    { "id": "begin", "type": "event", "title": "Event BeginPlay", "x": 0, "y": 0, "out": [ { "type": "exec" } ] },
+    { "id": "hc", "type": "var", "title": "Health Component", "x": 0, "y": 96, "out": [ { "type": "object" } ] },
+    { "id": "ce", "type": "custom", "title": "Handle Death", "x": 0, "y": 160,
+      "out": [ { "type": "delegate" }, { "type": "exec" }, { "name": "Killer", "type": "object" } ] },
+    { "id": "bind", "type": "function", "title": "Bind Event to On Death", "x": 280, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object" }, { "name": "Event", "type": "delegate" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "phys", "type": "function", "title": "Set Simulate Physics", "x": 280, "y": 170,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object", "value": "Mesh" }, { "name": "Simulate", "type": "bool", "value": true } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "begin", 0, "bind", 0 ],
+    [ "hc", 0, "bind", 1 ],
+    [ "ce", 0, "bind", 2 ],
+    [ "ce", 1, "phys", 0 ]
+  ]
+}
+</script>
+
+  <div class="callout warn">
+    <p class="callout-title">Pièges des delegates</p>
+    <ul>
+      <li><strong>Fonction non UFUNCTION</strong> : <code>AddDynamic</code> compile, mais la liaison échoue à l'exécution (avertissement « Unable to bind delegate »). Ajoutez <code>UFUNCTION()</code>.</li>
+      <li><strong>Double abonnement</strong> : lier deux fois la même fonction (BeginPlay rappelé, code dupliqué) provoque des doubles appels ou un avertissement. Utilisez <code>AddUniqueDynamic</code> ou testez <code>IsAlreadyBound</code>.</li>
+      <li><strong>Abonné qui meurt avant l'émetteur</strong> : désabonnez-vous dans <code>EndPlay</code> (<code>RemoveDynamic</code>, <code>RemoveAll(this)</code>). Les liaisons <code>AddUObject</code>/<code>AddDynamic</code> ignorent les objets détruits, mais pas une lambda qui capture <code>this</code>.</li>
+      <li><strong>Liaison dans le constructeur</strong> : préférez <code>BeginPlay</code> ou <code>PostInitializeComponents</code>, surtout pour les delegates d'autres Actors.</li>
+    </ul>
+  </div>
+
+  <h2>Les interfaces</h2>
+  <p>Comment le joueur peut-il « interagir » avec une porte, un coffre et un PNJ, trois classes sans parent commun ? Avec un <code>Cast</code> vers chacune, le code du joueur grossirait à chaque nouvel objet. Une <strong>interface</strong> est un contrat : « je sais répondre à <em>Interact</em> ». Toute classe peut l'implémenter, en C++ ou en Blueprint, et le joueur n'a besoin de connaître que l'interface.</p>
+
+  <h3>Déclarer l'interface</h3>
+  <p>Une interface Unreal se déclare avec <strong>deux classes</strong> : <code>UInteractable</code>, vide, qui sert à la réflexion, et <code>IInteractable</code>, qui contient les fonctions.</p>
+<script type="text/plain" data-lang="cpp" data-file="Interactable.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "UObject/Interface.h"
+#include "Interactable.generated.h"
+
+// Classe de réflexion : ne rien y ajouter
+UINTERFACE(MinimalAPI, Blueprintable)
+class UInteractable : public UInterface
+{
+    GENERATED_BODY()
+};
+
+// L'interface réelle, dont on hérite
+class MYGAME_API IInteractable
+{
+    GENERATED_BODY()
+
+public:
+    UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Interaction")
+    void Interact(AActor* Instigator);
+
+    UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Interaction")
+    FText GetInteractionText() const;
+};
+</script>
+
+  <h3>L'implémenter en C++</h3>
+<script type="text/plain" data-lang="cpp" data-file="Door.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "Interactable.h"
+#include "Door.generated.h"
+
+class UStaticMeshComponent;
+
+UCLASS()
+class MYGAME_API ADoor : public AActor, public IInteractable
+{
+    GENERATED_BODY()
+
+public:
+    ADoor();
+
+    // IInteractable : on surcharge les versions _Implementation
+    virtual void Interact_Implementation(AActor* InteractingActor) override;
+    virtual FText GetInteractionText_Implementation() const override;
+
+    UFUNCTION(BlueprintCallable, Category = "Door")
+    void SetOpen(bool bNewOpen);
+
+protected:
+    UPROPERTY(VisibleAnywhere, Category = "Components")
+    TObjectPtr<USceneComponent> SceneRoot;
+
+    UPROPERTY(VisibleAnywhere, Category = "Components")
+    TObjectPtr<UStaticMeshComponent> DoorMesh;
+
+    UPROPERTY(EditAnywhere, Category = "Door")
+    float OpenAngle = 90.f;
+
+    UPROPERTY(VisibleInstanceOnly, Category = "Door")
+    bool bIsOpen = false;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Door.cpp">
+#include "Door.h"
+#include "Components/StaticMeshComponent.h"
+
+ADoor::ADoor()
+{
+    PrimaryActorTick.bCanEverTick = false;
+
+    SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
+    RootComponent = SceneRoot;
+
+    // Placez le mesh pour que la charnière soit à l'origine du SceneRoot
+    DoorMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DoorMesh"));
+    DoorMesh->SetupAttachment(SceneRoot);
+}
+
+void ADoor::Interact_Implementation(AActor* InteractingActor)
+{
+    SetOpen(!bIsOpen);
+}
+
+FText ADoor::GetInteractionText_Implementation() const
+{
+    return bIsOpen ? NSLOCTEXT("Door", "Close", "Fermer la porte")
+                   : NSLOCTEXT("Door", "Open", "Ouvrir la porte");
+}
+
+void ADoor::SetOpen(bool bNewOpen)
+{
+    bIsOpen = bNewOpen;
+    DoorMesh->SetRelativeRotation(FRotator(0.f, bIsOpen ? OpenAngle : 0.f, 0.f));
+}
+</script>
+
+  <div class="callout warn">
+    <p class="callout-title">Paramètre « Instigator » dans un Actor</p>
+    <p><code>AActor</code> possède déjà un membre nommé <code>Instigator</code>. Dans une classe dérivée d'Actor, un paramètre du même nom le masque, ce qui déclenche l'avertissement C4458 « declaration hides class member », traité comme une erreur dans la configuration par défaut des projets UE5. Le nom des paramètres peut différer entre la déclaration et la surcharge : on garde <code>Instigator</code> dans l'interface et on écrit <code>InteractingActor</code> dans <code>ADoor</code>.</p>
+  </div>
+
+  <h3>L'appeler depuis le joueur</h3>
+  <p>Le joueur trace une ligne devant lui (voir <a href="collisions.html">Collisions &amp; traces</a>), vérifie que l'Actor touché implémente l'interface, et lui envoie le message :</p>
+<script type="text/plain" data-lang="cpp" data-file="MyCharacter.cpp" data-highlight="23-28">
+#include "MyCharacter.h"
+#include "Interactable.h"
+
+void AMyCharacter::TryInteract()
+{
+    AController* MyController = GetController();
+    if (!MyController)
+    {
+        return;
+    }
+
+    FVector ViewLocation;
+    FRotator ViewRotation;
+    MyController->GetPlayerViewPoint(ViewLocation, ViewRotation);
+    const FVector End = ViewLocation + ViewRotation.Vector() * InteractDistance;
+
+    FCollisionQueryParams Params;
+    Params.AddIgnoredActor(this);
+
+    FHitResult Hit;
+    if (GetWorld()->LineTraceSingleByChannel(Hit, ViewLocation, End, ECC_Visibility, Params))
+    {
+        AActor* Target = Hit.GetActor();
+        if (Target && Target->Implements<UInteractable>())
+        {
+            const FText Prompt = IInteractable::Execute_GetInteractionText(Target);
+            UE_LOG(LogTemp, Log, TEXT("Interaction : %s"), *Prompt.ToString());
+            IInteractable::Execute_Interact(Target, this);
+        }
+    }
+}
+</script>
+
+  <div class="callout info">
+    <p class="callout-title">Pourquoi Execute_ et pas un Cast ?</p>
+    <p>Si l'interface est implémentée <strong>en Blueprint</strong>, la classe C++ de l'objet n'hérite pas d'<code>IInteractable</code> : <code>Cast&lt;IInteractable&gt;(Target)</code> renvoie <code>nullptr</code>. Les fonctions statiques <code>Execute_Interact</code>, générées par UHT, passent par la réflexion et fonctionnent dans les deux cas. Pour la même raison, on teste avec <code>Implements&lt;UInteractable&gt;()</code> (avec le préfixe <strong>U</strong>). Appeler directement <code>Interact()</code> sur un pointeur <code>IInteractable</code> déclenche d'ailleurs une assertion pour les <code>BlueprintNativeEvent</code>.</p>
+  </div>
+
+  <h3>L'implémenter en Blueprint</h3>
+  <p>Dans un Blueprint (par exemple <code>BP_Chest</code>) : <strong>Class Settings</strong> → <em>Implemented Interfaces</em> → <strong>Add</strong> → <em>Interactable</em>. Les fonctions apparaissent dans le panneau <em>My Blueprint</em>, section <em>Interfaces</em> : celles sans valeur de retour deviennent des <strong>événements</strong> (double-clic sur <em>Interact</em>), celles qui renvoient une valeur deviennent des <strong>fonctions</strong> à remplir (<em>Get Interaction Text</em>). Côté appelant, le nœud violet <em>Interact (Message)</em> fonctionne sur n'importe quel Actor, sans cast.</p>
+<script type="application/json" class="bp-graph" data-caption="En haut : implémentation dans un objet ramassable. En bas : l'appelant envoie le message à l'Actor visé, quel que soit son type.">
+{
+  "nodes": [
+    { "id": "ev", "type": "event", "title": "Event Interact", "x": 0, "y": 0,
+      "out": [ { "type": "exec" }, { "name": "Instigator", "type": "object" } ] },
+    { "id": "destroy", "type": "function", "title": "Destroy Actor", "subtitle": "Target is Actor", "x": 260, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object", "value": "self" } ],
+      "out": [ { "type": "exec" } ] },
+    { "id": "try", "type": "custom", "title": "Try Interact", "x": 0, "y": 150, "out": [ { "type": "exec" } ] },
+    { "id": "focus", "type": "var", "title": "Focused Actor", "x": 0, "y": 244, "out": [ { "type": "object" } ] },
+    { "id": "getpc", "type": "pure", "title": "Get Player Character", "x": 0, "y": 300,
+      "in": [ { "name": "Player Index", "type": "int", "value": "0" } ],
+      "out": [ { "name": "Return Value", "type": "object" } ] },
+    { "id": "msg", "type": "interface", "title": "Interact", "subtitle": "Message", "x": 330, "y": 150,
+      "in": [ { "type": "exec" }, { "name": "Target", "type": "object" }, { "name": "Instigator", "type": "object" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "ev", 0, "destroy", 0 ],
+    [ "try", 0, "msg", 0 ],
+    [ "focus", 0, "msg", 1 ],
+    [ "getpc", 0, "msg", 2 ]
+  ]
+}
+</script>
+
+  <div class="quiz">
+    <p class="q">Un coffre implémente l'interface <code>Interactable</code> uniquement en Blueprint. Que renvoie <code>Cast&lt;IInteractable&gt;(Coffre)</code> en C++ ?</p>
+    <ul>
+      <li>Un pointeur valide vers l'interface</li>
+      <li data-correct><code>nullptr</code></li>
+      <li>Une erreur de compilation</li>
+      <li>Un pointeur vers <code>UInteractable</code></li>
+    </ul>
+    <p class="explain">Implémentée en Blueprint, l'interface n'existe pas dans la hiérarchie C++ de l'objet : le cast échoue. Il faut tester avec <code>Implements&lt;UInteractable&gt;()</code> et appeler <code>IInteractable::Execute_Interact(Coffre, this)</code>, qui passe par la réflexion.</p>
+  </div>
+
+  <h2>Le garbage collector</h2>
+  <p>Vous ne libérez jamais la mémoire d'un <code>UObject</code> vous-même. Le <strong>garbage collector</strong> (GC, « ramasse-miettes ») s'exécute régulièrement (par défaut environ toutes les minutes, et lors des changements de niveau). Il part d'un ensemble d'objets racines, le <em>root set</em>, et suit toutes les références qu'il connaît. Tout objet qu'il n'a pas pu atteindre est détruit.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    subgraph ROOT["Root set"]
+        R1["GameInstance"]
+        R2["World et Levels"]
+    end
+    R2 --> A1["AEnemy<br>placé dans le niveau"]
+    A1 -->|UPROPERTY| W1["UWeaponData<br>atteint : conservé"]
+    A1 -->|UPROPERTY TArray| I1["UItem<br>atteint : conservé"]
+    A1 -.->|pointeur brut sans UPROPERTY| X1["UBuff<br>invisible : détruit"]
+    O1["UQuest<br>plus référencée : détruite"]
+</pre>
+    <figcaption>Le GC ne voit que les références déclarées en UPROPERTY. Un objet atteint seulement par un pointeur brut est considéré comme abandonné.</figcaption>
+  </figure>
+
+  <h3>Les règles</h3>
+  <ul>
+    <li>Tout pointeur membre vers un <code>UObject</code> doit être une <code>UPROPERTY()</code>, de préférence de type <code>TObjectPtr&lt;T&gt;</code> (même sans autre spécificateur). Idem pour les conteneurs : <code>UPROPERTY() TArray&lt;TObjectPtr&lt;UItem&gt;&gt; Items;</code>.</li>
+    <li>Les variables locales et les paramètres de fonction peuvent rester des pointeurs bruts : le GC ne s'exécute pas au milieu de votre fonction.</li>
+    <li>Les Actors sont référencés par leur niveau : ils restent en vie jusqu'à <code>Destroy()</code> ou au déchargement du niveau.</li>
+    <li>Une classe qui n'est pas un <code>UObject</code> et qui doit garder un <code>UObject</code> en vie utilise <code>TStrongObjectPtr</code> ou hérite de <code>FGCObject</code>.</li>
+  </ul>
+
+<script type="text/plain" data-lang="cpp" data-file="IsValid.cpp">
+// Après Destroy(), l'Actor n'est pas libéré immédiatement :
+// il est marqué « en attente de destruction » jusqu'au prochain GC
+Enemy->Destroy();
+
+if (Enemy != nullptr) { }   // VRAI : le pointeur n'est pas encore nul !
+if (IsValid(Enemy)) { }     // FAUX : IsValid vérifie aussi l'état de destruction
+
+// Pointeur faible : n'empêche pas la destruction, et le sait
+TWeakObjectPtr<AActor> LastAttacker = DamageCauser;
+if (AActor* Attacker = LastAttacker.Get())   // nullptr si l'Actor a été détruit
+{
+    FaceTowards(Attacker);
+}
+
+// Hors UObject : garder une texture en vie depuis une classe C++ normale
+class FThumbnailCache : public FGCObject
+{
+public:
+    virtual void AddReferencedObjects(FReferenceCollector& Collector) override
+    {
+        Collector.AddReferencedObject(CachedTexture);
+    }
+    virtual FString GetReferencerName() const override { return TEXT("FThumbnailCache"); }
+
+private:
+    TObjectPtr<UTexture2D> CachedTexture = nullptr;
+};
+</script>
+
+  <h3>Les types de pointeurs</h3>
+  <table>
+    <thead><tr><th>Type</th><th>Garde l'objet en vie ?</th><th>Usage</th></tr></thead>
+    <tbody>
+      <tr><td><code>T*</code> (brut)</td><td>Non (sauf si <code>UPROPERTY</code>)</td><td>Variables locales, paramètres, retours de fonction</td></tr>
+      <tr><td><code>TObjectPtr&lt;T&gt;</code></td><td>Oui, en <code>UPROPERTY</code></td><td>Membres pointant vers des UObjects (standard UE5)</td></tr>
+      <tr><td><code>TWeakObjectPtr&lt;T&gt;</code></td><td>Non, mais détecte la destruction</td><td>Cible actuelle, dernier attaquant, captures de lambdas</td></tr>
+      <tr><td><code>TSoftObjectPtr&lt;T&gt;</code> / <code>TSoftClassPtr&lt;T&gt;</code></td><td>Non : simple chemin d'asset</td><td>Assets lourds chargés à la demande</td></tr>
+      <tr><td><code>TSubclassOf&lt;T&gt;</code></td><td>Oui (référence dure à la classe)</td><td>Choisir une classe dans l'éditeur (ennemi, projectile)</td></tr>
+      <tr><td><code>TStrongObjectPtr&lt;T&gt;</code></td><td>Oui</td><td>Garder un UObject depuis du code non-UObject</td></tr>
+      <tr><td><code>TSharedPtr</code>, <code>TSharedRef</code>, <code>TWeakPtr</code>, <code>TUniquePtr</code></td><td>Comptage de références C++</td><td>Objets C++ <strong>non</strong> UObject (structures de données, Slate). Création : <code>MakeShared&lt;T&gt;(...)</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <p class="callout-title">Le pointeur pendouillant (dangling pointer)</p>
+    <p>Un membre <code>UBuff* ActiveBuff;</code> sans <code>UPROPERTY</code> fonctionne… jusqu'au prochain passage du GC, qui détruit le buff car personne ne le référence officiellement. Le pointeur contient toujours l'ancienne adresse : le prochain <code>ActiveBuff-&gt;Tick()</code> lit une mémoire libérée et plante, parfois des minutes plus tard, parfois jamais en éditeur et toujours chez le joueur. Ce bug est l'un des plus difficiles à diagnostiquer : prenez l'habitude de mettre <code>UPROPERTY()</code> sur <strong>tous</strong> vos pointeurs membres vers des UObjects. Et n'utilisez jamais <code>TSharedPtr</code> pour un UObject.</p>
+  </div>
+
+  <h2>Références souples et chargement asynchrone</h2>
+  <p>Une <strong>référence dure</strong> (pointeur <code>UPROPERTY</code>, <code>TSubclassOf</code>, nœud <em>Cast To</em> en Blueprint) oblige le moteur à charger l'asset référencé en même temps que l'objet qui le référence, et ainsi de suite en cascade. Une <strong>référence souple</strong> ne stocke que le chemin de l'asset : rien n'est chargé tant que vous ne le demandez pas.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    P["BP_Player"] -- "Cast To BP_Boss" --> B["BP_Boss"]
+    B --> M["SK_Boss<br>mesh et animations"]
+    B --> T["Textures 4K"]
+    B --> S["Sons et musique du boss"]
+    B --> V["Effets Niagara"]
+</pre>
+    <figcaption>Une simple référence dure depuis le joueur charge tout le boss en mémoire dès le premier niveau. L'outil Size Map (clic droit sur un asset) révèle ces chaînes.</figcaption>
+  </figure>
+
+<script type="text/plain" data-lang="cpp" data-file="BossArena.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "BossArena.generated.h"
+
+struct FStreamableHandle;
+class USoundBase;
+
+UCLASS()
+class MYGAME_API ABossArena : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    UFUNCTION(BlueprintCallable, Category = "Boss")
+    void OnPlayerEntered();
+
+protected:
+    void OnBossClassLoaded();
+
+    // Simple chemin : la classe du boss n'est PAS chargée avec l'arène
+    UPROPERTY(EditAnywhere, Category = "Boss")
+    TSoftClassPtr<APawn> BossClass;
+
+    UPROPERTY(EditAnywhere, Category = "Boss")
+    TSoftObjectPtr<USoundBase> BossMusic;
+
+    TSharedPtr<FStreamableHandle> LoadHandle;   // garde l'asset chargé tant qu'on le conserve
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="BossArena.cpp">
+#include "BossArena.h"
+#include "Engine/AssetManager.h"
+#include "Engine/StreamableManager.h"
+#include "GameFramework/Pawn.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
+
+void ABossArena::OnPlayerEntered()
+{
+    // Version synchrone : simple, mais le jeu se fige pendant le chargement
+    if (USoundBase* Music = BossMusic.LoadSynchronous())
+    {
+        UGameplayStatics::PlaySound2D(this, Music);
+    }
+
+    // Version asynchrone : le jeu continue, la fonction est rappelée une fois l'asset prêt
+    FStreamableManager& Streamable = UAssetManager::GetStreamableManager();
+    LoadHandle = Streamable.RequestAsyncLoad(
+        BossClass.ToSoftObjectPath(),
+        FStreamableDelegate::CreateUObject(this, &ABossArena::OnBossClassLoaded));
+}
+
+void ABossArena::OnBossClassLoaded()
+{
+    if (UClass* LoadedClass = BossClass.Get())
+    {
+        GetWorld()->SpawnActor<APawn>(LoadedClass, GetActorTransform());
+    }
+}
+</script>
+  <p>En Blueprint, une variable de type <em>Soft Object Reference</em> (icône bleu clair) se charge avec le nœud latent <em>Async Load Asset</em>. Pour aller plus loin sur l'empreinte mémoire, voir <a href="optimisation.html">Débogage &amp; optimisation</a>.</p>
+
+  <h2>Threads : une introduction</h2>
+  <p>Le code de gameplay s'exécute sur le <strong>game thread</strong>. La règle absolue : <strong>on ne crée, ne modifie ni ne détruit un UObject ou un Actor que sur le game thread</strong>. D'autres threads peuvent faire des calculs purs (génération procédurale, recherche de chemin maison, analyse de données), puis renvoyer le résultat au game thread.</p>
+<script type="text/plain" data-lang="cpp" data-file="PathPlanner.cpp">
+#include "PathPlanner.h"
+#include "Async/Async.h"
+
+void APathPlanner::ComputeLengthInBackground(TArray<FVector> Points)
+{
+    TWeakObjectPtr<APathPlanner> WeakThis(this);
+
+    Async(EAsyncExecution::ThreadPool, [WeakThis, Points = MoveTemp(Points)]()
+    {
+        // Thread secondaire : données copiées, aucun accès aux UObjects
+        double Length = 0.0;
+        for (int32 i = 1; i < Points.Num(); ++i)
+        {
+            Length += FVector::Dist(Points[i - 1], Points[i]);
+        }
+
+        // Retour sur le game thread pour toucher aux Actors
+        AsyncTask(ENamedThreads::GameThread, [WeakThis, Length]()
+        {
+            if (APathPlanner* Self = WeakThis.Get())
+            {
+                Self->OnPathLengthComputed(Length);
+            }
+        });
+    });
+}
+</script>
+  <p>Ne confondez pas threads et <strong>actions latentes</strong>. Les nœuds Blueprint marqués d'une horloge (<em>Delay</em>, <em>AI Move To</em>, <em>Async Load Asset</em>) suspendent l'exécution du graphe et la reprennent plus tard, mais tout se passe sur le game thread : aucun risque de concurrence. En C++, on obtient le même effet avec des timers et des delegates.</p>
+
+  <div class="quiz">
+    <p class="q">Quel type de delegate faut-il déclarer pour qu'un Blueprint puisse s'y abonner comme à un Event Dispatcher ?</p>
+    <ul>
+      <li><code>DECLARE_MULTICAST_DELEGATE</code></li>
+      <li><code>DECLARE_DYNAMIC_DELEGATE</code></li>
+      <li data-correct><code>DECLARE_DYNAMIC_MULTICAST_DELEGATE</code>, avec une <code>UPROPERTY(BlueprintAssignable)</code></li>
+      <li><code>DECLARE_EVENT</code></li>
+    </ul>
+    <p class="explain">Seuls les delegates dynamiques sont connus de la réflexion, et seul le multicast accepte plusieurs abonnés. Le spécificateur <code>BlueprintAssignable</code> l'expose comme un Event Dispatcher (nœuds <em>Bind Event to…</em>, bouton <strong>+</strong> du panneau Details).</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Dans le constructeur d'un personnage, vous lisez <code>WalkSpeed</code>, réglée à 300 dans le Blueprint enfant (300 au lieu de 600 en C++). Quelle valeur obtenez-vous ?</p>
+    <ul>
+      <li>300, la valeur du Blueprint</li>
+      <li data-correct>600, la valeur C++</li>
+      <li>0</li>
+      <li>Une valeur aléatoire</li>
+    </ul>
+    <p class="explain">Les valeurs du Blueprint (et de l'instance) sont appliquées après l'exécution du constructeur C++. C'est pour cela que tout ce qui dépend de valeurs réglables se fait dans <code>BeginPlay</code>, <code>PostInitializeComponents</code> ou <code>OnConstruction</code>.</p>
+  </div>
+
+  <div class="quiz">
+    <p class="q">Un membre <code>UItem* EquippedItem;</code> sans <code>UPROPERTY</code> pointe vers un objet créé avec <code>NewObject</code>. Que risque-t-on ?</p>
+    <ul>
+      <li>Rien, le pointeur garde l'objet en vie</li>
+      <li>Une erreur de compilation</li>
+      <li data-correct>Le GC détruit l'objet et le pointeur devient pendouillant : crash aléatoire</li>
+      <li>Une fuite mémoire, l'objet n'est jamais détruit</li>
+    </ul>
+    <p class="explain">Le garbage collector ne voit que les références <code>UPROPERTY</code>. L'objet, considéré comme inatteignable, est détruit au prochain passage, mais le pointeur brut garde l'ancienne adresse.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Une plaque de pression qui ouvre plusieurs portes</h4>
+    <p>Créez un Actor <code>APressurePlate</code> avec une zone de déclenchement. Quand au moins un Pawn se trouve dessus, la plaque diffuse un delegate <code>OnPlateStateChanged(bool bPressed)</code> ; quand le dernier Pawn la quitte, elle le diffuse à nouveau avec <code>false</code>. La plaque ne doit <strong>rien savoir</strong> des portes : ce sont les portes (<code>ADoor</code>, vue plus haut) qui s'abonnent à la plaque désignée dans l'éditeur. Placez une plaque et trois portes reliées à elle.</p>
+    <details>
+      <summary>Voir la solution</summary>
+<script type="text/plain" data-lang="cpp" data-file="PressurePlate.h">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "PressurePlate.generated.h"
+
+class UBoxComponent;
+class UStaticMeshComponent;
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPlateStateChanged, bool, bPressed);
+
+UCLASS()
+class MYGAME_API APressurePlate : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    APressurePlate();
+
+    UPROPERTY(BlueprintAssignable, Category = "Plate")
+    FOnPlateStateChanged OnPlateStateChanged;
+
+    UFUNCTION(BlueprintPure, Category = "Plate")
+    bool IsPressed() const { return bPressed; }
+
+protected:
+    virtual void BeginPlay() override;
+
+    UFUNCTION()
+    void OnOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+
+    UFUNCTION()
+    void OnOverlapEnd(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
+
+    void UpdateState();
+
+    UPROPERTY(VisibleAnywhere, Category = "Components")
+    TObjectPtr<UStaticMeshComponent> PlateMesh;
+
+    UPROPERTY(VisibleAnywhere, Category = "Components")
+    TObjectPtr<UBoxComponent> Trigger;
+
+private:
+    bool bPressed = false;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="PressurePlate.cpp">
+#include "PressurePlate.h"
+#include "Components/BoxComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "GameFramework/Pawn.h"
+
+APressurePlate::APressurePlate()
+{
+    PrimaryActorTick.bCanEverTick = false;
+
+    PlateMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlateMesh"));
+    RootComponent = PlateMesh;
+
+    Trigger = CreateDefaultSubobject<UBoxComponent>(TEXT("Trigger"));
+    Trigger->SetupAttachment(PlateMesh);
+    Trigger->SetBoxExtent(FVector(60.f, 60.f, 30.f));
+    Trigger->SetCollisionProfileName(TEXT("Trigger"));
+}
+
+void APressurePlate::BeginPlay()
+{
+    Super::BeginPlay();
+    Trigger->OnComponentBeginOverlap.AddDynamic(this, &APressurePlate::OnOverlapBegin);
+    Trigger->OnComponentEndOverlap.AddDynamic(this, &APressurePlate::OnOverlapEnd);
+}
+
+void APressurePlate::OnOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+{
+    UpdateState();
+}
+
+void APressurePlate::OnOverlapEnd(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
+{
+    UpdateState();
+}
+
+void APressurePlate::UpdateState()
+{
+    // On recompte les Pawns présents : robuste si plusieurs joueurs ou composants se chevauchent
+    TArray<AActor*> Pawns;
+    Trigger->GetOverlappingActors(Pawns, APawn::StaticClass());
+
+    const bool bNowPressed = Pawns.Num() > 0;
+    if (bNowPressed != bPressed)
+    {
+        bPressed = bNowPressed;
+        OnPlateStateChanged.Broadcast(bPressed);   // diffusé seulement aux changements d'état
+    }
+}
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Door.h (ajouts)">
+class APressurePlate;
+
+// Dans la classe ADoor :
+protected:
+    virtual void BeginPlay() override;
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+    UFUNCTION()
+    void HandlePlateChanged(bool bPressed);
+
+    // Choisie dans le niveau, porte par porte
+    UPROPERTY(EditInstanceOnly, Category = "Door")
+    TObjectPtr<APressurePlate> LinkedPlate;
+</script>
+<script type="text/plain" data-lang="cpp" data-file="Door.cpp (ajouts)">
+#include "PressurePlate.h"
+
+void ADoor::BeginPlay()
+{
+    Super::BeginPlay();
+    if (LinkedPlate)
+    {
+        LinkedPlate->OnPlateStateChanged.AddDynamic(this, &ADoor::HandlePlateChanged);
+    }
+}
+
+void ADoor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    if (IsValid(LinkedPlate))
+    {
+        LinkedPlate->OnPlateStateChanged.RemoveDynamic(this, &ADoor::HandlePlateChanged);
+    }
+    Super::EndPlay(EndPlayReason);
+}
+
+void ADoor::HandlePlateChanged(bool bPressed)
+{
+    SetOpen(bPressed);
+}
+</script>
+      <p>Dans le niveau, sélectionnez chaque porte et choisissez la plaque dans <em>Linked Plate</em> (pipette ou liste déroulante). Ajouter une quatrième porte, un piège ou une lumière ne demande aucune modification de la plaque : c'est tout l'intérêt du delegate. Pour une ouverture animée, remplacez <code>SetRelativeRotation</code> par une Timeline en Blueprint ou une interpolation dans un timer.</p>
+    </details>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Constructeur : composants et valeurs par défaut seulement. <code>BeginPlay</code> : tout ce qui touche au monde et aux valeurs réglées en Blueprint.</li>
+      <li><code>SpawnActorDeferred</code> + <code>FinishSpawning</code> pour configurer un Actor avant son <code>BeginPlay</code>.</li>
+      <li>Désactivez le Tick par défaut ; préférez événements, timers et <code>TickInterval</code>.</li>
+      <li>Delegates : natifs en C++ pur, dynamiques multicast pour le Blueprint (<code>BlueprintAssignable</code>, <code>AddDynamic</code> sur une <code>UFUNCTION</code>).</li>
+      <li>Interfaces : <code>Implements&lt;UMyInterface&gt;()</code> puis <code>IMyInterface::Execute_Fonction(Target, ...)</code>.</li>
+      <li>Tout pointeur membre vers un UObject est une <code>UPROPERTY</code> ; <code>IsValid</code> plutôt que <code>!= nullptr</code> ; <code>TWeakObjectPtr</code> pour observer sans retenir.</li>
+      <li>Références souples et chargement asynchrone pour les assets lourds ; UObjects uniquement sur le game thread.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>
