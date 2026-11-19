@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prendre en main l'éditeur — UE5 Academy</title>
+  <script>(function(){try{var t=localStorage.getItem("ue5academy:theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../" data-page="editeur">
+<article class="doc">
+
+  <h1>Prendre en main l'éditeur</h1>
+  <p class="lead">L'éditeur d'Unreal Engine impressionne la première fois : des dizaines de panneaux, de menus et de boutons. Bonne nouvelle, vous n'utiliserez au quotidien qu'une poignée d'entre eux. Ce chapitre vous fait visiter l'interface, vous apprend à vous déplacer dans la scène comme un level designer, à retrouver vos assets et à les nommer proprement, puis à tester votre jeu sans quitter l'éditeur.</p>
+
+  <div class="objectives">
+    <p>Dans ce chapitre</p>
+    <ul>
+      <li>Reconnaître les <strong>panneaux principaux</strong> de l'éditeur et leur rôle</li>
+      <li>Naviguer dans le <strong>Viewport</strong> à la souris, au clavier et avec le gizmo</li>
+      <li>Organiser la scène avec l'<strong>Outliner</strong> et régler les objets dans le panneau <strong>Details</strong></li>
+      <li>Gérer vos assets dans le <strong>Content Browser</strong> : import, dossiers, redirecteurs</li>
+      <li>Appliquer des <strong>conventions de nommage</strong> et une arborescence de dossiers propres</li>
+      <li>Tester le jeu avec <strong>Play In Editor</strong> et <strong>Simulate</strong></li>
+    </ul>
+  </div>
+
+  <h2>Vue d'ensemble de l'interface</h2>
+  <p>Quand vous ouvrez un projet, l'éditeur affiche le <strong>Level Editor</strong> : l'outil qui sert à construire des niveaux. Chaque type d'asset (Blueprint, matériau, animation…) possède ensuite son propre éditeur, qui s'ouvre dans un nouvel onglet quand vous double-cliquez dessus. Voici la disposition par défaut d'UE5 :</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 760 430" width="760" role="img" aria-label="Disposition par défaut de l'éditeur : barre de menus, barre d'outils, viewport au centre, Outliner et Details à droite, Content Browser en bas">
+      <rect x="10" y="10" width="740" height="410" rx="10" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.35"/>
+      <rect x="20" y="20" width="720" height="26" rx="5" fill="#5aa9ff" fill-opacity="0.12" stroke="#5aa9ff" stroke-opacity="0.5"/>
+      <rect x="20" y="52" width="720" height="32" rx="5" fill="#b195ff" fill-opacity="0.12" stroke="#b195ff" stroke-opacity="0.5"/>
+      <rect x="20" y="90" width="500" height="230" rx="6" fill="#4ade80" fill-opacity="0.08" stroke="#4ade80" stroke-opacity="0.6"/>
+      <rect x="528" y="90" width="212" height="100" rx="6" fill="#ffb15c" fill-opacity="0.10" stroke="#ffb15c" stroke-opacity="0.6"/>
+      <rect x="528" y="196" width="212" height="214" rx="6" fill="#ff6b6b" fill-opacity="0.08" stroke="#ff6b6b" stroke-opacity="0.6"/>
+      <rect x="20" y="326" width="500" height="84" rx="6" fill="#facc15" fill-opacity="0.08" stroke="#facc15" stroke-opacity="0.6"/>
+      <g font-size="13" fill="currentColor" font-weight="600">
+        <text x="30" y="37">1 · Barre de menus : File, Edit, Window, Tools, Build, Select, Actor, Help</text>
+        <text x="30" y="72">2 · Barre d'outils : Save, Modes, Ajout rapide (+), Blueprints, Cinematics, ▶ Play</text>
+        <text x="40" y="120">3 · Viewport</text>
+        <text x="540" y="116">4 · Outliner</text>
+        <text x="540" y="222">5 · Details</text>
+        <text x="40" y="350">6 · Content Browser / Content Drawer</text>
+      </g>
+      <g font-size="12" fill="currentColor" opacity="0.75">
+        <text x="40" y="142">La scène 3D : on y place, déplace et</text>
+        <text x="40" y="158">observe les Actors du niveau.</text>
+        <text x="540" y="138">Liste de tous les Actors</text>
+        <text x="540" y="154">du niveau, en arbre.</text>
+        <text x="540" y="244">Propriétés de l'Actor</text>
+        <text x="540" y="260">sélectionné : Transform,</text>
+        <text x="540" y="276">composants, variables…</text>
+        <text x="40" y="372">Les fichiers du projet (assets) : meshes, matériaux,</text>
+        <text x="40" y="388">Blueprints, sons. Ctrl + Espace l'ouvre en tiroir.</text>
+      </g>
+      <g stroke="currentColor" stroke-opacity="0.35">
+        <path d="M200 230 l40 -40 l40 40 z" fill="#4ade80" fill-opacity="0.15"/>
+        <line x1="240" y1="250" x2="300" y2="250" stroke="#ff5d52" stroke-width="3" stroke-opacity="0.9"/>
+        <line x1="240" y1="250" x2="240" y2="200" stroke="#5aa6ff" stroke-width="3" stroke-opacity="0.9"/>
+        <line x1="240" y1="250" x2="205" y2="275" stroke="#3ddc97" stroke-width="3" stroke-opacity="0.9"/>
+      </g>
+    </svg>
+    <figcaption>Disposition par défaut du Level Editor. Les panneaux se déplacent par glisser-déposer de leur onglet ; <em>Window → Load Layout → Default Editor Layout</em> remet tout en place.</figcaption>
+  </figure>
+
+  <table>
+    <thead><tr><th>Panneau</th><th>À quoi il sert</th><th>Où le retrouver s'il a disparu</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Viewport</strong></td><td>Voir et éditer la scène en 3D</td><td><em>Window → Viewports → Viewport 1</em></td></tr>
+      <tr><td><strong>Outliner</strong></td><td>Lister, rechercher, grouper les Actors du niveau</td><td><em>Window → Outliner</em></td></tr>
+      <tr><td><strong>Details</strong></td><td>Modifier les propriétés de la sélection</td><td><em>Window → Details</em></td></tr>
+      <tr><td><strong>Content Browser</strong></td><td>Parcourir et gérer les assets du projet</td><td><em>Window → Content Browser</em> ou <kbd>Ctrl</kbd> + <kbd>Espace</kbd></td></tr>
+      <tr><td><strong>Output Log</strong></td><td>Messages, avertissements et erreurs du moteur</td><td><em>Window → Output Log</em> (ou bouton en bas à gauche)</td></tr>
+      <tr><td><strong>Place Actors</strong></td><td>Ajouter des formes, lumières, volumes…</td><td>Bouton <strong>+</strong> de la barre d'outils, ou <em>Window → Place Actors</em></td></tr>
+      <tr><td><strong>World Settings</strong></td><td>Réglages propres au niveau : GameMode, gravité, World Partition</td><td><em>Window → World Settings</em></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout tip">
+    <p class="callout-title">Le Content Drawer</p>
+    <p>Pour garder un maximum de place au viewport, UE5 range le Content Browser dans un <strong>tiroir</strong> (<em>Content Drawer</em>) qui s'ouvre avec <kbd>Ctrl</kbd> + <kbd>Espace</kbd> et se referme dès que vous cliquez ailleurs. Le bouton <em>Dock in Layout</em> l'ancre en permanence si vous préférez.</p>
+  </div>
+
+  <h3>Les modes d'édition</h3>
+  <p>Le menu déroulant <strong>Modes</strong> de la barre d'outils (ou <kbd>Maj</kbd> + <kbd>1</kbd> à <kbd>8</kbd>) change ce que fait le viewport : sélectionner des Actors (<em>Selection</em>, le mode par défaut), sculpter un terrain (<em>Landscape</em>), peindre de la végétation (<em>Foliage</em>), modéliser (<em>Modeling</em>), peindre des couleurs de sommets (<em>Mesh Paint</em>)… Si le viewport ne réagit plus comme d'habitude, vérifiez d'abord que vous êtes bien en mode <em>Selection</em>.</p>
+
+  <h2>Naviguer dans le Viewport</h2>
+  <p>Se déplacer vite dans la scène est la première compétence à acquérir. La méthode la plus efficace, utilisée par tous les level designers, est le <strong>vol libre</strong> façon jeu vidéo : maintenez le <strong>clic droit</strong> et utilisez <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd> (ou <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> en QWERTY).</p>
+
+  <table>
+    <thead><tr><th>Action</th><th>Commande</th></tr></thead>
+    <tbody>
+      <tr><td>Regarder autour de soi</td><td>Clic droit maintenu + souris</td></tr>
+      <tr><td>Voler (avant, gauche, arrière, droite)</td><td>Clic droit + <kbd>Z</kbd> <kbd>Q</kbd> <kbd>S</kbd> <kbd>D</kbd></td></tr>
+      <tr><td>Monter / descendre</td><td>Clic droit + <kbd>E</kbd> / <kbd>A</kbd> (QWERTY : <kbd>E</kbd> / <kbd>Q</kbd>)</td></tr>
+      <tr><td>Changer la vitesse de vol</td><td>Clic droit + molette</td></tr>
+      <tr><td>Avancer et tourner au sol</td><td>Clic gauche maintenu + souris</td></tr>
+      <tr><td>Glisser (pan)</td><td>Clic molette maintenu, ou clic gauche + droit</td></tr>
+      <tr><td>Orbiter autour de la sélection</td><td><kbd>Alt</kbd> + clic gauche</td></tr>
+      <tr><td>Zoomer vers la sélection</td><td><kbd>Alt</kbd> + clic droit, ou molette</td></tr>
+      <tr><td>Centrer la vue sur la sélection</td><td><kbd>F</kbd> (<em>Focus</em>)</td></tr>
+      <tr><td>Mode jeu (masque icônes et gizmos)</td><td><kbd>G</kbd></td></tr>
+      <tr><td>Plein écran du viewport</td><td><kbd>F11</kbd></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <p class="callout-title">Clavier AZERTY</p>
+    <p>L'éditeur détecte la disposition de votre clavier pour la plupart des raccourcis de déplacement, mais certains tutoriels citent les touches QWERTY. En cas de doute, les raccourcis réels sont listés (et modifiables) dans <em>Edit → Editor Preferences → Keyboard Shortcuts</em>.</p>
+  </div>
+
+  <h3>Le repère et les unités</h3>
+  <p>Unreal utilise un repère où <strong>X pointe vers l'avant</strong> (rouge), <strong>Y vers la droite</strong> (vert) et <strong>Z vers le haut</strong> (bleu). Une unité vaut <strong>1 centimètre</strong> : un personnage standard mesure environ 180 unités. Ces conventions sont détaillées dans le chapitre <a href="maths.html">Maths du jeu vidéo</a> ; retenez pour l'instant les couleurs, car le gizmo les reprend.</p>
+
+  <h3>Le gizmo : déplacer, tourner, mettre à l'échelle</h3>
+  <p>Une fois un Actor sélectionné (clic gauche dans le viewport ou dans l'Outliner), un <strong>gizmo</strong> apparaît. Il a trois modes, que l'on alterne avec les touches situées sous les chiffres :</p>
+  <div class="cards">
+    <div class="card">
+      <span class="card-tag">W · Translation</span>
+      <h4>Déplacer</h4>
+      <p>Trois flèches colorées. Tirez une flèche pour bouger sur un axe, un carré entre deux flèches pour bouger sur un plan.</p>
+    </div>
+    <div class="card">
+      <span class="card-tag">E · Rotation</span>
+      <h4>Tourner</h4>
+      <p>Trois arcs. Chaque arc fait tourner l'objet autour d'un axe : rouge = Roll (X), vert = Pitch (Y), bleu = Yaw (Z).</p>
+    </div>
+    <div class="card">
+      <span class="card-tag">R · Échelle</span>
+      <h4>Mettre à l'échelle</h4>
+      <p>Des cubes au bout des axes. Le cube central agrandit uniformément sur les trois axes.</p>
+    </div>
+  </div>
+  <p>En haut à droite du viewport, la barre d'outils permet de basculer entre repère <strong>monde</strong> et repère <strong>local</strong> (icône globe ou cube, <kbd>Ctrl</kbd> + <kbd>`</kbd>) et de régler le <strong>magnétisme</strong> (<em>snapping</em>) : pas de grille en translation (10 cm par défaut), angle en rotation (10°), pas en échelle. Le magnétisme est indispensable pour assembler des murs et des sols modulaires sans trous.</p>
+
+  <dl class="defs">
+    <dt>Dupliquer</dt><dd><kbd>Alt</kbd> + glisser une flèche du gizmo crée une copie, ou <kbd>Ctrl</kbd> + <kbd>D</kbd>.</dd>
+    <dt>Poser au sol</dt><dd><kbd>Fin</kbd> (<em>End</em>) fait tomber l'objet sur la surface en dessous.</dd>
+    <dt>Masquer</dt><dd><kbd>H</kbd> masque la sélection dans l'éditeur, <kbd>Ctrl</kbd> + <kbd>H</kbd> réaffiche tout.</dd>
+    <dt>Vues orthographiques</dt><dd>Le menu <em>Perspective</em> en haut à gauche du viewport bascule en vue de dessus, de face ou de côté : précieux pour aligner.</dd>
+    <dt>Modes d'affichage</dt><dd>Le menu <em>Lit</em> propose <em>Unlit</em> (sans lumière), <em>Wireframe</em> (fil de fer), <em>Lighting Only</em>, <em>Detail Lighting</em>, et des vues d'optimisation (complexité des shaders, Nanite…).</dd>
+  </dl>
+
+  <div class="quiz">
+    <p class="q">Un objet est sélectionné mais il est hors de vue, quelque part dans un grand niveau. Quel est le moyen le plus rapide de le voir ?</p>
+    <ul>
+      <li>Voler jusqu'à lui avec clic droit + ZQSD</li>
+      <li data-correct>Appuyer sur <kbd>F</kbd> pour centrer la vue sur la sélection</li>
+      <li>Appuyer sur <kbd>G</kbd></li>
+      <li>Passer en vue orthographique</li>
+    </ul>
+    <p class="explain"><kbd>F</kbd> (<em>Focus</em>) téléporte la caméra devant la sélection. Combiné à un double-clic dans l'Outliner, c'est la façon standard de retrouver un objet.</p>
+  </div>
+
+  <h2>L'Outliner : la liste du niveau</h2>
+  <p>L'<strong>Outliner</strong> affiche <strong>tous les Actors</strong> présents dans le niveau ouvert, y compris ceux qu'on ne voit pas dans le viewport (lumières d'ambiance, volumes, gestionnaires invisibles). C'est la vue « base de données » de votre scène.</p>
+  <ul>
+    <li><strong>Rechercher</strong> : la barre de recherche filtre par nom ; cliquez sur l'icône de filtre pour n'afficher qu'un type (lumières, Blueprints…).</li>
+    <li><strong>Organiser</strong> : créez des <strong>dossiers</strong> (clic droit → <em>Move To → Create New Folder</em>). Ils n'existent que dans l'éditeur et n'ont aucun coût en jeu.</li>
+    <li><strong>Attacher</strong> : glissez un Actor sur un autre pour l'attacher. L'enfant suit alors le parent quand on le déplace.</li>
+    <li><strong>Visibilité et verrouillage</strong> : l'icône œil masque un Actor dans l'éditeur ; l'icône cadenas (selon votre version) empêche de le sélectionner par erreur dans le viewport.</li>
+    <li><strong>Type et état</strong> : la colonne <em>Type</em> indique la classe de l'Actor ; avec World Partition, des colonnes indiquent aussi s'il est chargé.</li>
+  </ul>
+
+  <ul class="tree">
+    <li><span class="node c-purple">Lvl_Arena</span><span class="desc">Le niveau ouvert</span>
+      <ul>
+        <li><span class="node c-yellow">Lighting</span><span class="desc">Dossier d'Outliner</span>
+          <ul>
+            <li><span class="node c-yellow">DirectionalLight</span><span class="desc">Le soleil</span></li>
+            <li><span class="node c-yellow">SkyAtmosphere</span></li>
+            <li><span class="node c-yellow">PostProcessVolume</span></li>
+          </ul>
+        </li>
+        <li><span class="node c-green">Gameplay</span>
+          <ul>
+            <li><span class="node c-green">PlayerStart</span><span class="desc">Point d'apparition du joueur</span></li>
+            <li><span class="node c-green">BP_Orb</span><span class="desc">Instance d'un Blueprint</span></li>
+          </ul>
+        </li>
+        <li><span class="node c-blue">Geometry</span>
+          <ul>
+            <li><span class="node c-blue">SM_Floor</span><span class="desc">Static Mesh Actor</span></li>
+            <li><span class="node c-blue">SM_Wall_01</span><span class="desc">Attaché à SM_Floor</span></li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+  </ul>
+
+  <div class="callout warn">
+    <p class="callout-title">Actor du niveau ou asset ?</p>
+    <p>Supprimer <code>BP_Orb</code> dans l'<strong>Outliner</strong> retire une <em>instance</em> du niveau : l'asset existe toujours dans le Content Browser. Supprimer l'asset <code>BP_Orb</code> dans le <strong>Content Browser</strong> le supprime du projet, et toutes ses instances deviennent invalides. Ne confondez pas les deux.</p>
+  </div>
+
+  <h2>Le panneau Details</h2>
+  <p>Le panneau <strong>Details</strong> affiche les propriétés de ce qui est sélectionné. Pour un Actor, on y trouve en haut sa <strong>hiérarchie de composants</strong>, puis les catégories de propriétés : <em>Transform</em>, <em>Static Mesh</em>, <em>Materials</em>, <em>Physics</em>, <em>Collision</em>, <em>Rendering</em>…</p>
+  <ul>
+    <li><strong>Transform</strong> : position (<em>Location</em>), rotation et échelle, en valeurs exactes. Cliquez sur la flèche jaune « réinitialiser » à droite d'un champ pour revenir à la valeur par défaut.</li>
+    <li><strong>Recherche</strong> : la barre de recherche du panneau trouve une propriété parmi des centaines (tapez « collision », « shadow », « gravity »).</li>
+    <li><strong>Glisser sur un champ</strong> : cliquer-glisser horizontalement sur l'étiquette d'un nombre change sa valeur en continu.</li>
+    <li><strong>Sélection multiple</strong> : avec plusieurs Actors sélectionnés, une modification s'applique à tous ; les valeurs différentes s'affichent « Multiple Values ».</li>
+    <li><strong>Mobility</strong> : <em>Static</em> (ne bouge jamais, éclairage précalculable), <em>Stationary</em> (lumières seulement) ou <em>Movable</em> (peut bouger en jeu). Un objet qui doit bouger doit être <em>Movable</em>.</li>
+  </ul>
+
+  <h3>Vos propres variables dans Details</h3>
+  <p>Les variables que vous déclarez dans vos Blueprints ou vos classes C++ apparaissent elles aussi dans Details, si vous les exposez. C'est ce qui permet à un level designer de régler chaque instance sans toucher au code. En Blueprint, il suffit de cocher l'œil <em>Instance Editable</em> de la variable ; en C++, on utilise <code>UPROPERTY</code> (détaillé dans <a href="cpp-bases.html">C++ pour Unreal : les bases</a>) :</p>
+
+<script type="text/plain" data-lang="cpp" data-file="SpinningOrb.h" data-highlight="20-21,24-25,28-29">
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "SpinningOrb.generated.h"
+
+class UStaticMeshComponent;
+
+UCLASS()
+class MYGAME_API ASpinningOrb : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    ASpinningOrb();
+    virtual void Tick(float DeltaSeconds) override;
+
+protected:
+    // Visible dans Details, mais le composant lui-même ne peut pas être remplacé
+    UPROPERTY(VisibleAnywhere, Category = "Orb")
+    TObjectPtr<UStaticMeshComponent> Mesh;
+
+    // Modifiable sur chaque instance placée dans le niveau, avec un curseur borné
+    UPROPERTY(EditAnywhere, Category = "Orb", meta = (ClampMin = "0.0", ClampMax = "720.0", UIMin = "0.0", UIMax = "720.0"))
+    float DegreesPerSecond = 90.f;
+
+    // Info-bulle : le commentaire « /** */ » au-dessus d'une UPROPERTY s'affiche au survol
+    UPROPERTY(EditAnywhere, Category = "Orb")
+    bool bSpinClockwise = true;
+};
+</script>
+<script type="text/plain" data-lang="cpp" data-file="SpinningOrb.cpp">
+#include "SpinningOrb.h"
+#include "Components/StaticMeshComponent.h"
+
+ASpinningOrb::ASpinningOrb()
+{
+    PrimaryActorTick.bCanEverTick = true;
+    Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
+    RootComponent = Mesh;
+}
+
+void ASpinningOrb::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+    const float Sign = bSpinClockwise ? 1.f : -1.f;
+    AddActorLocalRotation(FRotator(0.f, Sign * DegreesPerSecond * DeltaSeconds, 0.f));
+}
+</script>
+  <p>Placez deux <code>ASpinningOrb</code> dans le niveau : chacun a sa propre catégorie <em>Orb</em> dans Details, et vous pouvez donner une vitesse différente à chaque instance. La valeur écrite dans le code (<code>90.f</code>) n'est que la <strong>valeur par défaut</strong>.</p>
+
+  <div class="callout info">
+    <p class="callout-title">Valeur modifiée, valeur par défaut</p>
+    <p>Une propriété dont la valeur diffère de celle de la classe affiche une petite flèche jaune de réinitialisation. Si vous changez ensuite la valeur par défaut dans le Blueprint ou le C++, seules les instances <strong>non modifiées</strong> héritent de la nouvelle valeur : les instances retouchées à la main gardent la leur.</p>
+  </div>
+
+  <h2>Le Content Browser</h2>
+  <p>Le <strong>Content Browser</strong> montre le contenu du dossier <code>Content/</code> de votre projet : c'est là que vivent tous vos <strong>assets</strong>. Chaque asset est un fichier <code>.uasset</code> sur le disque (les niveaux sont des <code>.umap</code>). On n'y touche <strong>jamais</strong> depuis l'explorateur de fichiers : déplacer, renommer ou supprimer se fait toujours depuis l'éditeur, qui met à jour les références.</p>
+
+  <h3>Importer des fichiers</h3>
+  <p>Glissez-déposez un fichier depuis votre explorateur dans le Content Browser, ou utilisez le bouton <em>Import</em>. Unreal convertit le fichier source en asset :</p>
+  <table>
+    <thead><tr><th>Fichier source</th><th>Devient</th><th>Préfixe conseillé</th></tr></thead>
+    <tbody>
+      <tr><td><code>.fbx</code>, <code>.obj</code>, <code>.gltf</code> (sans squelette)</td><td>Static Mesh</td><td><code>SM_</code></td></tr>
+      <tr><td><code>.fbx</code> avec squelette</td><td>Skeletal Mesh + Skeleton + Physics Asset</td><td><code>SK_</code>, <code>SKEL_</code>, <code>PHYS_</code></td></tr>
+      <tr><td><code>.png</code>, <code>.tga</code>, <code>.exr</code></td><td>Texture</td><td><code>T_</code></td></tr>
+      <tr><td><code>.wav</code></td><td>Sound Wave</td><td><code>SW_</code></td></tr>
+      <tr><td><code>.csv</code>, <code>.json</code></td><td>Data Table (avec une structure de ligne)</td><td><code>DT_</code></td></tr>
+    </tbody>
+  </table>
+  <p>Le fichier source n'est pas copié dans le projet : seul l'asset converti l'est. Gardez vos sources (fichiers Blender, PSD) dans un dossier à part, versionné lui aussi. Le bouton <em>Reimport</em> d'un asset relit son fichier source après une modification.</p>
+
+  <div class="callout tip">
+    <p class="callout-title">Le contenu gratuit</p>
+    <p>Le bouton <strong>Add</strong> → <em>Add Feature or Content Pack</em> ajoute à votre projet le contenu de démarrage (<em>Starter Content</em>), le personnage à la troisième personne, etc. Fab (la boutique d'Epic) propose aussi de nombreux assets gratuits, qui s'ajoutent directement depuis le panneau Fab de l'éditeur.</p>
+  </div>
+
+  <h3>Déplacer et renommer : les redirecteurs</h3>
+  <p>Quand vous déplacez ou renommez un asset, d'autres assets peuvent pointer vers son ancien chemin. Plutôt que de modifier tous ces fichiers, Unreal laisse un petit fichier invisible à l'ancien emplacement : un <strong>redirecteur</strong> (<em>Redirector</em>), qui renvoie vers le nouveau chemin.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    L["Lvl_Arena<br>référence l'orbe"] -->|"chemin enregistré :<br>/Game/Orb/BP_Orb"| R["Redirecteur<br>/Game/Orb/BP_Orb"]
+    R -->|"redirige vers"| A["Asset déplacé<br>/Game/OrbRush/Pickups/BP_Orb"]
+    F["Fix Up Redirectors"] -. "réécrit la référence<br>puis supprime le redirecteur" .-> L
+</pre>
+    <figcaption>Un redirecteur maintient les références après un déplacement. <em>Fix Up Redirectors</em> les remplace par le nouveau chemin.</figcaption>
+  </figure>
+  <p>Les redirecteurs s'accumulent et finissent par poser problème (dossiers impossibles à supprimer, conflits en équipe). Après une réorganisation, faites un clic droit sur le dossier <code>Content</code> → <strong>Fix Up Redirectors</strong>. Par défaut, le Content Browser masque les redirecteurs ; le filtre <em>Show Redirectors</em> les affiche.</p>
+
+  <dl class="defs">
+    <dt>Reference Viewer</dt><dd>Clic droit sur un asset → <em>Reference Viewer</em> : graphe de ce qui utilise l'asset et de ce qu'il utilise. Indispensable avant de supprimer quoi que ce soit.</dd>
+    <dt>Size Map</dt><dd>Clic droit → <em>Size Map</em> : la taille mémoire de l'asset et de tout ce qu'il charge avec lui (voir <a href="optimisation.html">Débogage &amp; optimisation</a>).</dd>
+    <dt>Migrate</dt><dd>Clic droit → <em>Asset Actions → Migrate</em> : copie un asset <em>et toutes ses dépendances</em> vers un autre projet. C'est la seule façon fiable de transférer du contenu entre projets.</dd>
+    <dt>Collections</dt><dd>Des listes d'assets transversales aux dossiers (« Tout ce qui sert au boss »), privées ou partagées.</dd>
+  </dl>
+
+  <h2>Conventions de nommage</h2>
+  <p>Un projet de jeu contient vite des milliers d'assets. Un <strong>préfixe</strong> indiquant le type permet de les reconnaître d'un coup d'œil, de les trouver par la recherche (« <code>M_Orb</code> » ne remonte que des matériaux) et de les trier. La convention la plus répandue, inspirée du guide de style d'Allar et des projets d'Epic, est <code>Préfixe_NomDeBase_Variante_Suffixe</code> :</p>
+
+  <table>
+    <thead><tr><th>Type d'asset</th><th>Préfixe</th><th>Exemple</th></tr></thead>
+    <tbody>
+      <tr><td>Niveau</td><td><code>L_</code> ou <code>Lvl_</code></td><td><code>Lvl_Arena</code></td></tr>
+      <tr><td>Blueprint (Actor, Component…)</td><td><code>BP_</code></td><td><code>BP_Orb</code>, <code>BP_OrbRushCharacter</code></td></tr>
+      <tr><td>Blueprint Interface</td><td><code>BPI_</code></td><td><code>BPI_Interactable</code></td></tr>
+      <tr><td>Blueprint Function Library</td><td><code>BPFL_</code></td><td><code>BPFL_MathHelpers</code></td></tr>
+      <tr><td>Widget Blueprint</td><td><code>WBP_</code></td><td><code>WBP_HUD</code></td></tr>
+      <tr><td>Animation Blueprint</td><td><code>ABP_</code></td><td><code>ABP_Guardian</code></td></tr>
+      <tr><td>Static Mesh / Skeletal Mesh</td><td><code>SM_</code> / <code>SK_</code></td><td><code>SM_Pillar</code>, <code>SK_Guardian</code></td></tr>
+      <tr><td>Matériau / Instance / Fonction</td><td><code>M_</code> / <code>MI_</code> / <code>MF_</code></td><td><code>M_Master</code>, <code>MI_Orb_Gold</code></td></tr>
+      <tr><td>Texture</td><td><code>T_</code> + suffixe</td><td><code>T_Rock_D</code> (diffuse), <code>T_Rock_N</code> (normal), <code>T_Rock_ORM</code></td></tr>
+      <tr><td>Séquence d'animation / Montage / Blend Space</td><td><code>A_</code> / <code>AM_</code> / <code>BS_</code></td><td><code>A_Run</code>, <code>AM_Attack</code>, <code>BS_Locomotion</code></td></tr>
+      <tr><td>Système Niagara</td><td><code>NS_</code></td><td><code>NS_OrbPickup</code></td></tr>
+      <tr><td>Son / MetaSound</td><td><code>SW_</code> / <code>MS_</code></td><td><code>SW_Pickup_01</code>, <code>MS_Pickup</code></td></tr>
+      <tr><td>Data Asset / Data Table / Structure / Enum</td><td><code>DA_</code> / <code>DT_</code> / <code>F</code> ou <code>S_</code> / <code>E_</code></td><td><code>DA_Difficulty</code>, <code>DT_Items</code></td></tr>
+      <tr><td>Input Action / Mapping Context</td><td><code>IA_</code> / <code>IMC_</code></td><td><code>IA_Jump</code>, <code>IMC_Default</code></td></tr>
+      <tr><td>Behavior Tree / Blackboard</td><td><code>BT_</code> / <code>BB_</code></td><td><code>BT_Guardian</code>, <code>BB_Guardian</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="compare">
+    <div class="good">
+      <h4>Bon</h4>
+      <ul>
+        <li><code>BP_Orb</code>, <code>M_Orb</code>, <code>MI_Orb_Gold</code></li>
+        <li><code>T_Orb_D</code>, <code>T_Orb_N</code></li>
+        <li><code>SW_Pickup_01</code>, <code>SW_Pickup_02</code></li>
+        <li>Anglais, PascalCase, pas d'espaces ni d'accents</li>
+      </ul>
+    </div>
+    <div class="bad">
+      <h4>À éviter</h4>
+      <ul>
+        <li><code>orbe final v2 (copie)</code></li>
+        <li><code>Material</code>, <code>NewBlueprint</code>, <code>Cube_3</code></li>
+        <li><code>Matériau_Doré</code> (accents et caractères spéciaux)</li>
+        <li>Des noms différents pour la même chose selon les dossiers</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <p class="callout-title">Pas d'espaces, pas d'accents, pas de chemins trop longs</p>
+    <p>Les caractères spéciaux et les espaces posent des problèmes à certains outils (contrôle de version, ligne de commande, consoles). Sous Windows, un chemin complet de fichier trop long (environ 260 caractères) peut aussi faire échouer le packaging : gardez des noms courts et ne placez pas votre projet au fond d'une arborescence profonde.</p>
+  </div>
+
+  <h2>Organiser les dossiers</h2>
+  <p>Deux grandes philosophies existent. La plus recommandée est le rangement <strong>par fonctionnalité</strong> : tout ce qui concerne l'orbe (Blueprint, mesh, matériau, son, effet) vit dans le même dossier. On sait ainsi immédiatement ce qu'il faut migrer ou supprimer avec une fonctionnalité.</p>
+
+  <div class="two-col">
+    <div>
+      <p><strong>Par fonctionnalité</strong> (recommandé)</p>
+      <ul class="tree">
+        <li><span class="node c-purple">Content</span>
+          <ul>
+            <li><span class="node c-blue">OrbRush</span><span class="desc">Dossier racine du jeu</span>
+              <ul>
+                <li><span class="node c-green">Core</span><span class="desc">GameMode, Controller</span></li>
+                <li><span class="node c-green">Characters</span>
+                  <ul>
+                    <li><span class="node c-green">Player</span></li>
+                    <li><span class="node c-green">Guardian</span></li>
+                  </ul>
+                </li>
+                <li><span class="node c-green">Pickups</span><span class="desc">BP_Orb, M_Orb, NS_OrbPickup…</span></li>
+                <li><span class="node c-green">UI</span></li>
+                <li><span class="node c-green">Maps</span></li>
+                <li><span class="node c-yellow">Shared</span><span class="desc">Matériaux maîtres, sons communs</span></li>
+              </ul>
+            </li>
+            <li><span class="node c-orange">StarterContent</span><span class="desc">Contenu externe</span></li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+    <div>
+      <p><strong>Par type d'asset</strong></p>
+      <ul class="tree">
+        <li><span class="node c-purple">Content</span>
+          <ul>
+            <li><span class="node c-red">Blueprints</span></li>
+            <li><span class="node c-red">Materials</span></li>
+            <li><span class="node c-red">Meshes</span></li>
+            <li><span class="node c-red">Textures</span></li>
+            <li><span class="node c-red">Sounds</span></li>
+            <li><span class="node c-red">Maps</span></li>
+          </ul>
+        </li>
+      </ul>
+      <p class="small muted">Simple au début, mais une fonctionnalité finit éparpillée dans six dossiers : difficile de savoir quoi déplacer ou supprimer.</p>
+    </div>
+  </div>
+
+  <ol class="steps">
+    <li><strong>Un dossier racine au nom du projet</strong>Tout votre contenu dans <code>Content/OrbRush/</code>. Le contenu importé (packs Fab, Starter Content) reste à côté, isolé : vous savez ce qui est à vous.</li>
+    <li><strong>Un dossier <code>Maps</code></strong>Les niveaux sont faciles à retrouver, et c'est le dossier qu'on liste dans les réglages de packaging.</li>
+    <li><strong>Un dossier <code>Developers</code> pour les essais</strong>Activez-le dans les filtres du Content Browser : chaque membre de l'équipe a son bac à sable, exclu du jeu final s'il n'est référencé nulle part.</li>
+    <li><strong>Pas de dossiers vides ni trop profonds</strong>Trois ou quatre niveaux suffisent. Un dossier ne contenant qu'un asset est souvent inutile.</li>
+  </ol>
+
+  <div class="quiz">
+    <p class="q">Vous voulez transférer le personnage « Gardien » (Blueprint, mesh, animations, matériaux) vers un autre projet. Comment faire ?</p>
+    <ul>
+      <li>Copier les fichiers <code>.uasset</code> depuis l'explorateur Windows</li>
+      <li>Exporter chaque asset en FBX puis le réimporter</li>
+      <li data-correct>Clic droit sur le Blueprint → <em>Asset Actions → Migrate</em>, puis choisir le dossier <code>Content</code> du projet cible</li>
+      <li>Renommer le dossier puis faire <em>Fix Up Redirectors</em></li>
+    </ul>
+    <p class="explain"><em>Migrate</em> rassemble l'asset et toutes ses dépendances en conservant leurs chemins relatifs, ce qui garde les références valides. Copier à la main oublie presque toujours une dépendance.</p>
+  </div>
+
+  <h2>Tester le jeu : Play In Editor</h2>
+  <p>Le bouton <strong>▶ Play</strong> de la barre d'outils (<kbd>Alt</kbd> + <kbd>P</kbd>) lance le jeu directement dans le viewport : c'est le <strong>Play In Editor</strong> (PIE). Le moteur crée une copie temporaire du niveau, y fait apparaître le joueur selon le GameMode, et exécute vos Blueprints et votre C++. <kbd>Échap</kbd> arrête la partie et revient à l'édition.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+    E["Mode édition<br>le niveau sur disque"] -->|"▶ Play (Alt+P)"| D["Copie du monde<br>pour la partie"]
+    D --> GM["GameMode crée<br>Controller + Pawn"]
+    GM --> BP["BeginPlay de<br>chaque Actor"]
+    BP --> T["Tick à chaque frame"]
+    T -->|"Échap"| X["Copie détruite"]
+    X --> E
+    T -. "Maj+F1 : rendre la souris<br>F8 : posséder / éjecter" .-> T
+</pre>
+    <figcaption>Le PIE travaille sur une copie du monde : les changements faits pendant la partie sont perdus à l'arrêt.</figcaption>
+  </figure>
+
+  <p>Le menu à trois points à côté de ▶ propose plusieurs façons de lancer :</p>
+  <table>
+    <thead><tr><th>Mode</th><th>Effet</th><th>Quand l'utiliser</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Selected Viewport</strong></td><td>Joue dans le viewport actuel (par défaut)</td><td>Tests rapides au quotidien</td></tr>
+      <tr><td><strong>New Editor Window (PIE)</strong></td><td>Ouvre une fenêtre séparée</td><td>Tester une résolution, le multijoueur à plusieurs fenêtres</td></tr>
+      <tr><td><strong>Standalone Game</strong></td><td>Lance un processus de jeu séparé</td><td>Comportement plus proche du jeu final, menus, chargement de niveaux</td></tr>
+      <tr><td><strong>Simulate</strong> (<kbd>Alt</kbd> + <kbd>S</kbd>)</td><td>Fait tourner le monde sans joueur</td><td>Observer la physique ou une IA en se déplaçant librement</td></tr>
+    </tbody>
+  </table>
+  <p>Le même menu règle le nombre de joueurs et le mode réseau (<em>Play As Listen Server</em>, <em>Play As Client</em>) ; voir <a href="multijoueur.html">Réseau &amp; multijoueur</a>. L'option <em>Current Camera Location</em> fait apparaître le joueur là où se trouve la caméra plutôt qu'au <code>PlayerStart</code> : très pratique pour tester un endroit précis.</p>
+
+  <h3>Les raccourcis pendant une partie</h3>
+  <dl class="defs">
+    <dt><kbd>Maj</kbd> + <kbd>F1</kbd></dt><dd>Libère le curseur de la souris pour cliquer dans l'éditeur sans arrêter la partie.</dd>
+    <dt><kbd>F8</kbd> (<em>Eject</em>)</dt><dd>Détache la caméra du joueur : le jeu continue, vous volez librement et pouvez sélectionner des Actors pour inspecter leurs valeurs en direct dans Details. <kbd>F8</kbd> à nouveau pour reprendre le contrôle.</dd>
+    <dt><kbd>²</kbd> (ou <kbd>`</kbd>)</dt><dd>Ouvre la console pour taper des commandes (<code>stat fps</code>, <code>slomo 0.2</code>…).</dd>
+    <dt><kbd>Pause</kbd></dt><dd>Met le jeu en pause ; le bouton <em>Frame Skip</em> avance alors d'une frame à la fois.</dd>
+  </dl>
+
+  <p>Le plus simple des tests consiste à afficher un message au démarrage de la partie. Dans le <strong>Level Blueprint</strong> (barre d'outils → icône Blueprints → <em>Open Level Blueprint</em>) :</p>
+
+<script type="application/json" class="bp-graph" data-caption="Le « Hello World » d'Unreal : un message à l'écran et dans l'Output Log au lancement du PIE.">
+{
+  "nodes": [
+    { "id": "begin", "type": "event", "title": "Event BeginPlay", "x": 0, "y": 0,
+      "out": [ { "type": "exec" } ] },
+    { "id": "print", "type": "function", "title": "Print String", "x": 250, "y": 0,
+      "in": [ { "type": "exec" }, { "name": "In String", "type": "string", "value": "Bonjour Unreal !" }, { "name": "Print to Screen", "type": "bool", "value": true }, { "name": "Print to Log", "type": "bool", "value": true }, { "name": "Duration", "type": "float", "value": "5.0" } ],
+      "out": [ { "type": "exec" } ] }
+  ],
+  "links": [
+    [ "begin", 0, "print", 0 ]
+  ]
+}
+</script>
+
+  <div class="callout danger">
+    <p class="callout-title">Les modifications faites en jeu sont perdues</p>
+    <p>Pendant le PIE, vous pouvez déplacer des objets et changer des valeurs dans Details, mais tout disparaît à l'arrêt : c'était une copie. Pour garder un réglage trouvé en jeu, sélectionnez l'Actor et appuyez sur <kbd>K</kbd> (<em>Keep Simulation Changes</em>) avant d'arrêter, ou notez la valeur. À l'inverse, pensez à <strong>arrêter le PIE</strong> avant de modifier votre niveau.</p>
+  </div>
+
+  <h2>Les réglages essentiels</h2>
+  <p>Deux fenêtres de réglages reviennent sans cesse, et il est facile de les confondre :</p>
+  <div class="compare">
+    <div class="neutral">
+      <h4>Project Settings</h4>
+      <p><em>Edit → Project Settings</em>. Réglages <strong>du jeu</strong>, enregistrés dans <code>Config/Default*.ini</code> et partagés par toute l'équipe : cartes par défaut, GameMode par défaut, entrées, collisions, rendu, packaging.</p>
+    </div>
+    <div class="alt">
+      <h4>Editor Preferences</h4>
+      <p><em>Edit → Editor Preferences</em>. Réglages <strong>de votre éditeur</strong>, personnels : raccourcis, langue, vitesse de la caméra, sauvegarde automatique, comportement du Live Coding.</p>
+    </div>
+  </div>
+  <p>Dans Project Settings, la page <em>Maps &amp; Modes</em> définit le niveau ouvert au lancement de l'éditeur et du jeu, ainsi que le GameMode par défaut. Ces réglages sont écrits dans un fichier texte que vous pouvez lire et versionner :</p>
+<script type="text/plain" data-lang="ini" data-file="Config/DefaultEngine.ini (extrait)">
+[/Script/EngineSettings.GameMapsSettings]
+EditorStartupMap=/Game/OrbRush/Maps/Lvl_Arena.Lvl_Arena
+GameDefaultMap=/Game/OrbRush/Maps/Lvl_MainMenu.Lvl_MainMenu
+GlobalDefaultGameMode=/Game/OrbRush/Core/BP_OrbRushGameMode.BP_OrbRushGameMode_C
+</script>
+  <p>Le suffixe <code>_C</code> désigne la <strong>classe générée</strong> par un Blueprint, par opposition à l'asset Blueprint lui-même : vous le reverrez dans les chemins de classes. Côté <strong>World Settings</strong>, le champ <em>GameMode Override</em> permet à un niveau précis (un menu, par exemple) d'utiliser un autre GameMode que celui par défaut.</p>
+
+  <div class="callout tip">
+    <p class="callout-title">Sauvegarder souvent, et tout</p>
+    <p><kbd>Ctrl</kbd> + <kbd>S</kbd> enregistre le niveau courant ; <kbd>Ctrl</kbd> + <kbd>Maj</kbd> + <kbd>S</kbd> (<em>Save All</em>) enregistre tous les assets modifiés, signalés par un astérisque dans leur onglet ou leur vignette. Un asset modifié mais non sauvegardé n'existe pas pour le contrôle de version ni pour le packaging.</p>
+  </div>
+
+  <h2>Raccourcis à connaître par cœur</h2>
+  <table>
+    <thead><tr><th>Raccourci</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td><kbd>W</kbd> / <kbd>E</kbd> / <kbd>R</kbd></td><td>Gizmo translation / rotation / échelle</td></tr>
+      <tr><td><kbd>F</kbd></td><td>Centrer la vue sur la sélection</td></tr>
+      <tr><td><kbd>G</kbd></td><td>Mode jeu (masquer les aides visuelles)</td></tr>
+      <tr><td><kbd>Fin</kbd></td><td>Poser la sélection au sol</td></tr>
+      <tr><td><kbd>Ctrl</kbd> + <kbd>D</kbd> / <kbd>Alt</kbd> + glisser</td><td>Dupliquer</td></tr>
+      <tr><td><kbd>Ctrl</kbd> + <kbd>Espace</kbd></td><td>Ouvrir le Content Drawer</td></tr>
+      <tr><td><kbd>Ctrl</kbd> + <kbd>B</kbd></td><td>Trouver l'asset de la sélection dans le Content Browser</td></tr>
+      <tr><td><kbd>Ctrl</kbd> + <kbd>E</kbd></td><td>Ouvrir l'éditeur de l'asset de la sélection</td></tr>
+      <tr><td><kbd>Ctrl</kbd> + <kbd>P</kbd></td><td>Ouvrir rapidement un asset par son nom</td></tr>
+      <tr><td><kbd>Alt</kbd> + <kbd>P</kbd> / <kbd>Alt</kbd> + <kbd>S</kbd></td><td>Play In Editor / Simulate</td></tr>
+      <tr><td><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>F11</kbd></td><td>Live Coding : recompiler le C++ sans fermer l'éditeur</td></tr>
+      <tr><td><kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Ctrl</kbd> + <kbd>Y</kbd></td><td>Annuler / rétablir (<em>Edit → Undo History</em> pour l'historique)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="quiz">
+    <p class="q">Pendant le PIE, vous réglez la hauteur d'une plateforme et trouvez enfin la bonne valeur. Vous appuyez sur <kbd>Échap</kbd> : la plateforme est revenue à sa hauteur d'origine. Pourquoi ?</p>
+    <ul>
+      <li>Le niveau n'avait pas été sauvegardé avant de lancer le PIE</li>
+      <li>La plateforme était en Mobility <em>Static</em></li>
+      <li data-correct>Le PIE travaille sur une copie du monde ; il fallait appuyer sur <kbd>K</kbd> (<em>Keep Simulation Changes</em>) avant d'arrêter</li>
+      <li>Il faut toujours utiliser Simulate pour modifier un niveau</li>
+    </ul>
+    <p class="explain">Toutes les modifications faites pendant une partie dans l'éditeur sont appliquées à un monde temporaire, détruit à l'arrêt. <em>Keep Simulation Changes</em> recopie les propriétés de l'Actor sélectionné vers le niveau d'édition.</p>
+  </div>
+
+  <div class="exercise">
+    <h4>Votre première arène</h4>
+    <p>Créez un nouveau niveau <code>Lvl_Arena</code> (<em>File → New Level → Basic</em>). Construisez une arène de 40 × 40 mètres avec un sol et quatre murs en utilisant le magnétisme, rangez les Actors dans des dossiers d'Outliner <code>Geometry</code>, <code>Lighting</code> et <code>Gameplay</code>, placez un <code>PlayerStart</code> au centre, et faites de ce niveau la carte de démarrage de l'éditeur. Lancez le PIE pour vérifier.</p>
+    <details>
+      <summary>Voir la solution</summary>
+      <ol>
+        <li>Rangez le niveau dans <code>Content/OrbRush/Maps/</code> lors de la première sauvegarde (<kbd>Ctrl</kbd> + <kbd>S</kbd>).</li>
+        <li>Ajoutez un <em>Cube</em> (bouton <strong>+</strong> → <em>Shapes</em>). Le cube de base mesure 100 cm : pour le sol, mettez son échelle à <code>(40, 40, 0.2)</code>, ce qui donne 40 × 40 m sur 20 cm d'épaisseur, et sa position à <code>(0, 0, -10)</code>.</li>
+        <li>Pour un mur, échelle <code>(40, 0.5, 4)</code> et position <code>(0, 2000, 200)</code>. Dupliquez-le avec <kbd>Alt</kbd> + glisser en gardant le magnétisme actif, puis tapez les positions exactes dans Details : <code>(0, -2000, 200)</code>, et pour les deux autres une rotation Yaw de 90° et les positions <code>(2000, 0, 200)</code> et <code>(-2000, 0, 200)</code>.</li>
+        <li>Dans l'Outliner, sélectionnez sol et murs, clic droit → <em>Move To → Create New Folder</em> → <code>Geometry</code>. Faites de même pour la lumière, le ciel et le brouillard (<code>Lighting</code>).</li>
+        <li>Ajoutez un <code>PlayerStart</code> (bouton <strong>+</strong> → <em>Basic</em>) en <code>(0, 0, 100)</code>, rangez-le dans <code>Gameplay</code>.</li>
+        <li><em>Project Settings → Maps &amp; Modes → Editor Startup Map</em> : choisissez <code>Lvl_Arena</code>. Lancez le PIE avec <kbd>Alt</kbd> + <kbd>P</kbd>.</li>
+      </ol>
+      <p>Si le joueur tombe dans le vide, le sol n'a probablement pas de collision ou le <code>PlayerStart</code> est en dessous : l'icône du <code>PlayerStart</code> affiche « BAD size » quand il est mal placé.</p>
+    </details>
+  </div>
+
+  <div class="summary">
+    <h3>À retenir</h3>
+    <ul>
+      <li>Le <strong>Level Editor</strong> réunit le Viewport, l'Outliner (les Actors du niveau), le panneau Details (leurs propriétés) et le Content Browser (les assets du projet).</li>
+      <li>Navigation : clic droit + <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd> pour voler, <kbd>F</kbd> pour centrer, <kbd>W</kbd>/<kbd>E</kbd>/<kbd>R</kbd> pour le gizmo, magnétisme pour aligner.</li>
+      <li>Une instance dans l'Outliner n'est pas l'asset du Content Browser ; on déplace et renomme les assets <strong>uniquement dans l'éditeur</strong>, puis on fait <em>Fix Up Redirectors</em>.</li>
+      <li>Préfixes (<code>BP_</code>, <code>M_</code>, <code>MI_</code>, <code>T_</code>, <code>SM_</code>, <code>WBP_</code>…) et rangement <strong>par fonctionnalité</strong> sous un dossier racine au nom du jeu.</li>
+      <li>Les variables exposées (<em>Instance Editable</em>, <code>UPROPERTY(EditAnywhere)</code>) se règlent par instance dans Details.</li>
+      <li>Le <strong>PIE</strong> joue sur une copie du monde : <kbd>Maj</kbd> + <kbd>F1</kbd> libère la souris, <kbd>F8</kbd> éjecte la caméra, <kbd>K</kbd> conserve un réglage.</li>
+      <li><strong>Project Settings</strong> = le jeu (partagé, fichiers <code>.ini</code>) ; <strong>Editor Preferences</strong> = votre confort personnel.</li>
+    </ul>
+  </div>
+
+</article>
+
+<script src="../assets/js/nav.js"></script>
+<script src="../assets/js/syntax.js"></script>
+<script src="../assets/js/blueprint.js"></script>
+<script src="../assets/vendor/mermaid.min.js"></script>
+<script src="../assets/js/app.js"></script>
+</body>
+</html>
